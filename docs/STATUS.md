@@ -10,8 +10,7 @@
 ### ユーザー作業（未実施）
 1. 再ビルド: 実ターミナルで `cd C:\Users\<user>\Documents\senseki-capture\app; npm run dist`
    （NSIS工程はClaudeサンドボックスでexe実行不可のため必ず実機で）
-2. 自動アップデート配信用の**GitHub公開リポ `games-desu/senseki-scan`** 作成
-   → リリース発行手順は `docs/release.md`
+2. ~~GitHub公開リポ作成~~ → **作成・push済み(2026-08-27)** https://github.com/games-desu/senseki-scan（リリース発行手順は `docs/release.md`）
 
 ### v0.3.0 に入っている機能
 - 複数動画バッチ解析（D&D）／全部門自動識別（クラシックS/D・フィーバーS/D）
@@ -36,7 +35,7 @@
 
 ### 辞書（app/assets/templates.json = samples/frames/templates.json）
 vsIcons 93 / dblIcons 54 / panelIcons 76 / panelFont 90 / ratingFont 214（新旧書体・0-9全桁）/
-courts 47 / racketBanners 74 / myname 5 / mode 28 / albumBar 2
+courts 47 / racketBanners 77 / myname 5 / mode 28 / albumBar 2
 
 ### 検証実績（GT=SENSEKI FEVER登録データとの突き合わせ）
 | 検証 | 結果 |
@@ -44,10 +43,11 @@ courts 47 / racketBanners 74 / myname 5 / mode 28 / albumBar 2
 | 2026-08-26実戦2本(FHD・GT18試合) | スコア17/18・result17/18・キャラ全枠一致・レート無警告誤りゼロ（誤り/欠けは全て要確認フラグ付き） |
 | 1440pダブルス(GT8試合) | 8/8検出・スコア全取得・レート連鎖一致 |
 | 720p/1440p/FHD過去検証 | 統一読みへの退行なしを確認済み |
+| FHDフィーバーラケットGT照合(5試合) | 2026-08-27実施→ docs/racket-gt-check-fhd-2026-08-27.md。誤名の主因=未収穫バナーの閾値超え誤マッチ→アイスフラワー/メタル収穫(74→77)・斜めバナーmaxH対応・過剰フラグ精緻化。無警告誤りゼロ維持 |
 
 残る既知の限界:
 - バッチ先頭試合のレート変動前は、録画に試合前待機画面が無いとフラグ付き手入力
-- **フィーバーラケット認識は2026-08-26実戦動画で要確認フラグ多発・GT照合未実施**（次の検証候補）
+- フィーバーラケットのFVゲージside帰属の精度（誤帰属で相手ラケットが誤提案になる。フラグは付く）
 - フィーバーダブルス実戦・真の4K(3840)は未検証
 
 ### 運用ルール

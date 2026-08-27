@@ -674,13 +674,16 @@ window.Vision = (() => {
     const seekTo = makeSeeker(video);
     const events = [];
     let t = t0;
+    // maxH緩和: メタルブースト等の斜め表示バナーは文字ボックス高が110pxを超える(FHD実測131px)。
+    // 他の呼び出し箇所(勝敗パネル棄却ガード等)は既定のまま、バナー収集だけ広げる
+    const bOpts = { maxH: 160 };
     while (t < t1) {
       await seekTo(t);
-      const b = findBanner(video);
+      const b = findBanner(video, null, bOpts);
       if (b) {
         const profiles = [b.profile];
         await seekTo(t + 0.25);
-        const b2 = findBanner(video);
+        const b2 = findBanner(video, null, bOpts);
         if (b2) profiles.push(b2.profile);
         const readFills = async dt => {
           await seekTo(t + dt);

@@ -672,8 +672,15 @@ async function analyze() {
       m.oppRacket = decide(names.opp);
       if (!m.myRacket || m.myRacket === 'ハテナラケット') m.flags.myRacket = true;
       if (!m.oppRacket || m.oppRacket === 'ハテナラケット') m.flags.oppRacket = true;
-      // 未帰属/未照合のバナーがあれば要確認
-      if (m.racketEvents.some(e => !e.side || !e.name)) { m.flags.myRacket = true; m.flags.oppRacket = true; }
+      // 未帰属/未照合バナーの要確認判定（2026-08-27精緻化）:
+      // - 照合スコア0.7未満の未照合イベントはコートギミック演出（「パトカーふんさい」等の帯）の
+      //   誤検出が主でラケット情報を持たない → フラグ根拠にしない（全問正解の試合が過剰フラグされていた実例）
+      // - side不明でも名前が確定済みラケット（自分/相手）と同じなら情報の矛盾なし → フラグ不要
+      const decidedNames = new Set([m.myRacket, m.oppRacket].filter(x => x && x !== 'ハテナラケット'));
+      if (m.racketEvents.some(e =>
+        (!e.name && e.score >= 0.7) || (e.name && !e.side && !decidedNames.has(e.name)))) {
+        m.flags.myRacket = true; m.flags.oppRacket = true;
+      }
       log(`m${m.n}: ラケット 自分=${m.myRacket ?? '?'} 相手=${m.oppRacket ?? '?'} (バナー${m.racketEvents.length}件)`);
     }
 
