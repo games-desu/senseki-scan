@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>SENSEKI SCAN — 録画→CSV 試作機</title>
+<style>
+  :root { --bg:#0f1613; --panel:#17211c; --border:#2a3a32; --text:#e4ede8; --sub:#8fa89b; --accent:#2ecc71; --accent-dark:#1f9d4d; --warn:#e74c3c; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:"Segoe UI","Yu Gothic UI",sans-serif; padding:16px; }
+  h1 { font-size:18px; color:var(--accent); margin-bottom:4px; }
+  .sub { color:var(--sub); font-size:12px; margin-bottom:12px; }
+  #drop { border:2px dashed var(--border); border-radius:10px; padding:26px; text-align:center; color:var(--sub); cursor:pointer; margin-bottom:12px; }
+  #drop.over { border-color:var(--accent); background:#1a2b22; }
+  #drop.loaded { padding:8px 12px; font-size:12px; text-align:left; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:12px; }
+  #progress { font-size:13px; color:var(--sub); }
+  #bar { height:6px; background:#101a15; border-radius:3px; overflow:hidden; margin-top:6px; }
+  #bar div { height:100%; width:0%; background:var(--accent-dark); transition:width .3s; }
+  button { background:#223129; color:var(--text); border:1px solid var(--border); border-radius:7px; padding:8px 14px; font-size:13px; cursor:pointer; }
+  button.primary { background:var(--accent-dark); border-color:var(--accent-dark); font-weight:bold; }
+  button:disabled { opacity:.4; cursor:default; }
+  .match { background:#101a15; border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:10px; }
+  .match h3 { font-size:13px; color:var(--accent); margin-bottom:8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; }
+  .field label { display:block; font-size:10px; color:var(--sub); margin-bottom:2px; }
+  .field input, .field select { width:100%; background:#0c130f; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:5px 6px; font-size:12px; }
+  .field.flag input, .field.flag select { border-color:var(--warn); background:#2b1512; }
+  .field .conf { font-size:9px; color:var(--sub); }
+  .namecrop { height:26px; border-radius:4px; display:block; margin-bottom:3px; background:#000; }
+  video { display:none; }
+  #log { font:11px Consolas,monospace; color:var(--sub); white-space:pre-wrap; max-height:140px; overflow-y:auto; margin-top:8px; }
+</style>
+</head>
+<body>
+<h1>SENSEKI SCAN 試作機 v0</h1>
+<p class="sub">対戦録画（クラシックシングルス）→ SENSEKI FEVER CSV一括登録フォーマット。解析はすべてローカル完結。</p>
+<div id="drop">録画ファイル（MP4）をドラッグ&ドロップ、またはクリックして選択</div>
+<input type="file" id="file" accept="video/*" hidden>
+<div class="panel" id="progPanel" style="display:none">
+  <div id="progress">準備中…</div>
+  <div id="bar"><div></div></div>
+  <div id="log"></div>
+</div>
+<div id="results"></div>
+<div class="panel" id="exportPanel" style="display:none">
+  <button class="primary" id="exportCsv">CSVをダウンロード</button>
+  <span class="sub" style="margin-left:8px">SENSEKI FEVER「CSV一括登録」にそのまま読み込めます</span>
+</div>
+<video id="video" muted preload="auto"></video>
+
+<script src="vision.js"></script>
+<script>
+const V = window.Vision;
+const $ = id => document.getElementById(id);
+const video = $('video');
+let TPL = null;           // templates.json（Float32Array復元済み）
+let fileInfo = null;      // {name, lastModified}
+let matches = [];         // 解析結果
+window.A = { phase: 'idle', log: [] };
+
+function log(m) { window.A.log.push(m); $('log').textContent = window.A.log.join('\n'); $('log').scrollTop = 1e9; }
+function setProgress(msg, ratio) {
+  $('progress').textContent = msg;
+  if (ratio != null) $('bar').firstElementChild.style.width = (ratio * 100).toFixed(1) + '%';
+}
+
+// ---- テンプレート読み込み ----
+async function loadTemplates() {
+  const res = await fetch('/samples/frames/templates.json');
+  const j = await res.json();
+  const wake = arr => arr.map(t => {
+    const v = new Float32Array(t.v);
+    if (t.aspect != null) v.aspect = t.aspect;
+    return { ...t, v };
+  });
+  TPL = Object.fromEntries(Object.entries(j.sets).map(([k, arr]) => [k, wake(arr)]));
+  log('templates: ' + Object.entries(TPL).map(([k, a]) => `${k}=${a.length}`).join(' '));
+}
+
+// ---- ファイル名から録画開始日時 ----
+function parseStartTime(name, lastModified, duration) {
+  let m = name.match(/(\d{4})-(\d{2})-(\d{2})[ _](\d{2})-(\d{2})-(\d{2})/); // OBS形式
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  m = name.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\d{2}/);        // Switch本体形式
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  if (lastModified) return new Date(lastModified - duration * 1000);         // 最終更新-長さ
+  return null;
+}
+const fmtDT = d => {
+  if (!d || isNaN(d.getTime())) return '';
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:00`;
+};
+
+const seekTo = t => V.makeSeeker(video)(t);
+
+function cropDataUrl(r) {
+  const k = video.videoWidth / 1920;
+  const c = document.createElement('canvas');
+  c.width = r.w; c.height = r.h;
+  c.getContext('2d').drawImage(video, r.x * k, r.y * k, r.w * k, r.h * k, 0, 0, r.w, r.h);
+  return c.toDataURL('image/png');
+}
+
+// 数値読み: パネルのフェードイン/カウントアップ演出中の歪んだ読みを弾くため、
+// 「高信頼(conf>=0.88)の読みが連続2回一致」した値のみ stable とする
+async function readNumberAt(times, region, mode, templates) {
+  const reads = [];
+  for (const t of times) {
+    await seekTo(t);
+    const g = V.readGlyphs(V.cropRegion(video, region), mode, templates, mode === 'fillink' ? V.NUM_SEG : undefined);
+    const p = V.parseNumber(g);
+    // 信頼度は緩め（暗背景コートで縁が甘くなる）。「連続2回の値一致」＋変動幅サニティが本命の安全網
+    reads.push(p.conf >= 0.55 && p.value != null && p.value >= 100 ? p : null);
+    // 連続一致が出たら早期確定
+    const n = reads.length;
+    if (n >= 2 && reads[n-1] && reads[n-2] && reads[n-1].value != null && reads[n-1].value === reads[n-2].value) {
+      return { value: reads[n-1].value, conf: Math.min(reads[n-1].conf, reads[n-2].conf), stable: true };
+    }
+  }
+  const valid = reads.filter(r => r && r.value != null);
+  if (!valid.length) return { value: null, conf: 0, stable: false };
+  return { value: valid[valid.length - 1].value, conf: valid[valid.length - 1].conf, stable: false };
+}
+
+// ---- メイン解析 ----
+async function analyze() {
+  window.A.phase = 'scan';
+  $('progPanel').style.display = 'block';
+  const t0 = performance.now();
+  const events = await V.scan(video, { onProgress: (t, dur) =>
+    setProgress(`全編スキャン中… ${t.toFixed(0)}/${dur.toFixed(0)}秒`, t / dur * 0.7) });
+  log(`scan ${((performance.now() - t0) / 1000).toFixed(1)}s: ` + events.map(e => `${e.type}@${e.t0.toFixed(0)}-${e.t1.toFixed(0)}`).join(' '));
+  let grouped = V.groupMatches(events);
+  // レートパネルの色はランクで変わるため、未収穫ランクの試合は成立しない。取り逃しを可視化する
+  const vsCount = events.filter(e => e.type === 'vs').length;
+  if (vsCount > grouped.length) {
+    log(`[警告] VS画面${vsCount}回に対し成立した試合が${grouped.length}件です。レート画面を検出できなかった試合がある可能性があります（未対応のランク色など）。該当区間の録画を添えて報告してください。`);
+  }
+  const ratingCount = events.filter(e => e.type === 'rating').length;
+  if (ratingCount > grouped.length + 1) {
+    log(`[警告] レート画面${ratingCount}回に対し成立した試合が${grouped.length}件です。VS画面を検出できなかった試合がある可能性があります。`);
+  }
+
+  // winner窓が拾えなかった試合はレート窓の直前を細かく再走査
+  for (const m of grouped) {
+    if (!m.winner) {
+      for (let t = m.rating.t0 - 1; t > m.rating.t0 - 16 && t > 0; t -= 0.3) {
+        await seekTo(t);
+        if (V.classify(V.frameToData(video, 192, 108)) === 'winner') {
+          m.winner = { type: 'winner', t0: t - 0.3, t1: t };
+          break;
+        }
+      }
+    }
+  }
+
+  window.A.phase = 'extract';
+  const R = V.REGIONS;
+  const startTime = parseStartTime(fileInfo.name, fileInfo.lastModified, video.duration);
+  matches = [];
+  for (let i = 0; i < grouped.length; i++) {
+    const g = grouped[i];
+    setProgress(`試合 ${i + 1}/${grouped.length} を解析中…`, 0.7 + 0.3 * i / grouped.length);
+    const m = { n: i + 1, flags: {}, crops: {} };
+
+    // --- VS画面: コート・キャラ・名前クロップ ---
+    await seekTo((g.vs.t0 + g.vs.t1) / 2);
+    const court = V.matchIconWh(V.textVec(V.cropRegion(video, R.court), 32, 8), TPL.courts); // 白チャンネルのみ（vision.js注記）
+    m.court = court.name; m.courtConf = court.score;
+    if (court.score < 0.85) m.flags.court = true;
+    // ダブルス判定: シングルスではカードが無いy帯(852-882)に「左=青カード AND 右=オレンジカード AND 中央=黒帯」が同時に揃うか
+    // （単色チェックだと水面コートの青や клейコートのオレンジなど背景に誤爆する）
+    const l1img = V.cropRegion(video, R.dIconL1);
+    const r1img = V.cropRegion(video, R.dIconR1);
+    const midimg = V.cropRegion(video, { x: 300, y: 852, w: 320, h: 30 });
+    const blueL = V.frac(l1img, 0, 0, R.dIconL1.w, 30, (r, gg, b) => b > r + 40 && b > 120);
+    const orgR = V.frac(r1img, 0, 0, R.dIconR1.w, 30, (r, gg, b) => r > 160 && b < 100 && gg > 40 && gg < 170);
+    const darkM = V.frac(midimg, 0, 0, 320, 30, (r, gg, b) => 0.299 * r + 0.587 * gg + 0.114 * b < 60);
+    m.isDoubles = blueL > 0.2 && orgR > 0.15 && darkM > 0.5;
+    if (!m.isDoubles) {
+      const myc = V.matchIcon(V.iconVec(V.cropRegion(video, R.myicon), 16, 16), TPL.vsIcons);
+      const opc = V.matchIcon(V.iconVec(V.cropRegion(video, R.oppicon), 16, 16), TPL.vsIcons);
+      m.myChar = myc.name; m.myCharConf = myc.score;
+      m.oppChar = opc.name; m.oppCharConf = opc.score;
+      if (myc.score < 0.8) m.flags.myChar = true;
+      if (opc.score < 0.8) m.flags.oppChar = true;
+      m.crops.oppname = cropDataUrl(R.oppname);
+    } else {
+      // ダブルス: 4アイコン照合 + 「ガメス」の名前画像で自分の行を特定
+      const ic = k => V.matchIcon(V.iconVec(V.cropRegion(video, R[k]), 16, 12), TPL.dblIcons || []);
+      const l1 = ic('dIconL1'), l2 = ic('dIconL2'), r1 = ic('dIconR1'), r2 = ic('dIconR2');
+      let s1 = 0, s2 = 0;
+      const nv1 = V.textVec(V.cropRegion(video, R.dNameL1), 32, 8);
+      const nv2 = V.textVec(V.cropRegion(video, R.dNameL2), 32, 8);
+      for (const t of (TPL.myname || [])) {
+        s1 = Math.max(s1, V.ncc(nv1, t.v));
+        s2 = Math.max(s2, V.ncc(nv2, t.v));
+      }
+      const myRow = s1 >= s2 ? 1 : 2;
+      const mine = myRow === 1 ? l1 : l2, part = myRow === 1 ? l2 : l1;
+      m.myChar = mine.name; m.myCharConf = mine.score;
+      m.partnerChar = part.name;
+      m.oppChar = r1.name; m.oppCharConf = r1.score;
+      m.opp2Char = r2.name;
+      if (Math.max(s1, s2) < 0.75) { m.flags.myChar = true; m.flags.partnerChar = true; }
+      if (mine.score < 0.8) m.flags.myChar = true;
+      if (part.score < 0.8) m.flags.partnerChar = true;
+      if (r1.score < 0.8) m.flags.oppChar = true;
+      if (r2.score < 0.8) m.flags.opp2Char = true;
+      m.crops.partnername = cropDataUrl(myRow === 1 ? R.dNameL2 : R.dNameL1);
+      m.crops.oppname = cropDataUrl(R.dNameR1);
+      m.crops.opp2name = cropDataUrl(R.dNameR2);
+    }
+    m.playedAt = startTime ? fmtDT(new Date(startTime.getTime() + g.vs.t0 * 1000)) : '';
+    if (!m.playedAt) m.flags.playedAt = true;
+
+    // --- Winnerパネル: スコアと勝敗 ---
+    // シーン分類で窓が取れていればその周辺、なければレートパネル直前26秒を逆走査で直接探す
+    const searchT0 = g.winner ? g.winner.t0 - 1.0 : g.rating.t0 - 26;
+    const searchT1 = g.winner ? g.winner.t1 + 1.0 : g.rating.t0 - 0.5;
+    const wloc = await V.locateWinner(video, searchT0, searchT1, TPL.panelFont);
+    if (wloc) {
+      const winnerRow = wloc.row;
+      // パネルのアニメで数字上部が欠けるフレームがあるため、3時点読んで行ごとに最高信頼度を採用
+      let s1 = { value: null, conf: 0 }, s2 = { value: null, conf: 0 };
+      for (const dt of [0, -0.3, 0.3]) {
+        await seekTo(wloc.t + dt);
+        const a = V.parseNumber(V.readGlyphs(V.cropRegion(video, R.w1digit), winnerRow === 1 ? 'inkonyellow' : 'lightink', TPL.panelFont));
+        const b = V.parseNumber(V.readGlyphs(V.cropRegion(video, R.w2digit), winnerRow === 2 ? 'inkonyellow' : 'lightink', TPL.panelFont));
+        if (a.value != null && a.conf > s1.conf) s1 = a;
+        if (b.value != null && b.conf > s2.conf) s2 = b;
+      }
+      await seekTo(wloc.t);
+      const i1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.w1icon), 16, 16), TPL.panelIcons);
+      const i2 = V.matchIcon(V.iconVec(V.cropRegion(video, R.w2icon), 16, 16), TPL.panelIcons);
+      // 自分の行 = VSで判定した自分キャラとアイコンが一致する行。
+      // ミラー戦（同キャラ対戦）はアイコンで判別不能、ダブルスは行=チームでアイコンがペア
+      // → どちらも後段でレート増減から勝敗を確定する
+      let myRow = 1, mirror = false;
+      if (m.isDoubles) mirror = true;
+      else if (i1.name === m.myChar && i2.name !== m.myChar) myRow = 1;
+      else if (i2.name === m.myChar && i1.name !== m.myChar) myRow = 2;
+      else if (m.myChar === m.oppChar || i1.name === i2.name) mirror = true;
+      else if (i1.score < i2.score) myRow = 2;
+      m._w = { s1, s2, winnerRow, mirror };
+      if (!mirror) {
+        const mine = myRow === 1 ? s1 : s2, opp = myRow === 1 ? s2 : s1;
+        m.myScore = mine.value; m.oppScore = opp.value;
+        if (mine.value == null || mine.conf < 0.8) m.flags.myScore = true;
+        if (opp.value == null || opp.conf < 0.8) m.flags.oppScore = true;
+        m.result = winnerRow === myRow ? 'win' : 'loss';
+      }
+    } else {
+      m.myScore = null; m.oppScore = null; m.result = '';
+      m.flags.myScore = m.flags.oppScore = m.flags.result = true;
+    }
+
+    // --- レートパネル: mode・レート前後 ---
+    await seekTo(g.rating.t0 + 0.6);
+    const md1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode1), 24, 8), TPL.mode1);
+    const md2 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode2), 32, 8), TPL.mode2);
+    const singles = md1.name === 'シングルス' && md1.score > 0.85;
+    const classic = md2.name === 'なし' && md2.score > 0.85;
+    m.mode = (classic ? 'classic_' : 'fever_') + (singles ? 'singles' : 'doubles');
+    if (md1.score < 0.85 || md2.score < 0.85) m.flags.mode = true;
+    const before = await readNumberAt([g.rating.t0 + 0.4, g.rating.t0 + 0.9, g.rating.t0 + 1.3, g.rating.t0 + 1.7], R.rating, 'fillink', TPL.ratingFont);
+    const after = await readNumberAt([g.rating.t1 - 1.4, g.rating.t1 - 0.8, g.rating.t1 - 0.3], R.rating, 'fillink', TPL.ratingFont);
+    m.ratingBefore = before.value; m.ratingAfter = after.value;
+    if (before.value == null || !before.stable || before.conf < 0.8) m.flags.ratingBefore = true;
+    if (after.value == null || !after.stable || after.conf < 0.8) m.flags.ratingAfter = true;
+    // サニティ: 1試合のレート変動が±200を超えることはない（桁落ち誤読の検出網）
+    if (m.ratingBefore != null && m.ratingAfter != null && Math.abs(m.ratingAfter - m.ratingBefore) > 200) {
+      m.flags.ratingBefore = true; m.flags.ratingAfter = true; m.ratingSuspect = true;
+    }
+
+    // フィーバー: 発動バナー（〇〇ショット/ブースト）を収集→列プロファイル照合でラケット特定。
+    // 帰属はFVゲージの減少側。同じ側から複数種のバナー=ハテナラケット（ランダム発動）
+    if (m.mode === 'fever_singles') {
+      setProgress(`試合 ${i + 1}: フィーバーラケットを解析中…`, null);
+      const evs = await V.collectBanners(video, g.vs.t1 + 12, g.rating.t0 - 6, {});
+      const names = { me: {}, opp: {} };
+      m.racketEvents = [];
+      for (const e of evs) {
+        let bestName = null, bestScore = 0;
+        for (const tref of (TPL.racketBanners || [])) {
+          for (const p of e.profiles) {
+            const s = V.profileXcorr(p, tref.profile);
+            if (s > bestScore) { bestScore = s; bestName = tref.name; }
+          }
+        }
+        const matched = bestScore >= 0.85 ? bestName : null;
+        await seekTo(e.t);
+        const bb = V.findBanner(video);
+        let crop = null;
+        if (bb) {
+          const img = V.cropRegion(video, R.bannerBand);
+          const c = document.createElement('canvas');
+          const bw = bb.box.x1 - bb.box.x0 + 1, bh = bb.box.y1 - bb.box.y0 + 1;
+          c.width = bw; c.height = bh;
+          c.getContext('2d').putImageData(img, -bb.box.x0, -bb.box.y0);
+          crop = c.toDataURL('image/png');
+        }
+        m.racketEvents.push({ t: +e.t.toFixed(1), side: e.side, name: matched, score: +bestScore.toFixed(2), crop });
+        if (e.side && matched) names[e.side][matched] = (names[e.side][matched] || 0) + 1;
+      }
+      const decide = obj => {
+        const ks = Object.keys(obj);
+        if (!ks.length) return null;
+        if (ks.length >= 2) return 'ハテナラケット';
+        return ks[0];
+      };
+      m.myRacket = decide(names.me);
+      m.oppRacket = decide(names.opp);
+      if (!m.myRacket || m.myRacket === 'ハテナラケット') m.flags.myRacket = true;
+      if (!m.oppRacket || m.oppRacket === 'ハテナラケット') m.flags.oppRacket = true;
+      // 未帰属/未照合のバナーがあれば要確認
+      if (m.racketEvents.some(e => !e.side || !e.name)) { m.flags.myRacket = true; m.flags.oppRacket = true; }
+      log(`m${m.n}: ラケット 自分=${m.myRacket ?? '?'} 相手=${m.oppRacket ?? '?'} (バナー${m.racketEvents.length}件)`);
+    }
+
+    // ミラー戦: レートの増減で勝敗と自分スコアを確定（増減が読めなければ要確認のまま）
+    if (m._w && m._w.mirror) {
+      const { s1, s2, winnerRow } = m._w;
+      const winScore = winnerRow === 1 ? s1 : s2, loseScore = winnerRow === 1 ? s2 : s1;
+      if (m.ratingBefore != null && m.ratingAfter != null && m.ratingBefore !== m.ratingAfter && !m.ratingSuspect) {
+        m.result = m.ratingAfter > m.ratingBefore ? 'win' : 'loss';
+        m.myScore = (m.result === 'win' ? winScore : loseScore).value;
+        m.oppScore = (m.result === 'win' ? loseScore : winScore).value;
+        // ダブルスはレート増減が確かなら信頼。シングルスのミラー戦は必ず目視確認
+        if (!m.isDoubles || m.flags.ratingBefore || m.flags.ratingAfter) m.flags.result = true;
+      } else {
+        m.myScore = null; m.oppScore = null; m.result = '';
+        m.flags.myScore = m.flags.oppScore = m.flags.result = true;
+      }
+    }
+    delete m._w;
+
+    matches.push(m);
+    log(`m${m.n}: ${m.playedAt} ${m.mode} ${m.myChar} vs ${m.oppChar} ${m.myScore}-${m.oppScore} ${m.result} R${m.ratingBefore}→${m.ratingAfter} @${m.court}`);
+  }
+  // レート連鎖検証: 同一動画内では前試合のafter = 次試合のbefore（間に未収録の試合は存在し得ない）
+  for (let i = 1; i < matches.length; i++) {
+    const prev = matches[i - 1], cur = matches[i];
+    if (prev.ratingAfter == null) continue;
+    if (cur.ratingBefore == null || cur.flags.ratingBefore) {
+      cur.ratingBefore = prev.ratingAfter;
+      if (!prev.flags.ratingAfter) delete cur.flags.ratingBefore;
+      log(`m${cur.n}: レート前を前試合のafter(${prev.ratingAfter})で補完`);
+    } else if (cur.ratingBefore !== prev.ratingAfter) {
+      cur.flags.ratingBefore = true;
+      prev.flags.ratingAfter = true;
+    }
+  }
+  window.A.phase = 'done';
+  window.A.matches = matches;
+  setProgress(`完了: ${matches.length}試合を検出`, 1);
+  render();
+}
+
+// ---- 確認・修正UI ----
+function field(m, key, label, value, opts = {}) {
+  const flag = m.flags[key] ? ' flag' : '';
+  const id = `f_${m.n}_${key}`;
+  if (opts.select) {
+    const options = opts.select.map(o => `<option value="${o}" ${String(o) === String(value) ? 'selected' : ''}>${o}</option>`).join('');
+    return `<div class="field${flag}"><label>${label}</label><select id="${id}" data-n="${m.n}" data-key="${key}">${options}</select></div>`;
+  }
+  const img = opts.crop ? `<img class="namecrop" src="${opts.crop}">` : '';
+  return `<div class="field${flag}"><label>${label}</label>${img}<input id="${id}" data-n="${m.n}" data-key="${key}" value="${value ?? ''}" placeholder="${opts.ph ?? ''}"></div>`;
+}
+
+function render() {
+  const charNames = [...new Set((TPL.vsIcons || []).map(t => t.name))];
+  $('results').innerHTML = matches.map(m => `
+    <div class="match">
+      <h3>試合 ${m.n} <span style="color:var(--sub);font-weight:normal">赤枠＝要確認（自信なし）</span></h3>
+      <div class="grid">
+        ${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}
+        ${field(m, 'mode', 'mode', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'] })}
+        ${field(m, 'myChar', '自分キャラ', m.myChar)}
+        ${m.isDoubles ? field(m, 'partnerChar', '味方キャラ', m.partnerChar) : ''}
+        ${m.isDoubles ? field(m, 'partnerName', '味方の名前（画像を見て入力）', m.partnerName ?? '', { crop: m.crops.partnername, ph: '任意' }) : ''}
+        ${field(m, 'oppChar', '相手1キャラ', m.oppChar)}
+        ${field(m, 'oppName', '相手1の名前（画像を見て入力）', m.oppName ?? '', { crop: m.crops.oppname, ph: '任意' })}
+        ${m.isDoubles ? field(m, 'opp2Char', '相手2キャラ', m.opp2Char) : ''}
+        ${m.isDoubles ? field(m, 'opp2Name', '相手2の名前（画像を見て入力）', m.opp2Name ?? '', { crop: m.crops.opp2name, ph: '任意' }) : ''}
+        ${m.mode && m.mode.startsWith('fever') ? field(m, 'myRacket', '自分ラケット', m.myRacket ?? '', { crop: m.racketEvents && (m.racketEvents.find(e => e.side === 'me') || {}).crop, ph: '例: トゲゾーラケット' }) : ''}
+        ${m.mode && m.mode.startsWith('fever') ? field(m, 'oppRacket', '相手ラケット', m.oppRacket ?? '', { crop: m.racketEvents && (m.racketEvents.find(e => e.side === 'opp') || {}).crop, ph: '任意' }) : ''}
+        ${field(m, 'court', 'コート', m.court)}
+        ${field(m, 'myScore', '自分スコア', m.myScore)}
+        ${field(m, 'oppScore', '相手スコア', m.oppScore)}
+        ${field(m, 'result', 'result', m.result, { select: ['win', 'loss'] })}
+        ${field(m, 'ratingBefore', 'レート前', m.ratingBefore)}
+        ${field(m, 'ratingAfter', 'レート後', m.ratingAfter)}
+      </div>
+    </div>`).join('');
+  $('results').querySelectorAll('input,select').forEach(el => el.addEventListener('input', () => {
+    const m = matches.find(x => x.n === +el.dataset.n);
+    const map = { playedAt: 'playedAt', mode: 'mode', myChar: 'myChar', oppChar: 'oppChar', oppName: 'oppName',
+                  partnerChar: 'partnerChar', partnerName: 'partnerName', opp2Char: 'opp2Char', opp2Name: 'opp2Name',
+                  myRacket: 'myRacket', oppRacket: 'oppRacket',
+                  court: 'court', myScore: 'myScore', oppScore: 'oppScore', result: 'result',
+                  ratingBefore: 'ratingBefore', ratingAfter: 'ratingAfter' };
+    m[map[el.dataset.key]] = el.value;
+  }));
+  $('exportPanel').style.display = 'block';
+}
+
+// ---- CSV出力（SENSEKI FEVER CSV_HEADERS 準拠） ----
+const CSV_HEADERS = ['played_at','mode','my_character','my_character_color','my_racket1',
+  'partner_name','partner_character','partner_character_color','partner_racket1',
+  'opponent1_name','opponent1_character','opponent1_character_color','opponent1_racket1',
+  'opponent2_name','opponent2_character','opponent2_character_color','opponent2_racket1',
+  'court','my_score','opponent_score','result','rating_before','rating_after','memo'];
+const csvEscape = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
+
+$('exportCsv').addEventListener('click', () => {
+  const lines = [CSV_HEADERS.join(',')];
+  for (const m of matches) {
+    // キャラ名の「名前:色」表記を分離（例: ノコノコ:赤）
+    const split = s => { const p = String(s ?? '').split(':'); return [p[0], p[1] ?? '']; };
+    const [myC, myCol] = split(m.myChar), [opC, opCol] = split(m.oppChar);
+    const [paC, paCol] = split(m.partnerChar), [o2C, o2Col] = split(m.opp2Char);
+    const row = {
+      played_at: m.playedAt, mode: m.mode,
+      my_character: myC, my_character_color: myCol, my_racket1: m.myRacket ?? '',
+      partner_name: m.partnerName ?? '', partner_character: paC, partner_character_color: paCol, partner_racket1: '',
+      opponent1_name: m.oppName ?? '', opponent1_character: opC, opponent1_character_color: opCol, opponent1_racket1: m.oppRacket ?? '',
+      opponent2_name: m.opp2Name ?? '', opponent2_character: o2C, opponent2_character_color: o2Col, opponent2_racket1: '',
+      court: m.court, my_score: m.myScore, opponent_score: m.oppScore, result: m.result,
+      rating_before: m.ratingBefore, rating_after: m.ratingAfter, memo: '',
+    };
+    lines.push(CSV_HEADERS.map(h => csvEscape(row[h])).join(','));
+  }
+  const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `senseki_capture_${(fileInfo.name || 'video').replace(/\.[^.]+$/, '')}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+// ---- 読み込み ----
+const drop = $('drop');
+drop.addEventListener('click', () => $('file').click());
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+$('file').addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+
+async function start(src, name, lastModified) {
+  fileInfo = { name, lastModified };
+  drop.classList.add('loaded');
+  drop.textContent = name;
+  video.src = src;
+  await new Promise((res, rej) => {
+    video.addEventListener('loadedmetadata', res, { once: true });
+    video.addEventListener('error', () => rej(new Error('load error')), { once: true });
+  });
+  if (!TPL) await loadTemplates();
+  await analyze();
+}
+function loadFile(f) { start(URL.createObjectURL(f), f.name, f.lastModified).catch(e => log('ERROR: ' + e)); }
+
+// ?src= 指定で自動開始（開発用）
+const p = new URLSearchParams(location.search);
+if (p.get('src')) {
+  const src = p.get('src');
+  start(src, decodeURIComponent(src.split('/').pop()), null).catch(e => { log('ERROR: ' + (e.stack || e)); window.A.phase = 'error'; });
+}
+</script>
+</body>
+</html>

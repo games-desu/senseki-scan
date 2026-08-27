@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>テンプレート収穫（複数動画＋DB正解）</title>
+<style>body{background:#111;color:#0f0;font:13px Consolas,monospace;white-space:pre-wrap;padding:12px}</style>
+</head>
+<body>starting...
+<script src="vision.js"></script>
+<script>
+const V = window.Vision;
+window.H = { phase: 'boot', log: [], errors: [], eventsByVideo: {}, done: false };
+const logEl = document.body;
+function log(m) { H.log.push(m); logEl.textContent = H.log.slice(-40).join('\n'); }
+
+// DB正解（ガメス・すべてclassic_singles・すべて勝ち）
+// win/lose はWinnerパネルの数字（デュースありのため勝者=7固定ではない）
+const SETS = [
+  { src: '2026-08-20 10-44-35.mp4', myChar: 'ハナチャン', court: 'アカデミー サンド', matches: [
+    { oppChar: 'ノコノコ:赤', before: '3,369', after: '3,381', win: '7', lose: '1', rankEarly: '169', rankStable: '167' },
+    { oppChar: 'ゲッソー',    before: '3,381', after: '3,386', win: '7', lose: '2', rankStable: '166' },
+    { oppChar: 'パタパタ',    before: '3,386', after: '3,406', win: '7', lose: '5', rankStable: '154' },
+  ]},
+  { src: '2026-08-20 11-02-43.mp4', myChar: 'ヨッシー:オレンジ', court: 'フォレストコート', matches: [
+    { oppChar: 'ノコノコ:赤',      before: '3,406', after: '3,417', win: '8', lose: '6' },
+    { oppChar: 'ロゼッタ',         before: '3,417', after: '3,421', win: '7', lose: '3' },
+    { oppChar: 'ベビィワルイージ', before: '3,421', after: '3,426', win: '7', lose: '0' },
+  ]},
+  { src: '2026-08-20 11-33-43.mp4', myChar: 'クリボー', court: 'アカデミー グラス', matches: [
+    { oppChar: 'ロゼッタ', before: '3,426', after: '3,432', win: '7', lose: '2' },
+    { oppChar: 'マリオ',   before: '3,432', after: '3,437', win: '7', lose: '2' },
+    { oppChar: 'マリオ',   before: '3,437', after: '3,443', win: '7', lose: '3' },
+  ]},
+  // result省略時はwin。lossの場合は黄色行=相手
+  { src: '2026-08-20 22-02-04.mp4', myChar: 'ゲッソー', court: 'アカデミー クレイ', matches: [
+    { oppChar: 'ノコノコ:赤',      before: '3,443', after: '3,436', win: '7', lose: '3', result: 'loss' },
+    { oppChar: 'パックンフラワー', before: '3,436', after: '3,471', win: '7', lose: '4' },
+    { oppChar: 'パックンフラワー', before: '3,471', after: '3,486', win: '7', lose: '4' },
+    { oppChar: 'ドンキーコング',   before: '3,486', after: '3,496', win: '7', lose: '3' },
+  ]},
+  { src: '2026-08-20 22-18-37.mp4', myChar: 'ノコノコ:赤', court: 'アカデミー クレイ', matches: [
+    { oppChar: 'ブンブン',         before: '3,496', after: '3,527', win: '8', lose: '6' },
+    { oppChar: 'パックンフラワー', before: '3,527', after: '3,540', win: '7', lose: '5' },
+  ]},
+  // 試合単位の court/myChar 上書きに対応（動画6はコートが途中で変わる・動画7はキャラが変わる）
+  { src: '2026-08-20 23-19-09.mp4', myChar: 'カロン', court: 'ギャラクシーコート', matches: [
+    { oppChar: 'ゲッソー',             before: '3,540', after: '3,525', win: '7', lose: '2', result: 'loss' },
+    { oppChar: 'ノコノコ',             before: '3,525', after: '3,495', win: '7', lose: '3', result: 'loss' },
+    { oppChar: 'クッパJr.',            before: '3,495', after: '3,500', win: '8', lose: '6' },
+    { oppChar: 'ゲッソー',             before: '3,500', after: '3,488', win: '7', lose: '5', result: 'loss', court: 'スタジアム グラス' },
+    { oppChar: 'マリオ:オーバーオール', before: '3,488', after: '3,466', win: '7', lose: '1', result: 'loss', court: 'スタジアム グラス' },
+    // 6試合目(2-7 vs ゲッソー)は録画終了までに収まっていないため対象外
+  ]},
+  { src: '2026-08-20 23-37-24.mp4', myChar: 'カロン', court: 'スタジアム グラス', matches: [
+    // v6で録画終了を跨いだ試合(DB登録23:36)が実際はこの動画の冒頭に入っている
+    { oppChar: 'ゲッソー',                     before: '3,466', after: '3,456', win: '7', lose: '2', result: 'loss' },
+    { oppChar: 'ノコノコ', myChar: 'ゲッソー', before: '3,456', after: '3,425', win: '7', lose: '4', result: 'loss' },
+    { oppChar: 'カロン',                       before: '3,425', after: '3,405', win: '7', lose: '3', result: 'loss' }, // ミラー戦
+  ]},
+  // ダブルス: myRow=VS左列でガメスが上(1)か下(2)か。opp1/opp2はVSの右列 上/下（DB登録の順とは無関係・目視確定済み）
+  { src: '2026-08-20 23-59-59.mp4', type: 'doubles', myChar: 'クリボー', court: 'スタジアム グラス', matches: [
+    { myRow: 2, partnerChar: 'マリオ',             opp1Char: 'マリオ:オーバーオール', opp2Char: 'テレサ',
+      before: '2,530', after: '2,508', win: '7', lose: '2', result: 'loss', rankEarly: '208', rankStable: '224' },
+    { myRow: 1, partnerChar: 'マリオ:オーバーオール', opp1Char: 'クリボー', opp2Char: 'マリオ',
+      before: '2,508', after: '2,517', win: '7', lose: '4', court: 'アカデミー ウッド' },
+    { myRow: 2, partnerChar: 'ルイージ',           opp1Char: 'ノコノコ:青', opp2Char: 'クリボー',
+      before: '2,517', after: '2,529', win: '8', lose: '6', court: 'アカデミー ウッド' },
+  ]},
+  // 飛行船コート。m1はDB登録が部分的(スコアnull・opp2null)＋R2はワルイージ系で確証なし→該当収穫をスキップ
+  { src: '2026-08-21 00-39-45.mp4', type: 'doubles', myChar: 'ハナチャン', court: '飛行船 コート', matches: [
+    { myRow: 2, partnerChar: 'ロゼッタ', opp1Char: 'パタパタ', opp2Char: null,
+      before: '2,529', after: '2,518', win: null, lose: null, result: 'loss' },
+    { myRow: 1, myChar: 'ベビィルイージ', partnerChar: 'ガボン', opp1Char: 'マリオ:オーバーオール', opp2Char: 'チコ',
+      before: '2,518', after: '2,531', win: '7', lose: '4' },
+  ]},
+  // フィーバーシングルス（VSカードはラケット構えポーズでクラシックと別絵→ここから再収穫）
+  // myRacket/oppRacket: 発動バナーの教師ラベル（DB登録より）
+  { src: '2026-08-21 00-57-56.mp4', fever: true, myChar: 'ハナチャン', court: 'スタジアム ハード', matches: [
+    { oppChar: 'クッパ',       before: '3,233', after: '3,236', win: '7', lose: '3', court: '飛行船 コート',
+      myRacket: 'トゲゾーラケット', oppRacket: 'カーブラケット' },
+    { oppChar: 'ヨッシー:紫', before: '3,236', after: '3,247', win: '7', lose: '2',
+      myRacket: 'トゲゾーラケット', oppRacket: null },
+    { oppChar: 'キノピコ',     before: '3,247', after: '3,251', win: '7', lose: '1',
+      myRacket: 'トゲゾーラケット', oppRacket: 'カーブラケット' },
+    { oppChar: 'クッパ',       before: '3,251', after: '3,257', win: '7', lose: '3',
+      myRacket: 'トゲゾーラケット', oppRacket: 'たつまきラケット' },
+  ]},
+  // フィーバー2試合（ドロドロラケット収穫用。相手ラケットはDB未登録のためスキップ）
+  { src: '2026-08-23 01-08-30.mp4', fever: true, myChar: 'ハナチャン', court: 'アカデミー クレイ', matches: [
+    { oppChar: 'クッパ', before: '3,257', after: '3,270', win: '7', lose: '2',
+      myRacket: 'ドロドロラケット', oppRacket: null },
+    { oppChar: 'ガボン', before: '3,270', after: '3,274', win: '7', lose: '3',
+      myRacket: 'ドロドロラケット', oppRacket: null },
+  ]},
+  // 編集動画(再エンコード品質)。fever2試合のみ収穫: サンボ/オシダシー/トゲゾーのバナー+ワンダーコート
+  // 注: 編集カットで試合数がGTと合わない可能性があるためこの動画はmatch数ガードに注意（実測5試合=このGTは先頭2つ）
+  { src: 'Video Project 3.mp4', fever: true, myChar: 'ハナチャン', court: 'アカデミー クレイ', vpPartial: true, matches: [
+    { oppChar: 'マリオ', before: '3,274', after: '3,279', win: '7', lose: '2',
+      myRacket: 'サンボラケット', oppRacket: 'オシダシーラケット' },
+    { oppChar: 'マリオ:オーバーオール', before: '3,279', after: '3,250', win: '8', lose: '6', result: 'loss', court: 'ワンダーコート',
+      myRacket: 'サンボラケット', oppRacket: 'トゲゾーラケット' },
+  ]},
+  // クラシックシングルス（自分キャラが試合ごとに変わる・m1はデュース負け6-8・試合中Change Court演出あり）
+  { src: '2026-08-21 01-57-16.mp4', myChar: 'ピーチ', court: 'スタジアム グラス', matches: [
+    { oppChar: 'パックンフラワー', before: '3,405', after: '3,372', win: '8', lose: '6', result: 'loss', court: 'アカデミー ブロック' },
+    { oppChar: 'ガボン',   myChar: 'デイジー', before: '3,372', after: '3,377', win: '7', lose: '3' },
+    { oppChar: 'デイジー', myChar: 'ポリーン', before: '3,377', after: '3,353', win: '7', lose: '4', result: 'loss' },
+  ]},
+];
+
+const save = (name, dataUrl) => fetch('http://localhost:4761/save', {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ name, dataUrl })
+}).then(r => r.json());
+const saveCanvas = (name, c) => save(name, c.toDataURL('image/png'));
+const saveJson = (name, obj) => save(name, 'data:application/json;base64,' +
+  btoa(unescape(encodeURIComponent(JSON.stringify(obj)))));
+
+function imgToCanvas(img) {
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  c.getContext('2d').putImageData(img, 0, 0);
+  return c;
+}
+
+const DBG = { items: [] };
+function dbgAdd(label, img, boxes) {
+  const c = imgToCanvas(img);
+  if (boxes) {
+    const ctx = c.getContext('2d');
+    ctx.strokeStyle = '#f0f'; ctx.lineWidth = 1;
+    boxes.forEach(b => ctx.strokeRect(b.x0 + 0.5, b.y0 + 0.5, b.x1 - b.x0, b.y1 - b.y0));
+  }
+  DBG.items.push({ label, c });
+}
+async function dbgFlush(name) {
+  if (!DBG.items.length) return;
+  const SCALE = 2, PAD = 26;
+  let maxW = 0, totalH = 0;
+  DBG.items.forEach(i => { maxW = Math.max(maxW, i.c.width * SCALE); totalH += i.c.height * SCALE + PAD; });
+  const sheet = document.createElement('canvas');
+  sheet.width = maxW + 260; sheet.height = totalH;
+  const ctx = sheet.getContext('2d');
+  ctx.fillStyle = '#333'; ctx.fillRect(0, 0, sheet.width, sheet.height);
+  ctx.imageSmoothingEnabled = false;
+  let cy = 0;
+  for (const i of DBG.items) {
+    ctx.drawImage(i.c, 240, cy, i.c.width * SCALE, i.c.height * SCALE);
+    ctx.fillStyle = '#0f0'; ctx.font = 'bold 14px monospace';
+    ctx.fillText(i.label, 6, cy + 16);
+    cy += i.c.height * SCALE + PAD;
+  }
+  await saveCanvas(name, sheet);
+  DBG.items = [];
+}
+
+const T = { ratingFont: [], panelFont: [], vsIcons: [], panelIcons: [], courts: [], mode1: [], mode2: [], dblIcons: [], myname: [], racketBanners: [] };
+function packGlyph(label, g) { return { label, aspect: g.aspect, v: Array.from(g) }; }
+
+// コンマは数字の懐に入り込みx順が揺れるため、「数字箱」「コンマ箱」を形状で分類してクラス別に対応付ける
+function harvestText(setName, img, mode, expected, tag) {
+  const opts = mode === 'fillink' ? { ...V.NUM_SEG, labels: expected } : { labels: expected };
+  const glyphs = V.readGlyphs(img, mode, null, opts);
+  dbgAdd(`${tag} 期待[${expected.join('')}] 検出${glyphs.length}個`, img, glyphs.map(g => g.box));
+  const h = img.height;
+  const isCommaBox = g => (g.box.y1 - g.box.y0 + 1) <= h * 0.3 && g.box.y0 >= h * 0.5;
+  const digitGlyphs = glyphs.filter(g => !isCommaBox(g));
+  const commaGlyphs = glyphs.filter(isCommaBox);
+  const expDigits = expected.filter(c => c !== ',');
+  const expCommas = expected.length - expDigits.length;
+  if (digitGlyphs.length !== expDigits.length || commaGlyphs.length !== expCommas) {
+    H.errors.push(`${tag}: expected ${expDigits.length}digits+${expCommas}commas (${expected.join('')}), got ${digitGlyphs.length}+${commaGlyphs.length}`);
+    return false;
+  }
+  digitGlyphs.forEach((g, i) => T[setName].push(packGlyph(expDigits[i], g.glyph)));
+  commaGlyphs.forEach(g => T[setName].push(packGlyph(',', g.glyph)));
+  return true;
+}
+function harvestIcon(setName, img, name, tag, W, H_) {
+  T[setName].push({ name, v: Array.from(V.iconVec(img, W, H_)) });
+  dbgAdd(`${tag} = ${name}`, img);
+}
+
+async function harvestVideo(set, vi) {
+  const v = document.createElement('video');
+  v.muted = true; v.preload = 'auto';
+  v.src = '/samples/' + encodeURIComponent(set.src);
+  await new Promise((res, rej) => {
+    v.addEventListener('loadedmetadata', res, { once: true });
+    v.addEventListener('error', () => rej(new Error('video load error: ' + set.src)), { once: true });
+  });
+  log(`[v${vi}] ${set.src} ${v.videoWidth}x${v.videoHeight} ${v.duration.toFixed(1)}s`);
+  const seekTo = V.makeSeeker(v);
+
+  const events = await V.scan(v, { onProgress: (t, dur) => { H.progress = t / dur; } });
+  H.eventsByVideo[set.src] = events;
+  const matches = V.groupMatches(events);
+  log(`[v${vi}] events: ` + events.map(e => `${e.type}@${e.t0.toFixed(0)}`).join(' '));
+  log(`[v${vi}] matches: ${matches.length} (GT: ${set.matches.length})`);
+  const countOk = set.vpPartial ? matches.length >= set.matches.length : matches.length === set.matches.length;
+  if (!countOk) {
+    H.errors.push(`[v${vi}] match count mismatch: found ${matches.length}, GT ${set.matches.length} — この動画の収穫をスキップ`);
+    return;
+  }
+  const R = V.REGIONS;
+  for (let i = 0; i < Math.min(matches.length, set.matches.length); i++) {
+    const m = matches[i], gt = set.matches[i], n = `v${vi}m${i + 1}`;
+    const myChar = gt.myChar ?? set.myChar;
+    const court = gt.court ?? set.court;
+    const isDbl = set.type === 'doubles';
+    await seekTo((m.vs.t0 + m.vs.t1) / 2);
+    // コート名は背景が毎回違うので白文字マスクで照合（全試合ぶん収穫して背景バリエーションを稼ぐ）
+    T.courts.push({ name: court, v: Array.from(V.textVec(V.cropRegion(v, R.court), 32, 8)) });
+    if (i === 0) dbgAdd(`${n} court = ${court}`, V.cropRegion(v, R.court));
+    if (!isDbl) {
+      harvestIcon('vsIcons', V.cropRegion(v, R.myicon), myChar, `${n} myicon`, 16, 16);
+      harvestIcon('vsIcons', V.cropRegion(v, R.oppicon), gt.oppChar, `${n} oppicon`, 16, 16);
+      dbgAdd(`${n} oppname(表示確認用)`, V.cropRegion(v, R.oppname));
+    } else {
+      const myIconR = gt.myRow === 1 ? R.dIconL1 : R.dIconL2;
+      const paIconR = gt.myRow === 1 ? R.dIconL2 : R.dIconL1;
+      harvestIcon('dblIcons', V.cropRegion(v, myIconR), myChar, `${n} my(L${gt.myRow})`, 16, 12);
+      if (gt.partnerChar) harvestIcon('dblIcons', V.cropRegion(v, paIconR), gt.partnerChar, `${n} partner`, 16, 12);
+      if (gt.opp1Char) harvestIcon('dblIcons', V.cropRegion(v, R.dIconR1), gt.opp1Char, `${n} opp1(R1)`, 16, 12);
+      if (gt.opp2Char) harvestIcon('dblIcons', V.cropRegion(v, R.dIconR2), gt.opp2Char, `${n} opp2(R2)`, 16, 12);
+      const mynameR = gt.myRow === 1 ? R.dNameL1 : R.dNameL2;
+      T.myname.push({ name: 'ガメス', v: Array.from(V.textVec(V.cropRegion(v, mynameR), 32, 8)) });
+      dbgAdd(`${n} myname(ガメス)`, V.cropRegion(v, mynameR));
+    }
+
+    // 勝敗パネルを直接探索（シーン分類は補助のみ）。lossの場合は黄色行=相手
+    {
+      const st0 = m.winner ? m.winner.t0 - 1.0 : m.rating.t0 - 26;
+      const st1 = m.winner ? m.winner.t1 + 1.0 : m.rating.t0 - 0.5;
+      const wloc = await V.locateWinner(v, st0, st1, null);
+      if (!wloc) {
+        H.errors.push(`${n}: winner panel not found (search ${st0.toFixed(0)}-${st1.toFixed(0)})`);
+      } else {
+        const winRow = wloc.row;
+        const [wd, ld] = winRow === 1 ? [R.w1digit, R.w2digit] : [R.w2digit, R.w1digit];
+        const [wi, li] = winRow === 1 ? [R.w1icon, R.w2icon] : [R.w2icon, R.w1icon];
+        if (gt.win) harvestText('panelFont', V.cropRegion(v, wd), 'inkonyellow', [gt.win], `${n} 勝者digit(行${winRow})`);
+        if (gt.lose) harvestText('panelFont', V.cropRegion(v, ld), 'lightink', [gt.lose], `${n} 敗者digit`);
+        if (!isDbl) {
+          const winnerChar = gt.result === 'loss' ? gt.oppChar : myChar;
+          const loserChar  = gt.result === 'loss' ? myChar : gt.oppChar;
+          harvestIcon('panelIcons', V.cropRegion(v, wi), winnerChar, `${n} 勝者icon`, 16, 16);
+          harvestIcon('panelIcons', V.cropRegion(v, li), loserChar, `${n} 敗者icon`, 16, 16);
+        }
+      }
+    }
+
+    await seekTo(m.rating.t0 + 0.6);
+    harvestText('ratingFont', V.cropRegion(v, R.rating), 'fillink', gt.before.split(''), `${n} rating-before`);
+    if (gt.rankEarly) harvestText('ratingFont', V.cropRegion(v, R.ranking), 'fillink', gt.rankEarly.split(''), `${n} rank-early`);
+    if (i === 0) {
+      harvestIcon('mode1', V.cropRegion(v, R.mode1), isDbl ? 'ダブルス' : 'シングルス', `${n} mode1`, 24, 8);
+      harvestIcon('mode2', V.cropRegion(v, R.mode2), set.fever ? 'あり' : 'なし', `${n} mode2`, 32, 8);
+    }
+    await seekTo(m.rating.t1 - 0.5);
+    harvestText('ratingFont', V.cropRegion(v, R.rating), 'fillink', gt.after.split(''), `${n} rating-after`);
+    if (gt.rankStable) harvestText('ratingFont', V.cropRegion(v, R.ranking), 'fillink', gt.rankStable.split(''), `${n} rank-stable`);
+    // フィーバー: 発動バナーを収集し、ゲージ帰属×DBのラケット登録でラベル付け
+    if (set.fever && (gt.myRacket || gt.oppRacket)) {
+      const evs = await V.collectBanners(v, m.vs.t1 + 12, m.rating.t0 - 6, {});
+      for (const e of evs) {
+        const label = e.side === 'me' ? gt.myRacket : e.side === 'opp' ? gt.oppRacket : null;
+        log(`${n} banner@${e.t.toFixed(0)} side=${e.side ?? '?'} dropL=${e.dropL} dropR=${e.dropR} → ${label ?? 'skip'}`);
+        if (!label) continue;
+        for (const p of e.profiles) T.racketBanners.push({ name: label, profile: p });
+      }
+    }
+    log(`${n} harvested`);
+  }
+  await dbgFlush(`harvest_debug_v${vi}.png`);
+}
+
+async function run() {
+  try {
+    // ?only=6,7 で差分収穫: 既存templates.jsonを読み込んだ上で指定動画だけ収穫する
+    const p = new URLSearchParams(location.search);
+    const only = p.get('only') ? p.get('only').split(',').map(Number) : null;
+    if (only) {
+      const res = await fetch('/samples/frames/templates.json');
+      const j = await res.json();
+      for (const [k, arr] of Object.entries(j.sets)) if (T[k]) T[k].push(...arr);
+      log('差分モード: 既存テンプレ読込 ' + Object.entries(T).map(([k, a]) => `${k}=${a.length}`).join(' '));
+    }
+    for (let vi = 0; vi < SETS.length; vi++) {
+      if (only && !only.includes(vi + 1)) continue;
+      H.phase = `video${vi + 1}`;
+      await harvestVideo(SETS[vi], vi + 1);
+    }
+    H.phase = 'save';
+    const counts = Object.fromEntries(Object.entries(T).map(([k, a]) => [k, a.length]));
+    await saveJson('templates.json', { createdAt: '2026-08-20', videos: SETS.map(s => s.src), glyphSize: [V.TW, V.TH], sets: T });
+    log('saved templates.json: ' + JSON.stringify(counts));
+    H.counts = counts;
+    H.phase = 'done'; H.done = true;
+  } catch (e) {
+    H.errors.push(String(e && e.stack || e));
+    H.phase = 'error';
+    log('ERROR: ' + e);
+  }
+}
+run();
+</script>
+</body>
+</html>

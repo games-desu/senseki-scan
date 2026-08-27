@@ -1,0 +1,11 @@
+# 巨大ファイル（GitHubに上げない）
+samples/
+
+# ビルド成果物・依存
+app/dist/
+app/node_modules/
+
+# OSゴミ
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,1208 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>SENSEKI SCAN</title>
+<style>
+  :root { --bg:#0f1613; --panel:#17211c; --border:#2a3a32; --text:#e4ede8; --sub:#8fa89b; --accent:#2ecc71; --accent-dark:#1f9d4d; --warn:#e74c3c; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:"Segoe UI","Yu Gothic UI",sans-serif; padding:16px; }
+  h1 { font-size:18px; color:var(--accent); margin-bottom:4px; display:flex; align-items:center; }
+  h1 .sub { margin-bottom:0; margin-left:7px; }
+  .rule { width:3px; height:17px; background:var(--accent); border-radius:2px; margin-right:10px; flex:none; }
+  .sub { color:var(--sub); font-size:12px; margin-bottom:12px; }
+  #drop { border:2px dashed var(--border); border-radius:10px; padding:26px; text-align:center; color:var(--sub); cursor:pointer; margin-bottom:12px; }
+  #drop.over { border-color:var(--accent); background:#1a2b22; }
+  #drop.loaded { padding:8px 12px; font-size:12px; text-align:left; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:12px; }
+  #progress { font-size:13px; color:var(--sub); }
+  #bar { height:6px; background:#101a15; border-radius:3px; overflow:hidden; margin-top:6px; }
+  #bar div { height:100%; width:0%; background:var(--accent-dark); transition:width .3s; }
+  button { background:#223129; color:var(--text); border:1px solid var(--border); border-radius:7px; padding:8px 14px; font-size:13px; cursor:pointer; }
+  button.primary { background:var(--accent-dark); border-color:var(--accent-dark); font-weight:bold; }
+  button:disabled { opacity:.4; cursor:default; }
+  .match { background:#101a15; border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:10px; }
+  .match h3 { font-size:13px; color:var(--accent); margin-bottom:8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; }
+  .field label { display:block; font-size:10px; color:var(--sub); margin-bottom:2px; }
+  .field input, .field select { width:100%; background:#0c130f; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:5px 6px; font-size:12px; }
+  .field.flag input, .field.flag select { border-color:var(--warn); background:#2b1512; }
+  .field.edited input, .field.edited select { border-color:#3ba7db; background:#0e1d28; }
+  .field label .autofix { color:#f2c230; margin-left:5px; }
+  .field .conf { font-size:9px; color:var(--sub); }
+  #viewBar button.active { background:var(--accent-dark); border-color:var(--accent-dark); font-weight:bold; }
+  .revnav { display:flex; align-items:center; gap:12px; margin-bottom:10px; flex-wrap:wrap; }
+  .revnav .pos { font-size:14px; font-weight:bold; }
+  .revnav .sub { margin-bottom:0; }
+  .match.single .evi img { height:200px; }
+  .match.single .namecrop { height:34px; }
+  .match.single .field input, .match.single .field select { font-size:13px; padding:7px 8px; }
+  /* 1件ずつ確認: 照合ペア型（証拠画像とその入力欄を行ごとに横並び） */
+  .chips { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .chip { font-size:11px; padding:3px 10px; border-radius:20px; border:1px solid var(--border); color:var(--sub); }
+  .chip.warn { border-color:var(--warn); color:#ff8d80; background:#2b1512; }
+  .chip.ok { border-color:var(--accent-dark); color:var(--accent); }
+  .dots { display:flex; gap:4px; align-items:center; }
+  .dots i { width:22px; height:6px; border-radius:3px; background:#223129; cursor:pointer; }
+  .dots i.done { background:var(--accent-dark); }
+  .dots i.cur { background:var(--accent); }
+  .dots i.warn { background:var(--warn); }
+  .pair { display:grid; grid-template-columns:440px 1fr; gap:18px; padding:14px 0; border-bottom:1px solid var(--border); align-items:start; }
+  .pair:last-of-type { border-bottom:none; padding-bottom:2px; }
+  .pair .imgs { display:flex; gap:10px; }
+  .pair .imgs figure { flex:1; min-width:0; }
+  .pair figure { margin:0; }
+  .pair figure > img { width:100%; height:auto; max-height:300px; object-fit:contain; border-radius:8px; border:1px solid var(--border); cursor:zoom-in; display:block; background:#000; }
+  .pair figcaption { font-size:10px; color:var(--sub); text-align:center; margin-top:4px; }
+  .pairhead { font-size:11px; font-weight:bold; color:var(--accent); margin-bottom:8px; letter-spacing:.5px; }
+  .pair .g2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .pair .g3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  .pair .g2 + .g2, .pair .g2 + .g3, .pair .g3 + .g2 { margin-top:10px; }
+  .pair .noimg { color:var(--sub); font-size:11px; border:1px dashed var(--border); border-radius:8px; padding:24px 10px; text-align:center; }
+  /* 一覧: シアター型（上=大きめの証拠画像を黒帯に並べる・下=入力グリッド） */
+  .stage { display:flex; gap:12px; margin-bottom:10px; flex-wrap:wrap; align-items:flex-start; background:#000; border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+  .stage figure { margin:0; }
+  .stage img { height:150px; border-radius:6px; border:1px solid var(--border); cursor:zoom-in; display:block; background:#000; }
+  .stage figcaption { font-size:10px; color:var(--sub); text-align:center; margin-top:3px; }
+  #combo { display:none; position:absolute; z-index:20; background:var(--panel); border:1px solid var(--border); border-radius:8px; max-height:240px; overflow-y:auto; box-shadow:0 6px 18px rgba(0,0,0,.5); }
+  #combo button { display:block; width:100%; text-align:left; border:none; border-radius:0; background:none; padding:6px 10px; font-size:12px; }
+  #combo button.focus { background:#1f3a2c; color:var(--accent); }
+  #combo button.current { color:var(--accent); }
+  #combo .empty { padding:8px 10px; font-size:11px; color:var(--sub); }
+  .namecrop { height:26px; border-radius:4px; display:block; margin-bottom:3px; background:#000; }
+  .evi { display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  .evi figure { margin:0; }
+  .evi img { height:96px; border-radius:6px; border:1px solid var(--border); cursor:zoom-in; display:block; background:#000; }
+  .evi figcaption { font-size:10px; color:var(--sub); text-align:center; margin-top:2px; }
+  #lightbox { display:none; position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:10; align-items:center; justify-content:center; cursor:zoom-out; }
+  #lightbox img { max-width:94vw; max-height:94vh; border-radius:8px; }
+  video { display:none; }
+  #log { font:11px Consolas,monospace; color:var(--sub); white-space:pre-wrap; max-height:140px; overflow-y:auto; margin-top:8px; }
+</style>
+</head>
+<body>
+<h1><span class="rule"></span>SENSEKI SCAN <span id="ver" class="sub"></span></h1>
+<p class="sub">マリオテニスフィーバーの対戦録画 → SENSEKI FEVER「CSV一括登録」フォーマット。全部門自動識別・解析はすべてこのPC内で完結します。</p>
+<div id="drop">録画ファイル（MP4）をドラッグ&ドロップ、またはクリックして選択（複数まとめてOK）</div>
+<input type="file" id="file" accept="video/*" multiple hidden>
+<div class="panel" style="padding:8px 12px">
+  <label class="sub" style="margin-bottom:0; cursor:pointer; display:inline-flex; align-items:center; gap:6px">
+    <input type="checkbox" id="setAutoName" checked>
+    相手名の自動入力（過去にCSV保存で確定した名前の画像と照合して補完する）
+  </label>
+</div>
+<div class="panel" id="queuePanel" style="display:none">
+  <div id="queue" class="sub"></div>
+</div>
+<div class="panel" id="progPanel" style="display:none">
+  <div id="progress">準備中…</div>
+  <div id="bar"><div></div></div>
+  <div id="log"></div>
+</div>
+<div class="panel" id="viewBar" style="display:none; align-items:center; gap:8px; flex-wrap:wrap">
+  <button id="modeSingle">1件ずつ確認</button>
+  <button id="modeList">一覧表示</button>
+  <span class="sub" style="margin-bottom:0">1件ずつ確認: Enterで次の試合へ / Shift+Enterで前へ</span>
+  <button class="primary" id="exportCsvTop" style="margin-left:auto">CSVを保存</button>
+  <button id="resetAll" title="読み込んだ解析結果をすべて消します">クリア</button>
+</div>
+<div id="review"></div>
+<div id="results"></div>
+<div class="panel" id="exportPanel" style="display:none">
+  <button class="primary" id="exportCsv">CSVを保存</button>
+  <span class="sub" style="margin-left:8px">SENSEKI FEVERの「CSV一括登録」にそのまま読み込めます。赤枠＝要確認・青枠＝手修正済み。保存前にご確認ください</span>
+</div>
+<video id="video" muted preload="auto"></video>
+<div id="combo"></div>
+<div id="lightbox"><img id="lightboxImg"></div>
+
+<script src="vision.js"></script>
+<script src="characters.js"></script>
+<script>
+// 開発用フォールバック: Electron外（ブラウザ）で開いたときはHTTP辞書＋ブラウザDLで動く
+if (!window.api) {
+  window.api = {
+    loadTemplates: () => fetch('/samples/frames/templates.json').then(r => r.json()).then(j => {
+      try {
+        const u = JSON.parse(localStorage.getItem('sc_templates-user'));
+        if (u) for (const [k, arr] of Object.entries(u.sets ?? {})) { (j.sets[k] ??= []).push(...arr); }
+      } catch {}
+      return j;
+    }),
+    saveCsv: async (name, content) => {
+      const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = name; a.click();
+      URL.revokeObjectURL(a.href);
+      return { ok: true, path: '(ブラウザダウンロード) ' + name };
+    },
+    appendUserTemplates: async sets => {
+      let u; try { u = JSON.parse(localStorage.getItem('sc_templates-user')) || { sets: {} }; } catch { u = { sets: {} }; }
+      for (const [k, arr] of Object.entries(sets ?? {})) { (u.sets[k] ??= []).push(...arr); }
+      localStorage.setItem('sc_templates-user', JSON.stringify(u));
+      return { ok: true, path: '(localStorage) templates-user' };
+    },
+    loadUserData: async k => { try { return JSON.parse(localStorage.getItem('sc_' + k)); } catch { return null; } },
+    saveUserData: async (k, d) => { localStorage.setItem('sc_' + k, JSON.stringify(d)); return { ok: true, path: '(localStorage) ' + k }; },
+    appVersion: async () => 'dev',
+  };
+}
+const V = window.Vision;
+const $ = id => document.getElementById(id);
+const video = $('video');
+let TPL = null;           // templates.json（Float32Array復元済み）
+let fileInfo = null;      // {name, lastModified}
+let matches = [];         // 解析結果
+let RATE_CHAIN = {};      // modeごとの直近確定レート（変動前の連鎖補完用）
+window.A = { phase: 'idle', log: [] };
+
+function log(m) { window.A.log.push(m); $('log').textContent = window.A.log.join('\n'); $('log').scrollTop = 1e9; }
+function setProgress(msg, ratio) {
+  $('progress').textContent = msg;
+  if (ratio != null) $('bar').firstElementChild.style.width = (ratio * 100).toFixed(1) + '%';
+}
+
+// ---- テンプレート読み込み（同梱辞書＋ユーザー辞書をメインプロセスがマージ済み） ----
+async function loadTemplates() {
+  const j = await window.api.loadTemplates();
+  const wake = arr => arr.map(t => {
+    const v = new Float32Array(t.v);
+    if (t.aspect != null) v.aspect = t.aspect;
+    return { ...t, v };
+  });
+  TPL = Object.fromEntries(Object.entries(j.sets).map(([k, arr]) => [k, wake(arr)]));
+  // キャラ系ラベルを正典表記へ正規化（デフォルト色の冗長表記「ノコノコ:緑」→「ノコノコ」等。
+  // 過去に収穫したユーザー辞書のラベルもここで直る）
+  for (const set of ['vsIcons', 'dblIcons', 'panelIcons']) {
+    for (const t of TPL[set] || []) t.name = Characters.canon(t.name);
+  }
+  log('templates: ' + Object.entries(TPL).map(([k, a]) => `${k}=${a.length}`).join(' '));
+}
+
+// ---- 設定＋相手名データ（UI要望5: 案A=履歴候補・案B=名前画像テンプレ照合） ----
+let SETTINGS = { autoName: true };
+let NAMES = { history: [], vecs: [] }; // history: {name,count,lastUsed} / vecs: {name, v:[textVec 32x8]}
+async function loadUserData() {
+  SETTINGS = { autoName: true, ...(await window.api.loadUserData('settings') || {}) };
+  NAMES = { history: [], vecs: [], ...(await window.api.loadUserData('names-user') || {}) };
+  $('setAutoName').checked = !!SETTINGS.autoName;
+}
+const userDataReady = loadUserData().catch(() => {});
+$('setAutoName').addEventListener('change', () => {
+  SETTINGS.autoName = $('setAutoName').checked;
+  window.api.saveUserData('settings', SETTINGS);
+});
+
+// 名前クロップの textVec を過去に確定した名前テンプレと照合（白chのみ=背景のコート色に不変）。
+// 同一名は同一フォント描画なので一致時は0.9台に乗る。閾値未満なら自動入力しない
+function nameFromVec(vec) {
+  if (!SETTINGS.autoName || !NAMES.vecs.length) return null;
+  let best = null;
+  for (const t of NAMES.vecs) {
+    const s = V.nccWh(vec, t.v);
+    if (!best || s > best.s) best = { name: t.name, s };
+  }
+  return best && best.s >= 0.90 ? best : null;
+}
+
+// CSV保存時に確定した名前を収穫: 履歴(案A)と名前画像テンプレ(案B)へ追記。
+// 自動入力のまま確定した名前はテンプレ再登録しない（既存テンプレで当たった=情報増なし）
+function harvestNames() {
+  let changed = false;
+  for (const m of matches) {
+    if (m._harvested) continue;
+    m._harvested = true;
+    for (const key of ['oppName', 'partnerName', 'opp2Name']) {
+      const name = String(m[key] ?? '').trim();
+      if (!name || name.length > 10) continue; // ニックネームは10文字以内
+      changed = true;
+      const h = NAMES.history.find(x => x.name === name);
+      if (h) { h.count++; h.lastUsed = Date.now(); }
+      else NAMES.history.push({ name, count: 1, lastUsed: Date.now() });
+      const vec = m._nameVecs && m._nameVecs[key];
+      if (vec && !(m.autoName && m.autoName[key])) {
+        NAMES.vecs.push({ name, v: vec });
+        const mine = NAMES.vecs.filter(t => t.name === name);
+        if (mine.length > 3) NAMES.vecs.splice(NAMES.vecs.indexOf(mine[0]), 1); // 同名は直近3つまで
+      }
+    }
+  }
+  if (changed) { window.api.saveUserData('names-user', NAMES); COMBO_SRC = null; }
+}
+
+// 教えるサイクル(キャラ/コート): ユーザーが修正して確定した値のアイコン/コート名画像をユーザー辞書へ追記。
+// 認識が当たっていた値は収穫しない（同じ絵が増えるだけ）。同名で酷似ベクトル(ncc>=0.99)もスキップ。
+// TPL(メモリ上)にも即反映するので、同セッションの次の動画から効く
+async function harvestTemplates() {
+  const sets = {};
+  const push = (setName, name, v) => {
+    if (!name) return;
+    const lib = TPL[setName] || (TPL[setName] = []);
+    const fv = Float32Array.from(v);
+    for (const t of lib) if (t.name === name && V.ncc(fv, t.v) >= 0.99) return;
+    (sets[setName] ??= []).push({ name, v: Array.from(v) });
+    lib.push({ name, v: fv });
+  };
+  for (const m of matches) {
+    if (m._tplHarvested) continue;
+    m._tplHarvested = true;
+    const iconSet = m.isDoubles ? 'dblIcons' : 'vsIcons';
+    for (const key of ['myChar', 'partnerChar', 'oppChar', 'opp2Char']) {
+      // ラベルは正典表記に正規化してから収穫（「ノコノコ:緑」のような無効表記の辞書混入を防ぐ）
+      if (m.edited && m.edited[key] && m._iconVecs && m._iconVecs[key]) push(iconSet, Characters.canon(m[key]), m._iconVecs[key]);
+    }
+    if (m.edited && m.edited.court && m._courtVec) push('courts', String(m.court).trim(), m._courtVec);
+  }
+  if (Object.keys(sets).length) {
+    const r = await window.api.appendUserTemplates(sets);
+    if (r.ok) log('修正内容をユーザー辞書に追加: ' + Object.entries(sets).map(([k, a]) => `${k}+${a.length}`).join(' ') + ' → 次回から自動認識に使われます');
+    COMBO_SRC = null;
+  }
+}
+
+// ---- ファイル名から録画開始日時 ----
+function parseStartTime(name, lastModified, duration) {
+  let m = name.match(/(\d{4})-(\d{2})-(\d{2})[ _](\d{2})-(\d{2})-(\d{2})/); // OBS形式
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  m = name.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\d{2}/);        // Switch本体形式
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  if (lastModified) return new Date(lastModified - duration * 1000);         // 最終更新-長さ
+  return null;
+}
+const fmtDT = d => {
+  if (!d || isNaN(d.getTime())) return '';
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:00`;
+};
+
+const seekTo = t => V.makeSeeker(video)(t);
+
+function cropDataUrl(r) {
+  const k = video.videoWidth / 1920;
+  const c = document.createElement('canvas');
+  c.width = r.w; c.height = r.h;
+  c.getContext('2d').drawImage(video, r.x * k, r.y * k, r.w * k, r.h * k, 0, 0, r.w, r.h);
+  return c.toDataURL('image/png');
+}
+
+// 証拠画像用: フレーム全体 / 指定領域をJPEGで（確認画面に載せるためサイズ控えめ）
+function frameJpeg(width = 640) {
+  const c = document.createElement('canvas');
+  c.width = width; c.height = Math.round(width * video.videoHeight / video.videoWidth);
+  c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.72);
+}
+function regionJpeg(r, outW) {
+  const k = video.videoWidth / 1920;
+  const w = outW ?? r.w, h = Math.round(r.h * w / r.w);
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(video, r.x * k, r.y * k, r.w * k, r.h * k, 0, 0, w, h);
+  return c.toDataURL('image/jpeg', 0.75);
+}
+
+// 数値読み: パネルのフェードイン/カウントアップ演出中の歪んだ読みを弾くため、
+// 「高信頼(conf>=0.88)の読みが連続2回一致」した値のみ stable とする
+async function readNumberAt(times, region, mode, templates) {
+  const reads = [];
+  for (const t of times) {
+    await seekTo(t);
+    const g = V.readGlyphs(V.cropRegion(video, region), mode, templates, mode === 'fillink' ? V.NUM_SEG : undefined);
+    const p = V.parseNumber(g);
+    // 信頼度は緩め（暗背景コートで縁が甘くなる）。「連続2回の値一致」＋変動幅サニティが本命の安全網
+    reads.push(p.conf >= 0.55 && p.value != null && p.value >= 100 ? p : null);
+    // 連続一致が出たら早期確定
+    const n = reads.length;
+    if (n >= 2 && reads[n-1] && reads[n-2] && reads[n-1].value != null && reads[n-1].value === reads[n-2].value) {
+      return { value: reads[n-1].value, conf: Math.min(reads[n-1].conf, reads[n-2].conf), stable: true };
+    }
+  }
+  const valid = reads.filter(r => r && r.value != null);
+  if (!valid.length) return { value: null, conf: 0, stable: false };
+  return { value: valid[valid.length - 1].value, conf: valid[valid.length - 1].conf, stable: false };
+}
+
+// ---- 最終スコアの妥当性検証（4→6誤読の網） ----
+// 有効な最終スコアは「7対0〜5」か「8対6」だけ（SENSEKI FEVER MatchForm.tsx の isValidScore と同じ規則）
+const isValidFinal = (w, l) => (w === 7 && l >= 0 && l <= 5) || (w === 8 && l === 6);
+
+// 1位の読みが無効なスコアを作るとき、各桁のテンプレ候補（2位以下）から有効になる組み合わせを選び直す。
+// 置き換えた値は autoFixed（=要確認フラグ＋[自動補正]表示）。どの候補でも有効にならなければ
+// 空欄化する（ありえない数字を出力に残すのは禁止）
+function validateWinnerScores(s1, s2, winnerRow) {
+  const w = winnerRow === 1 ? s1 : s2, l = winnerRow === 1 ? s2 : s1;
+  if (w.value != null && l.value != null && isValidFinal(w.value, l.value)) return { s1, s2 };
+  const FLOOR = 0.5; // NCC候補は全ラベルに点が付くため、低すぎる読み替えは採用しない
+  const candsOf = s => (s.cands && s.cands.length ? s.cands : (s.value != null ? [{ v: s.value, s: s.conf }] : []))
+    .filter(c => c.s >= FLOOR);
+  const wc = candsOf(w).filter(c => c.v === 7 || c.v === 8);
+  const lc = candsOf(l).filter(c => c.v >= 0 && c.v <= 6);
+  let best = null;
+  for (const cw of wc) for (const cl of lc) {
+    if (!isValidFinal(cw.v, cl.v)) continue;
+    const score = Math.min(cw.s, cl.s);
+    if (!best || score > best.score) best = { w: cw.v, l: cl.v, score };
+  }
+  // 片側の候補が全滅でも、他方から補完規則で一意に絞れるケース（8→相手は6 / 6→相手は8 / 0〜5→相手は7）
+  if (!best && wc.length && !lc.length && wc[0].v === 8) best = { w: 8, l: 6, score: wc[0].s };
+  if (!best && lc.length && !wc.length) best = { w: lc[0].v === 6 ? 8 : 7, l: lc[0].v, score: lc[0].s };
+  if (best) {
+    const nw = { ...w }, nl = { ...l };
+    if (w.value !== best.w) { nw.value = best.w; nw.autoFixed = true; }
+    if (l.value !== best.l) { nl.value = best.l; nl.autoFixed = true; }
+    return winnerRow === 1 ? { s1: nw, s2: nl } : { s1: nl, s2: nw };
+  }
+  // 読み直しても有効にならない: 単独で妥当な側（勝者=7/8・敗者=0〜6）のうち信頼度の高い側だけ残し、
+  // 他方は空欄。どちらが誤読か特定できないため両方要確認にする
+  const blank = s => ({ ...s, value: null, conf: 0, suspect: true });
+  const wOk = w.value === 7 || w.value === 8;
+  const lOk = l.value != null && l.value >= 0 && l.value <= 6;
+  const keepW = wOk && (!lOk || w.conf >= l.conf);
+  const nw = keepW ? { ...w, suspect: true } : blank(w);
+  const nl = (lOk && !keepW) ? { ...l, suspect: true } : blank(l);
+  return winnerRow === 1 ? { s1: nw, s2: nl } : { s1: nl, s2: nw };
+}
+
+// ---- メイン解析 ----
+async function analyze() {
+  window.A.phase = 'scan';
+  $('progPanel').style.display = 'block';
+  const t0 = performance.now();
+  const events = await V.scan(video, { albumTpl: TPL.albumBar || [], onProgress: (t, dur) =>
+    setProgress(`全編スキャン中… ${t.toFixed(0)}/${dur.toFixed(0)}秒`, t / dur * 0.7) });
+  log(`scan ${((performance.now() - t0) / 1000).toFixed(1)}s: ` + events.map(e => `${e.type}@${e.t0.toFixed(0)}-${e.t1.toFixed(0)}`).join(' '));
+  const albumWins = events.filter(e => e.type === 'album');
+  if (albumWins.length) {
+    log('アルバム/ホーム画面の再生を検出し解析対象から除外: ' + albumWins.map(w => w.t0.toFixed(0) + '〜' + w.t1.toFixed(0) + '秒').join(' / '));
+  }
+  let grouped = V.groupMatches(events);
+  // レートパネルの色はランクで変わるため、未収穫ランクの試合は成立しない。取り逃しを可視化する
+  const vsCount = events.filter(e => e.type === 'vs').length;
+  if (vsCount > grouped.length) {
+    log(`[警告] VS画面${vsCount}回に対し成立した試合が${grouped.length}件です。レート画面を検出できなかった試合がある可能性があります（未対応のランク色など）。該当区間の録画を添えて報告してください。`);
+  }
+  // 孤児rating検出: どの試合にも紐づかなかったレート画面は「VS画面を取り逃した試合」の確実な証拠。
+  // 旧実装の「ratingCount > grouped+1」はちょうど1試合欠けたとき(8>8)に沈黙するオフバイワンがあり、
+  // 720p実戦でドンキーコング戦が無警告で消えた（docs/csv-accuracy-720p-classic.md）。
+  const attachedRatings = new Set(grouped.map(m => m.rating));
+  // 直前のレート窓の終わりから30秒以内に始まる孤児は「同じパネルの分割」（メニュー操作等で一瞬途切れる）。
+  // フィーバー実戦(1440p)で 7秒/4秒、クラシックダブルス実戦で 11〜42秒 の分割誤報が出た。
+  // 本物の取り逃し（DK戦）は225秒離れていたので、閾値60秒でも検知力は落ちない。
+  const ratingEvents = events.filter(e => e.type === 'rating');
+  const orphanRatings = ratingEvents.filter(e => !attachedRatings.has(e) &&
+    !ratingEvents.some(r => r !== e && r.t1 <= e.t0 && e.t0 - r.t1 < 60));
+  for (const o of orphanRatings) {
+    log(`[警告] ${o.t0.toFixed(0)}秒のレート画面がどの試合にも紐づきません。直前のVS画面を検出できず試合を1件取り逃した可能性が高いです。該当区間の録画を添えて報告してください。`);
+  }
+  const winnerCount = events.filter(e => e.type === 'winner').length;
+  if (winnerCount > grouped.length + 1) {
+    log(`[警告] 勝敗画面らしきものを${winnerCount}回検出しました（試合${grouped.length}件）。編集カット等で画面が欠けた試合がある可能性があります。`);
+  }
+
+  // winner窓が拾えなかった試合はレート窓の直前を細かく再走査
+  for (const m of grouped) {
+    if (!m.winner) {
+      for (let t = m.rating.t0 - 1; t > m.rating.t0 - 16 && t > 0; t -= 0.3) {
+        await seekTo(t);
+        if (V.classify(V.frameToData(video, 192, 108)) === 'winner') {
+          m.winner = { type: 'winner', t0: t - 0.3, t1: t };
+          break;
+        }
+      }
+    }
+  }
+
+  window.A.phase = 'extract';
+  const R = V.REGIONS;
+  const startTime = parseStartTime(fileInfo.name, fileInfo.lastModified, video.duration);
+  const videoMatches = []; // この動画ぶん（バッチではmatchesへ追記される）
+  for (let i = 0; i < grouped.length; i++) {
+    const g = grouped[i];
+    setProgress(`${fileInfo.name}: 試合 ${i + 1}/${grouped.length} を解析中…`, 0.7 + 0.3 * i / grouped.length);
+    const m = { n: matches.length + videoMatches.length + 1, video: fileInfo.name, flags: {}, crops: {} };
+
+    // --- VS画面: コート・キャラ・名前クロップ ---
+    await seekTo((g.vs.t0 + g.vs.t1) / 2);
+    m.crops.vsFrame = frameJpeg(640); // 証拠: 対戦カード全景（コート名・キャラ・名前が1枚で確認できる）
+    // コート名は matchIconWh（白チャンネルのみ）。暗チャンネルは背景に支配される（vision.js の注記参照）
+    const courtVec = V.textVec(V.cropRegion(video, R.court), 32, 8);
+    const court = V.matchIconWh(courtVec, TPL.courts);
+    m.court = court.name; m.courtConf = court.score;
+    m._courtVec = Array.from(courtVec); // 教えるサイクル用（修正確定時に辞書へ）
+    if (court.score < 0.85) m.flags.court = true;
+    // ダブルス判定: シングルスではカードが無いy帯(852-882)に「左=青カード AND 右=オレンジカード AND 中央=黒帯」が同時に揃うか
+    // （単色チェックだと水面コートの青や клейコートのオレンジなど背景に誤爆する）
+    const l1img = V.cropRegion(video, R.dIconL1);
+    const r1img = V.cropRegion(video, R.dIconR1);
+    const midimg = V.cropRegion(video, { x: 300, y: 852, w: 320, h: 30 });
+    const blueL = V.frac(l1img, 0, 0, R.dIconL1.w, 30, (r, gg, b) => b > r + 40 && b > 120);
+    const orgR = V.frac(r1img, 0, 0, R.dIconR1.w, 30, (r, gg, b) => r > 160 && b < 100 && gg > 40 && gg < 170);
+    const darkM = V.frac(midimg, 0, 0, 320, 30, (r, gg, b) => 0.299 * r + 0.587 * gg + 0.114 * b < 60);
+    m.isDoubles = blueL > 0.2 && orgR > 0.15 && darkM > 0.5;
+    if (!m.isDoubles) {
+      const myVec = V.iconVec(V.cropRegion(video, R.myicon), 16, 16);
+      const opVec = V.iconVec(V.cropRegion(video, R.oppicon), 16, 16);
+      const myc = V.matchIcon(myVec, TPL.vsIcons);
+      const opc = V.matchIcon(opVec, TPL.vsIcons);
+      m._iconVecs = { myChar: Array.from(myVec), oppChar: Array.from(opVec) };
+      m.myChar = myc.name; m.myCharConf = myc.score;
+      m.oppChar = opc.name; m.oppCharConf = opc.score;
+      if (myc.score < 0.8) m.flags.myChar = true;
+      if (opc.score < 0.8) m.flags.oppChar = true;
+      m.crops.oppname = cropDataUrl(R.oppname);
+      const nv = V.textVec(V.cropRegion(video, R.oppname), 32, 8);
+      m._nameVecs = { oppName: Array.from(nv) };
+      const hit = nameFromVec(nv);
+      if (hit) { m.oppName = hit.name; (m.autoName ??= {}).oppName = true; }
+    } else {
+      // ダブルス: 4アイコン照合 + 「ガメス」の名前画像で自分の行を特定
+      const iv = k => V.iconVec(V.cropRegion(video, R[k]), 16, 12);
+      const vL1 = iv('dIconL1'), vL2 = iv('dIconL2'), vR1 = iv('dIconR1'), vR2 = iv('dIconR2');
+      const ic = v => V.matchIcon(v, TPL.dblIcons || []);
+      const l1 = ic(vL1), l2 = ic(vL2), r1 = ic(vR1), r2 = ic(vR2);
+      let s1 = 0, s2 = 0;
+      const nv1 = V.textVec(V.cropRegion(video, R.dNameL1), 32, 8);
+      const nv2 = V.textVec(V.cropRegion(video, R.dNameL2), 32, 8);
+      for (const t of (TPL.myname || [])) {
+        s1 = Math.max(s1, V.ncc(nv1, t.v));
+        s2 = Math.max(s2, V.ncc(nv2, t.v));
+      }
+      const myRow = s1 >= s2 ? 1 : 2;
+      const mine = myRow === 1 ? l1 : l2, part = myRow === 1 ? l2 : l1;
+      m._iconVecs = { myChar: Array.from(myRow === 1 ? vL1 : vL2), partnerChar: Array.from(myRow === 1 ? vL2 : vL1),
+                      oppChar: Array.from(vR1), opp2Char: Array.from(vR2) };
+      m.myChar = mine.name; m.myCharConf = mine.score;
+      m.partnerChar = part.name; m.partnerCharConf = part.score;
+      m.oppChar = r1.name; m.oppCharConf = r1.score;
+      m.opp2Char = r2.name; m.opp2CharConf = r2.score;
+      if (Math.max(s1, s2) < 0.75) { m.flags.myChar = true; m.flags.partnerChar = true; }
+      if (mine.score < 0.8) m.flags.myChar = true;
+      if (part.score < 0.8) m.flags.partnerChar = true;
+      if (r1.score < 0.8) m.flags.oppChar = true;
+      if (r2.score < 0.8) m.flags.opp2Char = true;
+      m.crops.partnername = cropDataUrl(myRow === 1 ? R.dNameL2 : R.dNameL1);
+      m.crops.oppname = cropDataUrl(R.dNameR1);
+      m.crops.opp2name = cropDataUrl(R.dNameR2);
+      m._nameVecs = {};
+      for (const [key, reg] of [['partnerName', myRow === 1 ? R.dNameL2 : R.dNameL1],
+                                ['oppName', R.dNameR1], ['opp2Name', R.dNameR2]]) {
+        const nv = V.textVec(V.cropRegion(video, reg), 32, 8);
+        m._nameVecs[key] = Array.from(nv);
+        const hit = nameFromVec(nv);
+        if (hit) { m[key] = hit.name; (m.autoName ??= {})[key] = true; }
+      }
+    }
+    m.playedAt = startTime ? fmtDT(new Date(startTime.getTime() + g.vs.t0 * 1000)) : '';
+    if (!m.playedAt) m.flags.playedAt = true;
+
+    // --- Winnerパネル: スコアと勝敗 ---
+    // シーン分類で窓が取れていればその周辺、なければレートパネル直前26秒を逆走査で直接探す。
+    // ダブルスはスコア枠の位置が違うため専用領域(dw1digit/dw2digit)で探す
+    const searchT0 = g.winner ? g.winner.t0 - 1.0 : g.rating.t0 - 26;
+    const searchT1 = g.winner ? g.winner.t1 + 1.0 : g.rating.t0 - 0.5;
+    // スコア読みはシングルス/ダブルスとも枠内クリーン領域(dw1digit/dw2digit)+クリーン書体
+    // (panelFont収穫分∪ratingFont=0〜9全カバー)に統一。旧w1digit塊読みはFHDシングルスで
+    // 7-4を8-6と誤読した実例があり引退（パネルはどちらも同じ小型デザインと実測で確認済み）
+    const scoreFont = [...TPL.panelFont, ...TPL.ratingFont];
+    const wloc = await V.locateWinner(video, searchT0, searchT1, scoreFont, true);
+    const rDigit1 = R.dw1digit;
+    const rDigit2 = R.dw2digit;
+    if (wloc) {
+      const winnerRow = wloc.row;
+      // スコアは0〜8の1桁。単一グリフのとき桁のテンプレ候補を保持する（妥当性検証の読み直しに使う）
+      const readScore = (region, mode) => {
+        const glyphs = V.readGlyphs(V.cropRegion(video, region), mode, scoreFont);
+        const p = V.parseNumber(glyphs);
+        const digits = glyphs.filter(g => /^[0-9]$/.test(g.label ?? ''));
+        p.cands = digits.length === 1
+          ? (digits[0].candidates || []).filter(c => /^[0-9]$/.test(c.label)).map(c => ({ v: +c.label, s: c.score }))
+          : null;
+        return p;
+      };
+      // スコア読み: パネルは接戦時に「途中スコアで静止→最終値を一瞬表示して消滅」する（8-6が
+      // 7/2表示から最後の一瞬だけ8/6になる実例）。従来のwloc.t±0.3のbest-conf採用は途中表示を
+      // 高confで拾ってしまう（4→6誤読の正体とみられる）ため、両モードとも
+      // 「パネル最終表示フレーム(findPanelEnd)とその直前」で読む。
+      // 採用規則: シングルスは実績あるbest-conf維持・ダブルスは「conf>=0.5のうち値が最大」
+      // （スコアは増える方向にしか更新されないため）
+      let s1 = { value: null, conf: 0 }, s2 = { value: null, conf: 0 };
+      const tRead = await V.findPanelEnd(video, wloc);
+      // 採用規則も統一: conf>=0.5のうち値が最大（スコアは増える方向にしか更新されないため、
+      // 接戦時の「途中スコアで静止→最終値を一瞬表示」を拾っても最終値が勝つ。4→6誤読の根治）
+      const pick = (cur, p) => {
+        if (p.value == null || p.conf < 0.5) return cur;
+        if (cur.value == null || p.value > cur.value || (p.value === cur.value && p.conf > cur.conf)) return p;
+        return cur;
+      };
+      // 読み位置は最終フレームの少し手前: tReadちょうどはパネルのスライドアウトが始まっている
+      // ことがあり、動き出したフレームは数字がズレて誤読する（3→2 conf0.92の実例）
+      for (const dt of [-0.1, -0.25, -0.4]) {
+        await seekTo(tRead + dt);
+        s1 = pick(s1, readScore(rDigit1, winnerRow === 1 ? 'inkonyellow' : 'lightink'));
+        s2 = pick(s2, readScore(rDigit2, winnerRow === 2 ? 'inkonyellow' : 'lightink'));
+      }
+      ({ s1, s2 } = validateWinnerScores(s1, s2, winnerRow));
+      await seekTo(tRead);
+      // 証拠: 最終スコアパネル（シングルス/ダブルス共通の小型パネル: 実測 x1385-1690, y765-990）
+      m.crops.winnerPanel = regionJpeg({ x: 1360, y: 740, w: 360, h: 270 }, 300);
+      const i1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.w1icon), 16, 16), TPL.panelIcons);
+      const i2 = V.matchIcon(V.iconVec(V.cropRegion(video, R.w2icon), 16, 16), TPL.panelIcons);
+      // 自分の行 = VSで判定した自分キャラとアイコンが一致する行。
+      // ミラー戦（同キャラ対戦）はアイコンで判別不能、ダブルスは行=チームでアイコンがペア
+      // → どちらも後段でレート増減から勝敗を確定する
+      let myRow = 1, mirror = false;
+      if (m.isDoubles) mirror = true;
+      else if (i1.name === m.myChar && i2.name !== m.myChar) myRow = 1;
+      else if (i2.name === m.myChar && i1.name !== m.myChar) myRow = 2;
+      else if (m.myChar === m.oppChar || i1.name === i2.name) mirror = true;
+      else if (i1.score < i2.score) myRow = 2;
+      m._w = { s1, s2, winnerRow, mirror };
+      if (!mirror) {
+        const mine = myRow === 1 ? s1 : s2, opp = myRow === 1 ? s2 : s1;
+        m.myScore = mine.value; m.oppScore = opp.value;
+        if (mine.value == null || mine.conf < 0.8 || mine.autoFixed || mine.suspect) m.flags.myScore = true;
+        if (opp.value == null || opp.conf < 0.8 || opp.autoFixed || opp.suspect) m.flags.oppScore = true;
+        if (mine.autoFixed) (m.auto ??= {}).myScore = true;
+        if (opp.autoFixed) (m.auto ??= {}).oppScore = true;
+        m.result = winnerRow === myRow ? 'win' : 'loss';
+      }
+    } else {
+      m.myScore = null; m.oppScore = null; m.result = '';
+      m.flags.myScore = m.flags.oppScore = m.flags.result = true;
+    }
+
+    // --- レートパネル: mode・レート前後 ---
+    await seekTo(g.rating.t0 + 0.6);
+    m.crops.ratingBefore = regionJpeg({ x: 630, y: 275, w: 670, h: 400 }, 330); // 証拠: レート変動前パネル
+    const md1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode1), 24, 8), TPL.mode1);
+    const md2 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode2), 32, 8), TPL.mode2);
+    const singles = md1.name === 'シングルス' && md1.score > 0.85;
+    const classic = md2.name === 'なし' && md2.score > 0.85;
+    m.mode = (classic ? 'classic_' : 'fever_') + (singles ? 'singles' : 'doubles');
+    if (md1.score < 0.85 || md2.score < 0.85) m.flags.mode = true;
+    // パネル表示中を全走査して「最初の安定値=変動前・最後の安定値=変動後」を読む
+    // （ランク付きパネルは1枚の中でカウント演出があり、静止時間もスキップ操作次第のため）
+    const { before, after } = await V.readRatingPair(video, g.rating.t0, g.rating.t1, TPL.ratingFont);
+    await seekTo(g.rating.t1 - 0.4);
+    m.crops.ratingAfter = regionJpeg({ x: 630, y: 275, w: 670, h: 400 }, 330); // 証拠: レート変動後パネル
+    m.ratingBefore = before.value; m.ratingAfter = after.value;
+    if (before.value == null || !before.stable || before.conf < 0.8) m.flags.ratingBefore = true;
+    if (after.value == null || !after.stable || after.conf < 0.8) m.flags.ratingAfter = true;
+    // レート連鎖補完: 変動前 = 同一modeの直前試合の変動後（画面はカウント演出で変動前の静止表示が
+    // ほぼ無いことがあり、連鎖の方が確実）。矛盾したら連鎖を優先して要確認に
+    const chainKey = m.mode;
+    const prevChain = RATE_CHAIN[chainKey];
+    if (prevChain != null && m.playedAt && prevChain.playedAt &&
+        (new Date(m.playedAt) - new Date(prevChain.playedAt)) < 60 * 60000) {
+      if (m.ratingBefore == null) {
+        m.ratingBefore = prevChain.value; (m.auto ??= {}).ratingBefore = true;
+        m.flags.ratingBefore = false; // 直前試合の確定値からの補完は信頼できる
+      } else if (m.ratingBefore !== prevChain.value) {
+        m.ratingBefore = prevChain.value; (m.auto ??= {}).ratingBefore = true;
+        m.flags.ratingBefore = true; // 画面読みと連鎖の矛盾は要確認
+      } else {
+        m.flags.ratingBefore = false; // 画面読みと連鎖が一致 → 確定
+      }
+    }
+    // それでも変動前が無い場合（バッチ先頭など連鎖の起点が無いケース）:
+    // 試合前の待機画面（現在レートを表示するパネル）をvs窓の手前から探して読む。
+    // パネル送りはボタンで早められるため固定時刻でなく走査+2回一致で確定する
+    if (m.ratingBefore == null) {
+      let qVal = null, qPrev = null;
+      for (let t = g.vs.t0 - 2; t >= Math.max(0.2, g.vs.t0 - 45); t -= 1.5) {
+        await seekTo(t);
+        if (V.classify(V.frameToData(video, 192, 108)) !== 'rating') continue;
+        const p = V.parseNumber(V.readGlyphs(V.cropRegion(video, R.rating), 'fillink', TPL.ratingFont, V.NUM_SEG));
+        if (p.conf >= 0.7 && p.value != null && p.value >= 1000 && p.value <= 9999) {
+          if (qPrev === p.value) { qVal = p.value; break; }
+          qPrev = p.value;
+        }
+      }
+      if (qVal != null) { m.ratingBefore = qVal; (m.auto ??= {}).ratingBefore = true; m.flags.ratingBefore = false; }
+    }
+    RATE_CHAIN[chainKey] = (m.ratingAfter != null && !m.flags.ratingAfter)
+      ? { value: m.ratingAfter, playedAt: m.playedAt } : null; // 不確かなafterで連鎖しない
+    // サニティ: 1試合のレート変動が±200を超えることはない（桁落ち誤読の検出網）
+    if (m.ratingBefore != null && m.ratingAfter != null && Math.abs(m.ratingAfter - m.ratingBefore) > 200) {
+      m.flags.ratingBefore = true; m.flags.ratingAfter = true; m.ratingSuspect = true;
+    }
+
+    // フィーバー: 発動バナー（〇〇ショット/ブースト）を収集→列プロファイル照合でラケット特定。
+    // 帰属はFVゲージの減少側。同じ側から複数種のバナー=ハテナラケット（ランダム発動）
+    if (m.mode === 'fever_singles') {
+      setProgress(`試合 ${i + 1}: フィーバーラケットを解析中…`, null);
+      const evs = await V.collectBanners(video, g.vs.t1 + 12, g.rating.t0 - 6, {});
+      const names = { me: {}, opp: {} };
+      m.racketEvents = [];
+      for (const e of evs) {
+        let bestName = null, bestScore = 0;
+        for (const tref of (TPL.racketBanners || [])) {
+          for (const p of e.profiles) {
+            const s = V.profileXcorr(p, tref.profile);
+            if (s > bestScore) { bestScore = s; bestName = tref.name; }
+          }
+        }
+        const matched = bestScore >= 0.85 ? bestName : null;
+        await seekTo(e.t);
+        const bb = V.findBanner(video);
+        let crop = null;
+        if (bb) {
+          const img = V.cropRegion(video, R.bannerBand);
+          const c = document.createElement('canvas');
+          const bw = bb.box.x1 - bb.box.x0 + 1, bh = bb.box.y1 - bb.box.y0 + 1;
+          c.width = bw; c.height = bh;
+          c.getContext('2d').putImageData(img, -bb.box.x0, -bb.box.y0);
+          crop = c.toDataURL('image/png');
+        }
+        m.racketEvents.push({ t: +e.t.toFixed(1), side: e.side, name: matched, score: +bestScore.toFixed(2), crop });
+        if (e.side && matched) names[e.side][matched] = (names[e.side][matched] || 0) + 1;
+      }
+      const decide = obj => {
+        const ks = Object.keys(obj);
+        if (!ks.length) return null;
+        if (ks.length === 1) return ks[0];
+        // FVゲージによる side 帰属は誤ることがある（1440p実戦で4件中2件の誤帰属を確認）。
+        // 少数派の誤名が混ざっても、優勢（2件以上かつ2番手の2倍以上）なら1本に決める。
+        // 本物のハテナラケット（ランダム発動）はほぼ均等に割れるので優勢判定にかからない。
+        const sorted = ks.sort((a, b) => obj[b] - obj[a]);
+        if (obj[sorted[0]] >= 2 && obj[sorted[0]] >= 2 * obj[sorted[1]]) return sorted[0];
+        return 'ハテナラケット';
+      };
+      m.myRacket = decide(names.me);
+      m.oppRacket = decide(names.opp);
+      if (!m.myRacket || m.myRacket === 'ハテナラケット') m.flags.myRacket = true;
+      if (!m.oppRacket || m.oppRacket === 'ハテナラケット') m.flags.oppRacket = true;
+      // 未帰属/未照合のバナーがあれば要確認
+      if (m.racketEvents.some(e => !e.side || !e.name)) { m.flags.myRacket = true; m.flags.oppRacket = true; }
+      log(`m${m.n}: ラケット 自分=${m.myRacket ?? '?'} 相手=${m.oppRacket ?? '?'} (バナー${m.racketEvents.length}件)`);
+    }
+
+    // ミラー戦: レートの増減で勝敗と自分スコアを確定（増減が読めなければ要確認のまま）
+    if (m._w && m._w.mirror) {
+      const { s1, s2, winnerRow } = m._w;
+      const winScore = winnerRow === 1 ? s1 : s2, loseScore = winnerRow === 1 ? s2 : s1;
+      if (m.ratingBefore != null && m.ratingAfter != null && m.ratingBefore !== m.ratingAfter && !m.ratingSuspect) {
+        m.result = m.ratingAfter > m.ratingBefore ? 'win' : 'loss';
+        const mineS = m.result === 'win' ? winScore : loseScore, oppS = m.result === 'win' ? loseScore : winScore;
+        m.myScore = mineS.value; m.oppScore = oppS.value;
+        if (mineS.value == null || mineS.autoFixed || mineS.suspect) m.flags.myScore = true;
+        if (oppS.value == null || oppS.autoFixed || oppS.suspect) m.flags.oppScore = true;
+        if (mineS.autoFixed) (m.auto ??= {}).myScore = true;
+        if (oppS.autoFixed) (m.auto ??= {}).oppScore = true;
+        // ダブルスはレート増減が確かなら信頼。シングルスのミラー戦は必ず目視確認
+        if (!m.isDoubles || m.flags.ratingBefore || m.flags.ratingAfter) m.flags.result = true;
+      } else {
+        m.myScore = null; m.oppScore = null; m.result = '';
+        m.flags.myScore = m.flags.oppScore = m.flags.result = true;
+      }
+    }
+    delete m._w;
+
+    videoMatches.push(m);
+    log(`m${m.n}: ${m.playedAt} ${m.mode} ${m.myChar} vs ${m.oppChar} ${m.myScore}-${m.oppScore} ${m.result} R${m.ratingBefore}→${m.ratingAfter} @${m.court}`);
+  }
+  // レート連鎖検証: 同一動画内の「同一部門」では前試合のafter = 次試合のbefore。
+  // fever/クラシックのシングルス/ダブルスは別レートなので部門をまたいで連鎖してはいけない
+  for (let i = 1; i < videoMatches.length; i++) {
+    const cur = videoMatches[i];
+    const prev = [...videoMatches.slice(0, i)].reverse().find(p => p.mode === cur.mode);
+    if (!prev || prev.ratingAfter == null) continue;
+    if (cur.ratingBefore == null || cur.flags.ratingBefore) {
+      cur.ratingBefore = prev.ratingAfter;
+      if (!prev.flags.ratingAfter) delete cur.flags.ratingBefore;
+      log(`m${cur.n}: レート前を前試合のafter(${prev.ratingAfter})で補完`);
+    } else if (cur.ratingBefore !== prev.ratingAfter) {
+      cur.flags.ratingBefore = true;
+      prev.flags.ratingAfter = true;
+    }
+  }
+  for (const m of videoMatches) snapshotOrig(m); // 手修正ハイライトの基準値（レート連鎖補完後の値）
+  matches.push(...videoMatches);
+  window.A.matches = matches;
+  render();
+}
+
+// ---- 確認・修正UI ----
+// 部分一致検索用の正規化（FEVER lib/kana.ts の normalizeForSearch と同じ規則）
+const SMALL_KANA = 'ァィゥェォッャュョヮヵヶ', LARGE_KANA = 'アイウエオツヤユヨワカケ';
+function normalizeForSearch(input) {
+  if (!input) return '';
+  let s = String(input).normalize('NFKC').toLowerCase();
+  s = s.replace(/[ぁ-ゖ]/g, ch => String.fromCharCode(ch.charCodeAt(0) + 0x60));
+  s = s.replace(/[ァィゥェォッャュョヮヵヶ]/g, ch => LARGE_KANA[SMALL_KANA.indexOf(ch)]);
+  return s;
+}
+
+// プルダウン候補（テンプレ辞書にある名前＝認識が出力しうる名前）
+function comboSources() {
+  const uniq = a => [...new Set(a.filter(Boolean))].sort((x, y) => x.localeCompare(y, 'ja'));
+  return {
+    char: Characters.ALL, // CSV一括登録できる全キャラ（色違い含む・正典順）
+    court: uniq((TPL.courts || []).map(t => t.name)),
+    racket: uniq([...(TPL.racketBanners || []).map(t => t.name), 'ハテナラケット']),
+  };
+}
+
+const EDIT_KEYS = ['playedAt', 'mode', 'myChar', 'partnerChar', 'partnerName', 'oppChar', 'oppName',
+  'opp2Char', 'opp2Name', 'myRacket', 'oppRacket', 'court', 'myScore', 'oppScore', 'result',
+  'ratingBefore', 'ratingAfter'];
+function snapshotOrig(m) {
+  m._orig = {};
+  for (const k of EDIT_KEYS) m._orig[k] = m[k] ?? '';
+}
+
+function field(m, key, label, value, opts = {}) {
+  const cls = m.edited && m.edited[key] ? ' edited' : (m.flags[key] ? ' flag' : '');
+  const id = `f_${m.n}_${key}`;
+  const auto = m.auto && m.auto[key] ? '<span class="autofix">[自動補正]</span>'
+    : m.autoName && m.autoName[key] ? '<span class="autofix">[自動入力]</span>' : '';
+  if (opts.select) {
+    const options = opts.select.map(o => `<option value="${o}" ${String(o) === String(value) ? 'selected' : ''}>${o}</option>`).join('');
+    return `<div class="field${cls}"><label>${label}${auto}</label><select id="${id}" data-n="${m.n}" data-key="${key}">${options}</select></div>`;
+  }
+  const img = opts.crop ? `<img class="namecrop" src="${opts.crop}">` : '';
+  const combo = opts.combo ? ` data-combo="${opts.combo}" autocomplete="off" spellcheck="false"` : '';
+  return `<div class="field${cls}"><label>${label}${auto}</label>${img}<input id="${id}" data-n="${m.n}" data-key="${key}" value="${value ?? ''}" placeholder="${opts.ph ?? ''}"${combo}></div>`;
+}
+
+// 入力された名前を、名前画像が一致する（nccWh>=0.90）他試合の未入力/自動入力欄へ転記する。
+// 手で入力済みの欄には触らない。転記先が画面に出ていれば表示も更新する
+function propagateName(src, key) {
+  const vec = src._nameVecs && src._nameVecs[key];
+  const name = String(src[key] ?? '').trim();
+  if (!vec || !name) return;
+  for (const m of matches) {
+    for (const k of ['oppName', 'partnerName', 'opp2Name']) {
+      if (m === src && k === key) continue;
+      const v2 = m._nameVecs && m._nameVecs[k];
+      if (!v2) continue;
+      const cur = String(m[k] ?? '').trim();
+      if (cur === name) continue;
+      if (cur && !(m.autoName && m.autoName[k])) continue; // 手入力済みは尊重
+      if (V.nccWh(vec, v2) < 0.90) continue;
+      m[k] = name;
+      (m.autoName ??= {})[k] = true;
+      const inp = document.getElementById(`f_${m.n}_${k}`);
+      if (inp) {
+        inp.value = name;
+        const lb = inp.closest('.field').querySelector('label');
+        if (lb && !lb.querySelector('.autofix')) lb.insertAdjacentHTML('beforeend', '<span class="autofix">[自動入力]</span>');
+      }
+    }
+  }
+}
+
+function evi(label, src) {
+  return src ? `<figure><img src="${src}" data-zoom><figcaption>${label}</figcaption></figure>` : '';
+}
+
+// 一覧ビュー用: シアター型（上=証拠画像を黒帯に並べる・下=入力グリッド）
+function matchCard(m) {
+  return `
+      <div class="stage">
+        ${evi('対戦カード（コート/キャラ/名前）', m.crops.vsFrame)}
+        ${evi('最終スコア', m.crops.winnerPanel)}
+        ${evi('レート変動前', m.crops.ratingBefore)}
+        ${evi('レート変動後', m.crops.ratingAfter)}
+        ${(m.racketEvents || []).filter(e => e.crop).slice(0, 2).map(e => evi(`ラケット発動 (${e.side === 'me' ? '自分' : e.side === 'opp' ? '相手' : '?'})`, e.crop)).join('')}
+      </div>
+      <div class="grid">
+        ${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}
+        ${field(m, 'mode', 'mode', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'] })}
+        ${field(m, 'myChar', '自分キャラ', m.myChar, { combo: 'char' })}
+        ${m.isDoubles ? field(m, 'partnerChar', '味方キャラ', m.partnerChar, { combo: 'char' }) : ''}
+        ${m.isDoubles ? field(m, 'partnerName', '味方の名前（画像を見て入力）', m.partnerName ?? '', { crop: m.crops.partnername, ph: '任意', combo: 'name' }) : ''}
+        ${field(m, 'oppChar', '相手1キャラ', m.oppChar, { combo: 'char' })}
+        ${field(m, 'oppName', '相手1の名前（画像を見て入力）', m.oppName ?? '', { crop: m.crops.oppname, ph: '任意', combo: 'name' })}
+        ${m.isDoubles ? field(m, 'opp2Char', '相手2キャラ', m.opp2Char, { combo: 'char' }) : ''}
+        ${m.isDoubles ? field(m, 'opp2Name', '相手2の名前（画像を見て入力）', m.opp2Name ?? '', { crop: m.crops.opp2name, ph: '任意', combo: 'name' }) : ''}
+        ${m.mode && m.mode.startsWith('fever') ? field(m, 'myRacket', '自分ラケット', m.myRacket ?? '', { crop: m.racketEvents && (m.racketEvents.find(e => e.side === 'me') || {}).crop, ph: '例: トゲゾーラケット', combo: 'racket' }) : ''}
+        ${m.mode && m.mode.startsWith('fever') ? field(m, 'oppRacket', '相手ラケット', m.oppRacket ?? '', { crop: m.racketEvents && (m.racketEvents.find(e => e.side === 'opp') || {}).crop, ph: '任意', combo: 'racket' }) : ''}
+        ${field(m, 'court', 'コート', m.court, { combo: 'court' })}
+        ${field(m, 'myScore', '自分スコア', m.myScore)}
+        ${field(m, 'oppScore', '相手スコア', m.oppScore)}
+        ${field(m, 'result', 'result', m.result, { select: ['win', 'loss'] })}
+        ${field(m, 'ratingBefore', 'レート前', m.ratingBefore)}
+        ${field(m, 'ratingAfter', 'レート後', m.ratingAfter)}
+      </div>`;
+}
+
+const FIELD_LABELS = { playedAt: '日時', mode: 'mode', myChar: '自分キャラ', partnerChar: '味方キャラ',
+  partnerName: '味方の名前', oppChar: '相手1キャラ', oppName: '相手1の名前', opp2Char: '相手2キャラ',
+  opp2Name: '相手2の名前', myRacket: '自分ラケット', oppRacket: '相手ラケット', court: 'コート',
+  myScore: '自分スコア', oppScore: '相手スコア', result: 'result', ratingBefore: 'レート前', ratingAfter: 'レート後' };
+
+// 1件ずつ確認用: 照合ペア型（証拠画像とその入力欄を行ごとに横並び。目線移動を最小にする）
+function matchCardPaired(m) {
+  const isFever = m.mode && m.mode.startsWith('fever');
+  const pairImg = (label, src) => src
+    ? `<figure><img src="${src}" data-zoom><figcaption>${label}</figcaption></figure>`
+    : `<div class="noimg">${label}（画像なし）</div>`;
+  const rk = side => m.racketEvents && (m.racketEvents.find(e => e.side === side) || {}).crop;
+  return `
+    <div class="pair">
+      ${pairImg('対戦カード', m.crops.vsFrame)}
+      <div>
+        <div class="pairhead">コート・キャラ・名前 ← 左の対戦カードと見比べる</div>
+        <div class="g2">${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}${field(m, 'mode', 'mode', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'] })}</div>
+        <div class="g2">${field(m, 'court', 'コート', m.court, { combo: 'court' })}${field(m, 'myChar', '自分キャラ', m.myChar, { combo: 'char' })}</div>
+        ${m.isDoubles ? `<div class="g2">${field(m, 'partnerChar', '味方キャラ', m.partnerChar, { combo: 'char' })}${field(m, 'partnerName', '味方の名前（画像を見て入力）', m.partnerName ?? '', { crop: m.crops.partnername, ph: '任意', combo: 'name' })}</div>` : ''}
+        <div class="g2">${field(m, 'oppChar', '相手1キャラ', m.oppChar, { combo: 'char' })}${field(m, 'oppName', '相手1の名前（画像を見て入力）', m.oppName ?? '', { crop: m.crops.oppname, ph: '任意', combo: 'name' })}</div>
+        ${m.isDoubles ? `<div class="g2">${field(m, 'opp2Char', '相手2キャラ', m.opp2Char, { combo: 'char' })}${field(m, 'opp2Name', '相手2の名前（画像を見て入力）', m.opp2Name ?? '', { crop: m.crops.opp2name, ph: '任意', combo: 'name' })}</div>` : ''}
+      </div>
+    </div>
+    ${isFever ? `
+    <div class="pair">
+      <div class="imgs">${pairImg('ラケット発動（自分）', rk('me'))}${pairImg('ラケット発動（相手）', rk('opp'))}</div>
+      <div>
+        <div class="pairhead">ラケット ← 左の発動バナーと見比べる</div>
+        <div class="g2">${field(m, 'myRacket', '自分ラケット', m.myRacket ?? '', { ph: '例: トゲゾーラケット', combo: 'racket' })}${field(m, 'oppRacket', '相手ラケット', m.oppRacket ?? '', { ph: '任意', combo: 'racket' })}</div>
+      </div>
+    </div>` : ''}
+    <div class="pair">
+      <div style="max-width:280px">${pairImg('最終スコア', m.crops.winnerPanel)}</div>
+      <div>
+        <div class="pairhead">スコア・勝敗 ← 左のパネルと見比べる</div>
+        <div class="g3">${field(m, 'myScore', '自分スコア', m.myScore)}${field(m, 'oppScore', '相手スコア', m.oppScore)}${field(m, 'result', 'result', m.result, { select: ['win', 'loss'] })}</div>
+      </div>
+    </div>
+    <div class="pair">
+      <div class="imgs">${pairImg('レート変動前', m.crops.ratingBefore)}${pairImg('レート変動後', m.crops.ratingAfter)}</div>
+      <div>
+        <div class="pairhead">レート ← 左の2枚と見比べる</div>
+        <div class="g2">${field(m, 'ratingBefore', 'レート前', m.ratingBefore)}${field(m, 'ratingAfter', 'レート後', m.ratingAfter)}</div>
+      </div>
+    </div>`;
+}
+
+let viewMode = 'single'; // チェック作業の主動線は1件ずつ確認。一覧は俯瞰用
+let reviewIdx = 0;
+
+function render() {
+  $('viewBar').style.display = matches.length ? 'flex' : 'none';
+  $('modeSingle').classList.toggle('active', viewMode === 'single');
+  $('modeList').classList.toggle('active', viewMode === 'list');
+  closeCombo();
+  if (viewMode === 'single') renderReview(); else renderList();
+  $('exportPanel').style.display = matches.length ? 'block' : 'none';
+}
+
+function renderList() {
+  $('review').innerHTML = '';
+  $('results').innerHTML = matches.map(m => `
+    <div class="match">
+      <h3>試合 ${m.n} <span style="color:var(--sub);font-weight:normal">｜ ${m.video ?? ''} ｜ 赤枠＝要確認・青枠＝手修正済み・画像クリックで拡大</span></h3>
+      ${matchCard(m)}
+    </div>`).join('');
+  bindMatchEvents($('results'));
+}
+
+function renderReview() {
+  $('results').innerHTML = '';
+  if (!matches.length) { $('review').innerHTML = ''; return; }
+  reviewIdx = Math.max(0, Math.min(reviewIdx, matches.length - 1));
+  const m = matches[reviewIdx];
+  const last = reviewIdx === matches.length - 1;
+  const flagKeys = Object.keys(m.flags).filter(k => m.flags[k]);
+  const editKeys = m.edited ? Object.keys(m.edited).filter(k => m.edited[k]) : [];
+  const dots = matches.map((mm, i) => {
+    const warn = Object.keys(mm.flags).some(k => mm.flags[k]);
+    const cls = i === reviewIdx ? 'cur' : warn ? 'warn' : i < reviewIdx ? 'done' : '';
+    return `<i class="${cls}" data-jump="${i}" title="試合 ${i + 1}"></i>`;
+  }).join('');
+  $('review').innerHTML = `
+    <div class="match single">
+      <div class="revnav">
+        <button id="revPrev" ${reviewIdx === 0 ? 'disabled' : ''}>← 前へ</button>
+        <span class="pos">試合 ${reviewIdx + 1} / ${matches.length}</span>
+        <button id="revNext" class="primary" ${last ? 'disabled' : ''}>${last ? '最後の試合です' : '確認OK・次へ (Enter) →'}</button>
+        <div class="dots">${dots}</div>
+        <span class="sub" style="margin-left:auto;margin-bottom:0">${m.video ?? ''}</span>
+      </div>
+      <div class="chips">
+        ${flagKeys.length
+          ? `<span class="chip warn">要確認 ${flagKeys.length}件: ${flagKeys.map(k => FIELD_LABELS[k] || k).join(' ／ ')}</span>`
+          : '<span class="chip ok">要確認なし</span>'}
+        ${editKeys.length ? `<span class="chip ok">手修正 ${editKeys.length}件</span>` : ''}
+        <span class="chip">赤枠=要確認 ／ 青枠=手修正 ／ 画像クリックで拡大</span>
+      </div>
+      ${matchCardPaired(m)}
+    </div>`;
+  $('revPrev').addEventListener('click', () => { reviewIdx--; render(); });
+  $('revNext').addEventListener('click', () => { if (reviewIdx < matches.length - 1) { reviewIdx++; render(); } });
+  $('review').querySelectorAll('.dots i').forEach(d => d.addEventListener('click', () => { reviewIdx = +d.dataset.jump; render(); }));
+  bindMatchEvents($('review'));
+}
+
+function bindMatchEvents(root) {
+  root.querySelectorAll('img[data-zoom]').forEach(img => img.addEventListener('click', () => {
+    $('lightboxImg').src = img.src;
+    $('lightbox').style.display = 'flex';
+  }));
+  root.querySelectorAll('input,select').forEach(el => el.addEventListener('input', () => onFieldInput(el)));
+}
+
+function onFieldInput(el) {
+  const m = matches.find(x => x.n === +el.dataset.n);
+  if (!m) return;
+  const key = el.dataset.key;
+  m[key] = el.value;
+  // 自動入力された名前を手で直した→自動入力マークを外す（修正後の名前がテンプレ収穫対象になる）
+  if (m.autoName && m.autoName[key]) {
+    delete m.autoName[key];
+    const lb = el.closest('.field')?.querySelector('.autofix');
+    if (lb) lb.remove();
+  }
+  markEdited(m, key, el);
+  if (key === 'myScore' || key === 'oppScore') applyScoreAssist(m, key);
+  // 名前の引き継ぎ: 同じロビーで連戦すると同じプレイヤーが何度も出る（味方⇔相手の入れ替わり含む）。
+  // 入力した名前を、他の試合の「同じ名前画像」（textVec白ch照合）の欄へ自動転記する
+  if (['oppName', 'partnerName', 'opp2Name'].includes(key)) propagateName(m, key);
+}
+
+// ユーザーが手で直したセルは青枠でハイライト（どこを直したか後から分かる）
+function markEdited(m, key, el) {
+  (m.edited ??= {})[key] = String(m[key] ?? '') !== String(m._orig ? m._orig[key] ?? '' : '');
+  const f = el.closest('.field');
+  if (f) {
+    f.classList.toggle('edited', !!m.edited[key]);
+    f.classList.toggle('flag', !m.edited[key] && !!m.flags[key]);
+  }
+}
+
+// スコア補完（FEVER MatchForm と同じUX）: 8→相手6 / 6→相手8 / 0〜5→相手7。
+// 妥当な組み合わせになったら result も自動更新する
+function applyScoreAssist(m, key) {
+  const v = parseInt(m[key], 10);
+  if (isNaN(v)) return;
+  const otherKey = key === 'myScore' ? 'oppScore' : 'myScore';
+  let other = parseInt(m[otherKey], 10);
+  if (isNaN(other)) other = null;
+  let next = other;
+  if (v === 8) next = 6;
+  else if (v === 6) next = 8;
+  else if (v <= 5) next = 7;
+  else if (v === 7 && other != null && other >= 6) next = null;
+  if (next !== other) {
+    m[otherKey] = next;
+    const otherEl = document.getElementById(`f_${m.n}_${otherKey}`);
+    if (otherEl) { otherEl.value = next ?? ''; markEdited(m, otherKey, otherEl); }
+  }
+  const a = parseInt(m.myScore, 10), b = parseInt(m.oppScore, 10);
+  if (!isNaN(a) && !isNaN(b) && isValidFinal(Math.max(a, b), Math.min(a, b))) {
+    const res = a > b ? 'win' : 'loss';
+    if (m.result !== res) {
+      m.result = res;
+      const resEl = document.getElementById(`f_${m.n}_result`);
+      if (resEl) { resEl.value = res; markEdited(m, 'result', resEl); }
+    }
+  }
+}
+
+// ---- プルダウン＋部分一致（FEVER SearchSelect.tsx の移植・手入力両対応） ----
+const comboEl = $('combo');
+let combo = null; // { input, options, filtered, idx, typed }
+let COMBO_SRC = null;
+
+function openCombo(input) {
+  let options;
+  if (input.dataset.combo === 'name') {
+    // 案A: 過去の対戦相手名を直近対戦順で最大5件（FEVER OpponentNameInput と同じ並び）
+    options = [...NAMES.history].sort((a, b) => b.lastUsed - a.lastUsed).slice(0, 5).map(h => h.name);
+    if (!options.length) return; // 履歴が無ければ普通のテキスト入力のまま
+  } else {
+    if (!TPL) return;
+    if (!COMBO_SRC) COMBO_SRC = comboSources();
+    options = COMBO_SRC[input.dataset.combo] || [];
+  }
+  combo = { input, options, filtered: options, idx: -1, typed: false };
+  filterCombo();
+}
+function filterCombo() {
+  if (!combo) return;
+  const q = combo.typed ? normalizeForSearch(combo.input.value) : '';
+  combo.filtered = q ? combo.options.filter(o => normalizeForSearch(o).includes(q)) : combo.options;
+  combo.idx = combo.typed && combo.filtered.length ? 0 : -1;
+  renderCombo();
+}
+function renderCombo() {
+  const { input, filtered, idx } = combo;
+  const cur = input.value;
+  comboEl.innerHTML = filtered.length
+    ? filtered.map((o, i) => `<button type="button" data-i="${i}" class="${i === idx ? 'focus' : ''}${o === cur ? ' current' : ''}">${o}</button>`).join('')
+    : '<div class="empty">候補なし（手入力もできます）</div>';
+  const r = input.getBoundingClientRect();
+  comboEl.style.display = 'block';
+  comboEl.style.left = (r.left + scrollX) + 'px';
+  comboEl.style.top = (r.bottom + scrollY + 2) + 'px';
+  comboEl.style.minWidth = r.width + 'px';
+  const f = comboEl.querySelector('button.focus');
+  if (f) f.scrollIntoView({ block: 'nearest' });
+}
+function closeCombo() { combo = null; comboEl.style.display = 'none'; }
+function selectCombo(i) {
+  const input = combo.input, name = combo.filtered[i];
+  closeCombo();
+  input.value = name;
+  input.dispatchEvent(new Event('input'));
+}
+
+document.addEventListener('focusin', e => {
+  if (e.target.matches && e.target.matches('input[data-combo]')) openCombo(e.target);
+  else if (combo && !comboEl.contains(e.target)) closeCombo();
+});
+document.addEventListener('input', e => {
+  if (combo && e.target === combo.input && e.isTrusted) { combo.typed = true; filterCombo(); }
+});
+comboEl.addEventListener('mousedown', e => {
+  e.preventDefault(); // 入力欄のフォーカスを保つ
+  const b = e.target.closest('button');
+  if (b && combo) selectCombo(+b.dataset.i);
+});
+document.addEventListener('mousedown', e => {
+  if (combo && e.target !== combo.input && !comboEl.contains(e.target)) closeCombo();
+});
+
+// ---- キーボード操作（候補ナビ＋1件ビューのEnter送り） ----
+document.addEventListener('keydown', e => {
+  if (e.isComposing) return; // IME変換中は処理しない
+  if (e.key === 'Escape') { $('lightbox').style.display = 'none'; }
+  if (combo) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); combo.idx = Math.min(combo.filtered.length - 1, combo.idx + 1); renderCombo(); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); combo.idx = Math.max(0, combo.idx - 1); renderCombo(); return; }
+    if (e.key === 'Escape') { closeCombo(); return; }
+    if (e.key === 'Enter' && combo.idx >= 0 && combo.filtered[combo.idx] != null) { e.preventDefault(); selectCombo(combo.idx); return; }
+    if (e.key === 'Enter') closeCombo(); // 候補未選択のEnterは閉じて（1件ビューなら）次の試合へ
+  }
+  if (viewMode !== 'single' || !matches.length || e.key !== 'Enter') return;
+  if (e.target && e.target.tagName === 'BUTTON') return; // ボタン上のEnterはクリックに任せる
+  e.preventDefault();
+  if (e.shiftKey) { if (reviewIdx > 0) { reviewIdx--; render(); } }
+  else if (reviewIdx < matches.length - 1) { reviewIdx++; render(); }
+});
+
+$('modeSingle').addEventListener('click', () => { viewMode = 'single'; render(); });
+$('modeList').addEventListener('click', () => { viewMode = 'list'; render(); });
+
+// ---- CSV出力（SENSEKI FEVER CSV_HEADERS 準拠） ----
+const CSV_HEADERS = ['played_at','mode','my_character','my_character_color','my_racket1',
+  'partner_name','partner_character','partner_character_color','partner_racket1',
+  'opponent1_name','opponent1_character','opponent1_character_color','opponent1_racket1',
+  'opponent2_name','opponent2_character','opponent2_character_color','opponent2_racket1',
+  'court','my_score','opponent_score','result','rating_before','rating_after','memo'];
+const csvEscape = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
+
+async function doExportCsv() {
+  const lines = [CSV_HEADERS.join(',')];
+  for (const m of matches) {
+    // キャラ名の「名前:色」表記を分離（例: ノコノコ:赤）
+    const split = s => { const p = String(s ?? '').split(':'); return [p[0], p[1] ?? '']; };
+    const [myC, myCol] = split(m.myChar), [opC, opCol] = split(m.oppChar);
+    const [paC, paCol] = split(m.partnerChar), [o2C, o2Col] = split(m.opp2Char);
+    const row = {
+      played_at: m.playedAt, mode: m.mode,
+      my_character: myC, my_character_color: myCol, my_racket1: m.myRacket ?? '',
+      partner_name: m.partnerName ?? '', partner_character: paC, partner_character_color: paCol, partner_racket1: '',
+      opponent1_name: m.oppName ?? '', opponent1_character: opC, opponent1_character_color: opCol, opponent1_racket1: m.oppRacket ?? '',
+      opponent2_name: m.opp2Name ?? '', opponent2_character: o2C, opponent2_character_color: o2Col, opponent2_racket1: '',
+      court: m.court, my_score: m.myScore, opponent_score: m.oppScore, result: m.result,
+      rating_before: m.ratingBefore, rating_after: m.ratingAfter, memo: '',
+    };
+    lines.push(CSV_HEADERS.map(h => csvEscape(row[h])).join(','));
+  }
+  const today = new Date();
+  const p2 = n => String(n).padStart(2, '0');
+  const defName = `senseki_capture_${today.getFullYear()}${p2(today.getMonth() + 1)}${p2(today.getDate())}.csv`;
+  const r = await window.api.saveCsv(defName, lines.join('\r\n'));
+  if (r.ok) {
+    setProgress(`CSVを保存しました: ${r.path}`, 1);
+    harvestNames(); // 確定した相手名を履歴＋名前テンプレへ（次回の自動入力に使う）
+    await harvestTemplates(); // 修正されたキャラ/コートをユーザー辞書へ（教えるサイクル）
+  }
+}
+$('exportCsv').addEventListener('click', doExportCsv);
+$('exportCsvTop').addEventListener('click', doExportCsv);
+$('resetAll').addEventListener('click', () => {
+  if (!matches.length) return;
+  if (!confirm('読み込んだ解析結果をすべてクリアします。よろしいですか？（CSV未保存の内容は失われます）')) return;
+  matches = [];
+  RATE_CHAIN = {};
+  reviewIdx = 0;
+  render();
+  drop.classList.remove('loaded');
+  drop.textContent = '録画ファイル（MP4）をドラッグ&ドロップ、またはクリックして選択（複数まとめてOK）';
+  $('progPanel').style.display = 'none';
+  $('queuePanel').style.display = 'none';
+});
+
+// ---- 読み込み（複数ファイルのバッチ処理） ----
+const drop = $('drop');
+const fileQueue = [];
+let processing = false;
+
+drop.addEventListener('click', () => $('file').click());
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); enqueue(e.dataTransfer.files); });
+$('file').addEventListener('change', e => { enqueue(e.target.files); e.target.value = ''; });
+
+function enqueue(fileList) {
+  for (const f of fileList) {
+    if (!/\.(mp4|mov|mkv|webm)$/i.test(f.name)) continue;
+    fileQueue.push(f);
+  }
+  renderQueue();
+  if (!processing) processQueue();
+}
+
+function renderQueue() {
+  $('queuePanel').style.display = fileQueue.length || processing ? 'block' : 'none';
+  $('queue').textContent = fileQueue.length ? `待機中: ${fileQueue.map(f => f.name).join(' / ')}` : '';
+}
+
+async function processQueue() {
+  processing = true;
+  while (fileQueue.length) {
+    const f = fileQueue.shift();
+    renderQueue();
+    try {
+      await analyzeFile(f);
+    } catch (e) {
+      log(`ERROR (${f.name}): ` + (e && e.stack || e));
+    }
+  }
+  processing = false;
+  renderQueue();
+  setProgress(`完了: 全${matches.length}試合を検出しました。内容を確認してCSVを保存してください`, 1);
+}
+
+async function analyzeFile(f) {
+  fileInfo = { name: f.name, lastModified: f.lastModified };
+  drop.classList.add('loaded');
+  drop.textContent = '解析中: ' + f.name + '（追加のファイルはここへドロップ）';
+  const url = URL.createObjectURL(f);
+  try {
+    video.src = url;
+    await new Promise((res, rej) => {
+      video.addEventListener('loadedmetadata', res, { once: true });
+      video.addEventListener('error', () => rej(new Error('動画を読み込めませんでした')), { once: true });
+    });
+    if (!TPL) await loadTemplates();
+    await userDataReady; // 設定と名前テンプレ（自動入力に使う）
+    await analyze();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+$('lightbox').addEventListener('click', () => { $('lightbox').style.display = 'none'; });
+window.api.appVersion().then(v => { $('ver').textContent = 'v' + v; });
+if (window.api.onUpdateDownloaded) {
+  window.api.onUpdateDownloaded(v => {
+    $('progPanel').style.display = 'block';
+    log(`[更新] 新しいバージョン v${v} をダウンロードしました。アプリを閉じると自動で更新されます`);
+  });
+}
+</script>
+</body>
+</html>

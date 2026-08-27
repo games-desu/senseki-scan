@@ -1,0 +1,46 @@
+# リリース手順（自動アップデート対応・v0.3.0〜）
+
+アプリは起動時に GitHub Releases の `latest.yml` を確認し、新版があればバックグラウンドでDL→
+**アプリを閉じたときに自動適用**する（electron-updater / `app/main.js`）。
+配信元は `app/package.json` の `build.publish` = `games-desu/senseki-scan`。
+
+## 初回だけの準備
+
+1. GitHub に **公開リポジトリ `senseki-scan`** を作る（https://github.com/new）。
+   - **public 必須**。electron-updater はトークンなしで latest.yml を読むため、私有リポだと全ユーザーが更新確認に失敗する。
+   - ソースを置きたくなければ**空のままでよい**（Releases だけ使う）。README 1枚でも可。
+2. Personal Access Token を作る（Settings → Developer settings → Tokens (classic) → `repo` スコープ）。
+   ビルド時の `GH_TOKEN` に使う。アプリには埋め込まれない（アップロード専用）。
+
+## 毎回のリリース手順（実ターミナルで）
+
+```bat
+cd C:\Users\<user>\Documents\senseki-capture\app
+rem 1. package.json の "version" を上げる（例 0.3.0 → 0.3.1）
+rem 2. ビルド＋GitHub Releases へアップロード（draftとして作られる）
+set GH_TOKEN=ghp_xxxxxxxxxxxxxxxx
+npx electron-builder --win --publish always
+rem 3. GitHub の Releases ページで draft を確認して「Publish release」
+```
+
+publish される3点セット（すべて必要）:
+- `SENSEKI-SCAN-Setup-<version>.exe` — インストーラー本体
+- `SENSEKI-SCAN-Setup-<version>.exe.blockmap` — 差分DL用
+- `latest.yml` — 更新チェックの起点（これが無いと更新が検出されない）
+
+手動アップロードでも可（`app/dist/` の上記3ファイルを Release に添付）。
+タグ名は `v<version>`（例 `v0.3.1`）にすること。
+
+## 動作の流れ（ユーザー側）
+
+1. アプリ起動 → 数秒後に裏で更新確認（失敗しても無害・オフラインOK）
+2. 新版があれば自動DL → 完了時に通知＋アプリ内ログに
+   「[更新] 新しいバージョン vX.Y.Z をダウンロードしました。アプリを閉じると自動で更新されます」
+3. アプリ終了時にインストーラーがサイレント実行され、次回起動から新版
+
+## 注意
+
+- 未署名exeのため、初回インストール時と同様 SmartScreen 警告は出続ける（自動更新の適用自体は出ない）
+- `package.json` の `name: "senseki-capture"` と `appId` は**据え置き厳守**
+  （ユーザー辞書 `%APPDATA%/senseki-capture/` が孤立するため）。GitHub リポジトリ名とは無関係。
+- 開発起動（`npm start`）では更新チェックは走らない（未パッケージ時は electron-updater が自動スキップ）
