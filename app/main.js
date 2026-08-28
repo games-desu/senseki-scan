@@ -26,13 +26,51 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
   // 自動更新: GitHub Releases (build.publish の repo) の latest.yml を確認し、新版があれば
-  // バックグラウンドでDL→アプリ終了時に自動適用。開発起動(未パッケージ)では何もしない。
-  // 失敗（オフライン・リポジトリ未作成等）は無害なのでログに留める
-  autoUpdater.on('update-downloaded', info => {
+  // ダイアログで「今すぐ更新 / あとで / このバージョンをスキップ」を選ばせる（更新内容=Releaseの説明文を表示）。
+  // 開発起動(未パッケージ)では何もしない。失敗（オフライン等）は無害なのでログに留める
+  autoUpdater.autoDownload = false;
+  const updaterStatePath = () => path.join(app.getPath('userData'), 'updater.json');
+  const loadUpdaterState = () => { try { return JSON.parse(fs.readFileSync(updaterStatePath(), 'utf8')); } catch { return {}; } };
+  autoUpdater.on('update-available', async info => {
+    if (loadUpdaterState().skipVersion === info.version) return;
+    // Releaseの説明文（markdown/HTML混在の可能性）→ ダイアログ向けプレーンテキスト化
+    let notes = info.releaseNotes || '';
+    if (Array.isArray(notes)) notes = notes.map(n => n.note || '').join('\n');
+    notes = String(notes).replace(/<[^>]+>/g, '').replace(/[#*`]/g, '').replace(/\n{3,}/g, '\n\n').trim();
+    if (notes.length > 1200) notes = notes.slice(0, 1200) + '…';
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'アップデート',
+      message: `新しいバージョン v${info.version} があります（現在 v${app.getVersion()}）`,
+      detail: notes ? '更新内容:\n' + notes : undefined,
+      buttons: ['今すぐ更新', 'あとで', 'このバージョンをスキップ'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response === 0) {
+      autoUpdater.downloadUpdate().catch(e => {
+        dialog.showMessageBox(win, { type: 'error', title: 'アップデート', message: '更新のダウンロードに失敗しました', detail: String(e && e.message || e) });
+      });
+    } else if (response === 2) {
+      fs.writeFileSync(updaterStatePath(), JSON.stringify({ skipVersion: info.version }));
+    }
+  });
+  autoUpdater.on('update-downloaded', async info => {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'info',
+      title: 'アップデート',
+      message: `v${info.version} のダウンロードが完了しました`,
+      buttons: ['再起動して更新', 'アプリ終了時に適用'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response === 0) { autoUpdater.quitAndInstall(); return; }
     if (win && !win.isDestroyed()) win.webContents.send('update-downloaded', info.version);
   });
   autoUpdater.on('error', e => console.error('autoUpdater:', e == null ? '' : (e.message || e)));
-  autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+  autoUpdater.checkForUpdates().catch(() => {});
 });
 app.on('window-all-closed', () => app.quit());
 
