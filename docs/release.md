@@ -14,13 +14,13 @@
 
 ## 毎回のリリース手順（実ターミナルで）
 
-```bat
+```powershell
 cd C:\Users\<user>\Documents\senseki-capture\app
-rem 1. package.json の "version" を上げる（例 0.3.0 → 0.3.1）
-rem 2. ビルド＋GitHub Releases へアップロード（draftとして作られる）
-set GH_TOKEN=ghp_xxxxxxxxxxxxxxxx
+# 1. package.json の "version" を上げる（例 0.3.0 → 0.3.1）
+# 2. ビルド＋GitHub Releases へアップロード（draftとして作られる）
+$env:GH_TOKEN='ghp_xxxxxxxxxxxxxxxx'   # PowerShellでは set は不可（$env: 必須）
 npx electron-builder --win --publish always
-rem 3. GitHub の Releases ページで draft を確認して「Publish release」
+# 3. GitHub の Releases ページで draft を確認して「Publish release」
 ```
 
 publish される3点セット（すべて必要）:
@@ -28,7 +28,8 @@ publish される3点セット（すべて必要）:
 - `SENSEKI-SCAN-Setup-<version>.exe.blockmap` — 差分DL用
 - `latest.yml` — 更新チェックの起点（これが無いと更新が検出されない）
 
-手動アップロードでも可（`app/dist/` の上記3ファイルを Release に添付）。
+手動アップロードでも可（`app/dist/` の上記3ファイルを Release に添付）。v0.3.0 はこの方法で公開済み(2026-08-28)。
+注意: cmd式 `set GH_TOKEN=...` をPowerShellで実行すると環境変数が設定されず、publishが黙ってスキップされる。
 タグ名は `v<version>`（例 `v0.3.1`）にすること。
 
 ## 動作の流れ（ユーザー側）
