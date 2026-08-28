@@ -480,7 +480,6 @@ async function analyze() {
     // --- VS画面: コート・キャラ・名前クロップ ---
     await seekTo((g.vs.t0 + g.vs.t1) / 2);
     // ステイルフレーム対策: VS画面でないフレームを掴んだら少しずらして1回だけ再シーク
-    // （試合中のギミック演出帯が名前クロップに写り込む実例・2026-08-28）
     if (V.classify(V.frameToData(video, 192, 108)) !== 'vs') {
       await seekTo(g.vs.t0 + 0.3);
     }
@@ -754,7 +753,7 @@ async function analyze() {
         if (prev) { m.myRacket = prev.myRacket; (m.auto ??= {}).myRacket = true; }
       }
       // 未帰属/未照合バナーの要確認判定（2026-08-27精緻化）:
-      // - 照合スコア0.7未満の未照合イベントはコートギミック演出（「パトカーふんさい」等の帯）の
+      // - 照合スコア0.7未満の未照合イベントは相手ネームプレート表示（黒帯の名前テキスト）等の
       //   誤検出が主でラケット情報を持たない → フラグ根拠にしない（全問正解の試合が過剰フラグされていた実例）
       // - side不明でも名前が確定済みラケット（自分/相手）と同じなら情報の矛盾なし → フラグ不要
       const decidedNames = new Set([m.myRacket, m.oppRacket].filter(x => x && x !== 'ハテナラケット'));
