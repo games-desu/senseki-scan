@@ -33,10 +33,20 @@ app.whenReady().then(() => {
   const loadUpdaterState = () => { try { return JSON.parse(fs.readFileSync(updaterStatePath(), 'utf8')); } catch { return {}; } };
   autoUpdater.on('update-available', async info => {
     if (loadUpdaterState().skipVersion === info.version) return;
-    // Releaseの説明文（markdown/HTML混在の可能性）→ ダイアログ向けプレーンテキスト化
+    // Releaseの説明文（GitHubはHTML・手動時はmarkdownの可能性）→ ダイアログ向けに「・」箇条書き化
     let notes = info.releaseNotes || '';
     if (Array.isArray(notes)) notes = notes.map(n => n.note || '').join('\n');
-    notes = String(notes).replace(/<[^>]+>/g, '').replace(/[#*`]/g, '').replace(/\n{3,}/g, '\n\n').trim();
+    notes = String(notes)
+      .replace(/<li[^>]*>/gi, '\n・')
+      .replace(/<br[^>]*>/gi, '\n')
+      .replace(/<\/(p|div|ul|ol|h[1-6])>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'")
+      .replace(/^[ \t]*[-*]\s+/gm, '・')
+      .replace(/[#`]/g, '')
+      .split('\n').map(s => s.trim()).join('\n')
+      .replace(/\n{2,}/g, '\n')
+      .trim();
     if (notes.length > 1200) notes = notes.slice(0, 1200) + '…';
     const { response } = await dialog.showMessageBox(win, {
       type: 'info',
