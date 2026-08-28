@@ -663,6 +663,12 @@ async function analyze() {
       if (m.isDoubles) mirror = true;
       else if (i1.name === m.myChar && i2.name !== m.myChar) myRow = 1;
       else if (i2.name === m.myChar && i1.name !== m.myChar) myRow = 2;
+      // 両行が自キャラ名に照合されても、高信頼(>=0.9)が片行だけで他方が低信頼(<=0.8)なら
+      // 低信頼側は未収穫アイコンの誤マッチとみなし、高信頼行を自分と確定する
+      // (マリオ未収穫→次点ハナチャン@0.68で偽ミラー化しスコア空欄になった実例・2026-08-29。
+      //  本物のミラー戦は両行とも高信頼で一致するためこの規則にはかからない)
+      else if (i1.name === m.myChar && i2.name === m.myChar && i1.score >= 0.9 && i2.score <= 0.8) myRow = 1;
+      else if (i1.name === m.myChar && i2.name === m.myChar && i2.score >= 0.9 && i1.score <= 0.8) myRow = 2;
       else if (m.myChar === m.oppChar || i1.name === i2.name) mirror = true;
       // どちらの行も自キャラ名に一致しない = パネルアイコン辞書の未収穫キャラの可能性が高い。
       // 「スコアが低い方=自分でない」の当て推量は実戦で逆を引いた（キャサリンvsベビィワリオで
@@ -823,15 +829,17 @@ async function analyze() {
         const cr = V.readConnection(video, m.mode);
         if (cr.ok) {
           vals.push(cr.level);
-          // 証拠: 回線バーのクロップ（試合中カードの代替・ユーザー要望2026-08-29）
-          if (!m.crops.conn) {
+          // 証拠: 回線バーのクロップ。読めた本数の種類ごとに1枚（同じ本数は重複させない・ユーザー要望2026-08-29）
+          m.connCrops ??= [];
+          if (!m.connCrops.some(c => c.level === cr.level)) {
             const R0 = m.mode && m.mode.startsWith('fever')
               ? { x: 356, y: 14, w: 76, h: 78 } : { x: 26, y: 6, w: 74, h: 80 }; // conn領域+パディング10px
-            m.crops.conn = regionJpeg(R0, 120);
+            m.connCrops.push({ level: cr.level, img: regionJpeg(R0, 120) });
           }
         }
       }
       m.connSamples = vals;
+      if (m.connCrops) m.connCrops.sort((a, b) => a.level - b.level);
       m.connection = vals.length >= 2
         ? Math.max(0, Math.min(4, Math.round(vals.reduce((a, b) => a + b, 0) / vals.length))) : null;
     }
@@ -987,7 +995,7 @@ function racketCrop(m, side) {
 function matchCard(m) {
   return `
       <div class="stage">
-        ${evi('対戦カード（コート/キャラ/名前）', m.crops.vsFrame)}${evi('回線', m.crops.conn, 'small')}
+        ${evi('対戦カード（コート/キャラ/名前）', m.crops.vsFrame)}${(m.connCrops || []).map(c => evi('回線 ' + c.level, c.img, 'small')).join('')}
         ${evi('最終スコア', m.crops.winnerPanel, 'small')}
         ${evi('レート変動前', m.crops.ratingBefore)}
         ${evi('レート変動後', m.crops.ratingAfter)}
@@ -1055,10 +1063,17 @@ function matchCardPaired(m) {
       </div>
     </div>
     <div class="pair">
-      <div class="imgs">${pairImg('レート変動前', m.crops.ratingBefore)}${pairImg('レート変動後', m.crops.ratingAfter)}<div style="max-width:110px">${pairImg('回線', m.crops.conn)}</div></div>
+      <div class="imgs">${pairImg('レート変動前', m.crops.ratingBefore)}${pairImg('レート変動後', m.crops.ratingAfter)}</div>
       <div>
         <div class="pairhead">レート ← 左の2枚と見比べる</div>
-        <div class="g3">${field(m, 'ratingBefore', 'レート前', m.ratingBefore)}${field(m, 'ratingAfter', 'レート後', m.ratingAfter)}${field(m, 'connection', '回線 (0〜4)', m.connection ?? '')}</div>
+        <div class="g2">${field(m, 'ratingBefore', 'レート前', m.ratingBefore)}${field(m, 'ratingAfter', 'レート後', m.ratingAfter)}</div>
+      </div>
+    </div>
+    <div class="pair">
+      <div class="imgs">${(m.connCrops || []).map(c => `<div style="max-width:110px">${pairImg('回線 ' + c.level, c.img)}</div>`).join('') || `<div class="noimg">回線（画像なし）</div>`}</div>
+      <div>
+        <div class="pairhead">回線 ← 試合中に読めた本数の種類（記録値は平均）</div>
+        <div class="g3">${field(m, 'connection', '回線 (0〜4)', m.connection ?? '')}</div>
       </div>
     </div>`;
 }
