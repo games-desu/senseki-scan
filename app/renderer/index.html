@@ -477,7 +477,7 @@ async function analyze() {
         const md = V.matchIcon(V.iconVec(V.cropRegion(video, V.REGIONS.mode1), 24, 8), TPL.mode1);
         if (md.score >= 0.85) { okR = true; break; }
       }
-      if (!okR) { e.type = 'rating_rejected'; log(`[検証] ${e.t0.toFixed(0)}秒のレート窓は部門ボード無し→誤検出として棄却`); }
+      if (!okR) { e.type = 'rating_rejected'; log(`[警告] ${e.t0.toFixed(0)}秒のレート窓は部門ボード照合が低く棄却しました。試合中の誤検出なら正常ですが、未対応の新パネル様式の場合は試合が消えます（辞書更新で対応できるため、直後の試合が欠けていたら録画を添えて報告してください）`); }
     }
   }
   let grouped = V.groupMatches(events);
@@ -613,7 +613,11 @@ async function analyze() {
     // (panelFont収穫分∪ratingFont=0〜9全カバー)に統一。旧w1digit塊読みはFHDシングルスで
     // 7-4を8-6と誤読した実例があり引退（パネルはどちらも同じ小型デザインと実測で確認済み）
     const scoreFont = [...TPL.panelFont, ...TPL.ratingFont];
-    const wloc = await V.locateWinner(video, searchT0, searchT1, scoreFont, true);
+    // 高ビットレート録画では近接シーク連打がステイルフレームを返し、実在する勝敗画面を
+    // 取り逃すことがある(2026-08-29・48Mbps FHDで3試合同時に再現。直後の再実行では成立した)
+    // → 見つからなければ1回だけ再試行する
+    let wloc = await V.locateWinner(video, searchT0, searchT1, scoreFont, true);
+    if (!wloc) wloc = await V.locateWinner(video, searchT0, searchT1, scoreFont, true);
     const rDigit1 = R.dw1digit;
     const rDigit2 = R.dw2digit;
     if (wloc) {
