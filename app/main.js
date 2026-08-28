@@ -1,6 +1,6 @@
 // SENSEKI SCAN — Electron メインプロセス
 // 役割: ウィンドウ生成 / 辞書(テンプレート)の読み込み・ユーザー辞書のマージ / CSV保存ダイアログ / 自動更新
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
@@ -137,6 +137,24 @@ ipcMain.handle('save-csv', async (ev, defaultName, content) => {
   });
   if (canceled || !filePath) return { ok: false };
   fs.writeFileSync(filePath, '﻿' + content, 'utf8'); // Excel向けBOM付きUTF-8
+  return { ok: true, path: filePath };
+});
+
+// 外部リンク（バグ報告先・SENSEKI FEVERの一括登録ページ）
+ipcMain.handle('open-external', (ev, url) => {
+  if (/^https:[/][/]/.test(String(url))) shell.openExternal(String(url));
+  return { ok: true };
+});
+
+// バグレポート等のテキスト保存
+ipcMain.handle('save-text', async (ev, defaultName, content) => {
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title: 'レポートを保存',
+    defaultPath: defaultName,
+    filters: [{ name: 'テキスト', extensions: ['txt'] }],
+  });
+  if (canceled || !filePath) return { ok: false };
+  fs.writeFileSync(filePath, '﻿' + content, 'utf8');
   return { ok: true, path: filePath };
 });
 

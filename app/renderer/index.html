@@ -95,7 +95,7 @@
 </style>
 </head>
 <body>
-<h1><span class="rule"></span>SENSEKI SCAN <span id="ver" class="sub"></span><button id="helpBtn" style="margin-left:auto; font-size:12px; padding:5px 12px">使い方</button></h1>
+<h1><span class="rule"></span>SENSEKI SCAN <span id="ver" class="sub"></span><button id="helpBtn" style="margin-left:auto; font-size:12px; padding:5px 12px">使い方</button><button id="bugBtn" style="margin-left:8px; font-size:12px; padding:5px 12px">バグ報告</button></h1>
 <p class="sub">マリオテニスフィーバーの対戦録画 → SENSEKI FEVER「CSV一括登録」フォーマット。全部門自動識別・解析はすべてこのPC内で完結します。</p>
 <div id="drop">録画ファイル（MP4）をドラッグ&ドロップ、またはクリックして選択（複数まとめてOK）</div>
 <input type="file" id="file" accept="video/*" multiple hidden>
@@ -121,17 +121,41 @@
   <button id="modeList">一覧表示</button>
   <span class="sub" style="margin-bottom:0">1件ずつ確認: Enter / → で次の試合へ・← で前へ</span>
   <button class="primary" id="exportCsvTop" style="margin-left:auto">CSVを保存</button>
+  <button id="copyCsvTop" title="CSVをクリップボードにコピーします。SENSEKI FEVERの一括登録ページの「クリップボードから読み込む」でそのまま登録できます">CSVをコピー</button>
   <button id="resetAll" title="読み込んだ解析結果をすべて消します">クリア</button>
 </div>
 <div id="review"></div>
 <div id="results"></div>
 <div class="panel" id="exportPanel" style="display:none">
   <button class="primary" id="exportCsv">CSVを保存</button>
-  <span class="sub" style="margin-left:8px">SENSEKI FEVERの「CSV一括登録」にそのまま読み込めます。赤枠＝要確認・青枠＝手修正済み。保存前にご確認ください</span>
+  <button id="copyCsv" style="margin-left:6px" title="ファイルを作らずクリップボード経由でSENSEKI FEVERへ渡せます">CSVをコピー</button>
+  <button id="openFever" style="margin-left:6px">一括登録ページを開く</button>
+  <span class="sub" style="margin-left:8px">「CSVをコピー」→一括登録ページの「クリップボードから読み込む」が最短です。赤枠＝要確認・青枠＝手修正済み</span>
 </div>
 <video id="video" muted preload="auto"></video>
 <div id="combo"></div>
 <div id="lightbox"><img id="lightboxImg"></div>
+
+<div id="bugmodal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:30; align-items:center; justify-content:center">
+  <div class="onb-card">
+    <h2><span class="rule"></span>バグ報告</h2>
+    <p class="lead">読み取りの誤り・未対応の画面などを見つけたら、以下の手順で報告をお願いします。</p>
+    <div class="onb-step"><span class="n">1</span><div>
+      <b>レポートを保存</b>
+      <p>アプリのバージョンと解析ログをテキストファイルに保存します（動画・個人情報は含まれません）。</p>
+      <button id="bugSave" style="margin-top:6px">レポートを保存</button>
+    </div></div>
+    <div class="onb-step"><span class="n">2</span><div>
+      <b>レポートを添えて連絡</b>
+      <p>症状の説明とあわせて、どちらかへ送ってください。該当区間の録画も共有できると原因特定が早くなります。</p>
+      <div style="display:flex; gap:8px; margin-top:6px">
+        <button id="bugGithub">GitHubで報告</button>
+        <button id="bugContact">作者への連絡先</button>
+      </div>
+    </div></div>
+    <div class="onb-foot"><button class="primary" id="bugClose">閉じる</button></div>
+  </div>
+</div>
 
 <div id="onboard">
   <div class="onb-card">
@@ -188,6 +212,14 @@ if (!window.api) {
     },
     loadUserData: async k => { try { return JSON.parse(localStorage.getItem('sc_' + k)); } catch { return null; } },
     saveUserData: async (k, d) => { localStorage.setItem('sc_' + k, JSON.stringify(d)); return { ok: true, path: '(localStorage) ' + k }; },
+    openExternal: async url => { window.open(url, '_blank'); return { ok: true }; },
+    saveText: async (name, content) => {
+      const blob = new Blob(['﻿' + content], { type: 'text/plain;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = name; a.click();
+      URL.revokeObjectURL(a.href);
+      return { ok: true, path: '(ブラウザダウンロード) ' + name };
+    },
     appVersion: async () => 'dev',
   };
 }
@@ -1228,7 +1260,7 @@ const CSV_HEADERS = ['played_at','mode','my_character','my_character_color','my_
   'court','my_score','opponent_score','result','rating_before','rating_after','memo','connection_quality'];
 const csvEscape = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
 
-async function doExportCsv() {
+function buildCsvText() {
   const lines = [CSV_HEADERS.join(',')];
   for (const m of matches) {
     // キャラ名の「名前:色」表記を分離（例: ノコノコ:赤）
@@ -1247,18 +1279,43 @@ async function doExportCsv() {
     };
     lines.push(CSV_HEADERS.map(h => csvEscape(row[h])).join(','));
   }
+  return lines.join('\r\n');
+}
+async function doExportCsv() {
   const today = new Date();
   const p2 = n => String(n).padStart(2, '0');
   const defName = `senseki_capture_${today.getFullYear()}${p2(today.getMonth() + 1)}${p2(today.getDate())}.csv`;
-  const r = await window.api.saveCsv(defName, lines.join('\r\n'));
+  const r = await window.api.saveCsv(defName, buildCsvText());
   if (r.ok) {
     setProgress(`CSVを保存しました: ${r.path}`, 1);
     harvestNames(); // 確定した相手名を履歴＋名前テンプレへ（次回の自動入力に使う）
     await harvestTemplates(); // 修正されたキャラ/コートをユーザー辞書へ（教えるサイクル）
   }
 }
+// クリップボード連携: SENSEKI FEVERの一括登録ページ「クリップボードから読み込む」に対応
+async function doCopyCsv() {
+  const text = buildCsvText();
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
+    else {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      const okc = document.execCommand('copy'); ta.remove();
+      if (!okc) throw new Error('copy failed');
+    }
+  } catch (e) {
+    setProgress('コピーに失敗しました: ' + (e && e.message || e), null);
+    return;
+  }
+  setProgress('CSVをコピーしました。SENSEKI FEVERの一括登録ページで「クリップボードから読み込む」を押してください', 1);
+  harvestNames();
+  await harvestTemplates();
+}
 $('exportCsv').addEventListener('click', doExportCsv);
 $('exportCsvTop').addEventListener('click', doExportCsv);
+$('copyCsv').addEventListener('click', doCopyCsv);
+$('copyCsvTop').addEventListener('click', doCopyCsv);
+$('openFever').addEventListener('click', () => window.api.openExternal('https://mario-tennis-records.vercel.app/matches/import'));
 $('resetAll').addEventListener('click', () => {
   if (!matches.length) return;
   if (!confirm('読み込んだ解析結果をすべてクリアします。よろしいですか？（CSV未保存の内容は失われます）')) return;
@@ -1340,6 +1397,34 @@ $('lightbox').addEventListener('click', () => { $('lightbox').style.display = 'n
 $('logToggle').addEventListener('click', () => {
   const l = $('log');
   l.style.display = l.style.display === 'none' ? '' : 'none';
+});
+
+// ---- バグ報告 ----
+$('bugBtn').addEventListener('click', () => { $('bugmodal').style.display = 'flex'; });
+$('bugClose').addEventListener('click', () => { $('bugmodal').style.display = 'none'; });
+$('bugGithub').addEventListener('click', () => window.api.openExternal('https://github.com/games-desu/senseki-scan/issues/new'));
+$('bugContact').addEventListener('click', () => window.api.openExternal('https://games-desu.vercel.app/'));
+$('bugSave').addEventListener('click', async () => {
+  const ver = await window.api.appVersion();
+  const rep = [];
+  rep.push('SENSEKI SCAN バグレポート');
+  rep.push('version: v' + ver);
+  rep.push('日時: ' + new Date().toLocaleString('ja-JP'));
+  rep.push('環境: ' + navigator.userAgent);
+  rep.push('');
+  rep.push('== 試合サマリー ==');
+  for (const m of matches) {
+    const fl = Object.keys(m.flags || {}).filter(k => m.flags[k]).join('/');
+    rep.push('m' + m.n + ' ' + (m.playedAt || '?') + ' ' + (m.mode || '?') + ' score=' + (m.myScore ?? '?') + '-' + (m.oppScore ?? '?') + ' ' + (m.result || '?') + ' rate=' + (m.ratingBefore ?? '?') + '→' + (m.ratingAfter ?? '?') + (fl ? ' flags=' + fl : ''));
+  }
+  rep.push('');
+  rep.push('== 解析ログ ==');
+  for (const l of window.A.log) rep.push(l);
+  const today = new Date();
+  const p2 = n => String(n).padStart(2, '0');
+  const name = 'senseki-scan-report_' + today.getFullYear() + p2(today.getMonth() + 1) + p2(today.getDate()) + '.txt';
+  const r = await window.api.saveText(name, rep.join('\r\n'));
+  if (r.ok) setProgress('レポートを保存しました: ' + r.path, null);
 });
 window.api.appVersion().then(v => { $('ver').textContent = 'v' + v; });
 if (window.api.onUpdateDownloaded) {
