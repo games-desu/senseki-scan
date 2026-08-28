@@ -66,6 +66,7 @@
   .stage figure { margin:0; }
   .stage img { max-height:150px; max-width:560px; width:auto; height:auto; border-radius:6px; border:1px solid var(--border); cursor:zoom-in; display:block; background:#000; }
   .stage figcaption { font-size:10px; color:var(--sub); text-align:center; margin-top:3px; }
+  .stage figure.small img { max-height:110px; }
   #combo { display:none; position:absolute; z-index:20; background:var(--panel); border:1px solid var(--border); border-radius:8px; max-height:240px; overflow-y:auto; box-shadow:0 6px 18px rgba(0,0,0,.5); }
   #combo button { display:block; width:100%; text-align:left; border:none; border-radius:0; background:none; padding:6px 10px; font-size:12px; }
   #combo button.focus { background:#1f3a2c; color:var(--accent); }
@@ -532,13 +533,6 @@ async function analyze() {
       await seekTo(g.vs.t0 + 0.3);
     }
     m.crops.vsFrame = frameJpeg(640); // 証拠: 対戦カード全景（コート名・キャラ・名前が1枚で確認できる）
-    // 証拠: 試合中の様子（持っているラケット・回線状況などが確認できる。試合中盤の1フレーム）
-    {
-      const midEnd = (g.winner && g.winner.t0) || g.rating.t0;
-      await seekTo((g.vs.t1 + midEnd) / 2);
-      m.crops.midMatch = frameJpeg(640);
-      await seekTo((g.vs.t0 + g.vs.t1) / 2); // VS画面に戻す（以降の読み取りはVSフレーム前提）
-    }
     // コート名は matchIconWh（白チャンネルのみ）。暗チャンネルは背景に支配される（vision.js の注記参照）
     const courtVec = V.textVec(V.cropRegion(video, R.court), 32, 8);
     const court = V.matchIconWh(courtVec, TPL.courts);
@@ -727,7 +721,11 @@ async function analyze() {
     // パネル送りはボタンで早められるため固定時刻でなく走査+2回一致で確定する
     if (m.ratingBefore == null) {
       let qVal = null, qPrev = null;
-      for (let t = g.vs.t0 - 2; t >= Math.max(0.2, g.vs.t0 - 45); t -= 1.5) {
+      // 走査下限は前試合のレートパネル終端で止める。遡りすぎると前試合(別mode)のレートパネルが
+      // classify='rating'に一致し、そのレートを待機画面と誤認して無警告で取り込む実例があった
+      // (クラシック直後のフィーバー戦に、クラシックの変動後レートがそのまま入った)
+      const prevRatingEnd = i > 0 && grouped[i - 1].rating ? grouped[i - 1].rating.t1 + 1.5 : 0;
+      for (let t = g.vs.t0 - 2; t >= Math.max(0.2, g.vs.t0 - 45, prevRatingEnd); t -= 1.5) {
         await seekTo(t);
         if (V.classify(V.frameToData(video, 192, 108)) !== 'rating') continue;
         const p = V.parseNumber(V.readGlyphs(V.cropRegion(video, R.rating), 'fillink', TPL.ratingFont, V.NUM_SEG));
@@ -823,7 +821,15 @@ async function analyze() {
       for (let sIdx = 0; sIdx < K && ct1 > ct0; sIdx++) {
         await seekTo(ct0 + (ct1 - ct0) * (sIdx + 0.5) / K);
         const cr = V.readConnection(video, m.mode);
-        if (cr.ok) vals.push(cr.level);
+        if (cr.ok) {
+          vals.push(cr.level);
+          // 証拠: 回線バーのクロップ（試合中カードの代替・ユーザー要望2026-08-29）
+          if (!m.crops.conn) {
+            const R0 = m.mode && m.mode.startsWith('fever')
+              ? { x: 356, y: 14, w: 76, h: 78 } : { x: 26, y: 6, w: 74, h: 80 }; // conn領域+パディング10px
+            m.crops.conn = regionJpeg(R0, 120);
+          }
+        }
       }
       m.connSamples = vals;
       m.connection = vals.length >= 2
@@ -887,12 +893,31 @@ function normalizeForSearch(input) {
 }
 
 // プルダウン候補（テンプレ辞書にある名前＝認識が出力しうる名前）
+// ランクマッチに登場する全コート（SENSEKI FEVER の courts マスタと同名表記・2026-08-29取得）。
+// 辞書に未収穫のコートも候補に出す（アカデミー カーペットが候補に出なかった実例）
+const ALL_COURTS = [
+  'アカデミー アイス', 'アカデミー ウッド', 'アカデミー カーペット', 'アカデミー キノコ',
+  'アカデミー クレイ', 'アカデミー グラス', 'アカデミー サンド', 'アカデミー ハード',
+  'アカデミー ブロック', 'スタジアム グラス', 'スタジアム クレイ', 'スタジアム ハード',
+  'ギャラクシーコート', 'フォレストコート', 'ワンダーコート', 'ラケットファクトリー',
+  'ワルイージピンボール', '飛行船 コート',
+];
+// 全フィーバーラケット（docs/rackets.md の31種）
+const ALL_RACKETS = [
+  'マイラケット', 'ファイアラケット', 'アイスラケット', 'サンダーラケット', 'ビューゴーラケット',
+  'ドロドロラケット', 'マメキノコラケット', 'ファイアフラワーラケット', 'アイスフラワーラケット',
+  'スターラケット', 'たつまきラケット', 'サンボラケット', 'シャドウラケット', 'ファイアバーラケット',
+  'フリーズラケット', 'ビリキューラケット', 'カーブラケット', 'インクラケット', 'バナナラケット',
+  'かざんラケット', 'おばけラケット', 'ダッシュラケット', 'ブルラケット', 'トゲゾーラケット',
+  'マジックラケット', 'キラーラケット', 'ドッスンラケット', 'オシダシーラケット', 'メタルラケット',
+  'ハテナラケット', 'ブラックホールラケット',
+];
 function comboSources() {
   const uniq = a => [...new Set(a.filter(Boolean))].sort((x, y) => x.localeCompare(y, 'ja'));
   return {
     char: Characters.ALL, // CSV一括登録できる全キャラ（色違い含む・正典順）
-    court: uniq((TPL.courts || []).map(t => t.name)),
-    racket: uniq([...(TPL.racketBanners || []).map(t => t.name), 'ハテナラケット']),
+    court: uniq([...(TPL.courts || []).map(t => t.name), ...ALL_COURTS]),
+    racket: uniq([...(TPL.racketBanners || []).map(t => t.name), ...ALL_RACKETS]),
   };
 }
 
@@ -945,8 +970,8 @@ function propagateName(src, key) {
   }
 }
 
-function evi(label, src) {
-  return src ? `<figure><img src="${src}" data-zoom><figcaption>${label}</figcaption></figure>` : '';
+function evi(label, src, cls) {
+  return src ? `<figure class="${cls || ''}"><img src="${src}" data-zoom><figcaption>${label}</figcaption></figure>` : '';
 }
 
 // ラケットの証拠画像: 決定したラケット名と同じ名前のバナーを優先して見せる
@@ -962,8 +987,8 @@ function racketCrop(m, side) {
 function matchCard(m) {
   return `
       <div class="stage">
-        ${evi('対戦カード（コート/キャラ/名前）', m.crops.vsFrame)}${evi('試合中', m.crops.midMatch)}
-        ${evi('最終スコア', m.crops.winnerPanel)}
+        ${evi('対戦カード（コート/キャラ/名前）', m.crops.vsFrame)}${evi('回線', m.crops.conn, 'small')}
+        ${evi('最終スコア', m.crops.winnerPanel, 'small')}
         ${evi('レート変動前', m.crops.ratingBefore)}
         ${evi('レート変動後', m.crops.ratingAfter)}
         ${evi('ラケット発動 (自分)', racketCrop(m, 'me'))}${evi('ラケット発動 (相手)', racketCrop(m, 'opp'))}
@@ -1004,7 +1029,7 @@ function matchCardPaired(m) {
   const rk = side => racketCrop(m, side);
   return `
     <div class="pair">
-      <div class="imgs">${pairImg('対戦カード', m.crops.vsFrame)}${pairImg('試合中', m.crops.midMatch)}</div>
+      <div class="imgs">${pairImg('対戦カード', m.crops.vsFrame)}</div>
       <div>
         <div class="pairhead">コート・キャラ・名前 ← 左の対戦カードと見比べる</div>
         <div class="g2">${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}${field(m, 'mode', 'mode', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'] })}</div>
@@ -1023,14 +1048,14 @@ function matchCardPaired(m) {
       </div>
     </div>` : ''}
     <div class="pair">
-      <div style="max-width:280px">${pairImg('最終スコア', m.crops.winnerPanel)}</div>
+      <div style="max-width:200px">${pairImg('最終スコア', m.crops.winnerPanel)}</div>
       <div>
         <div class="pairhead">スコア・勝敗 ← 左のパネルと見比べる</div>
         <div class="g3">${field(m, 'myScore', '自分スコア', m.myScore)}${field(m, 'oppScore', '相手スコア', m.oppScore)}${field(m, 'result', 'result', m.result, { select: ['win', 'loss'] })}</div>
       </div>
     </div>
     <div class="pair">
-      <div class="imgs">${pairImg('レート変動前', m.crops.ratingBefore)}${pairImg('レート変動後', m.crops.ratingAfter)}</div>
+      <div class="imgs">${pairImg('レート変動前', m.crops.ratingBefore)}${pairImg('レート変動後', m.crops.ratingAfter)}<div style="max-width:110px">${pairImg('回線', m.crops.conn)}</div></div>
       <div>
         <div class="pairhead">レート ← 左の2枚と見比べる</div>
         <div class="g3">${field(m, 'ratingBefore', 'レート前', m.ratingBefore)}${field(m, 'ratingAfter', 'レート後', m.ratingAfter)}${field(m, 'connection', '回線 (0〜4)', m.connection ?? '')}</div>

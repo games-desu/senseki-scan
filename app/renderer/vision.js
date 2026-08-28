@@ -795,10 +795,24 @@ window.Vision = (() => {
       await seekTo(t);
       const b = findBanner(video, null, bOpts);
       if (b) {
-        const profiles = [b.profile];
+        // 見切れガード: 帯の端に接触したバナーはスライド途中で文字が欠けており、
+        // 共通サフィックス「ブースト」だけで別ラケットに高相関する実例(0.92誤マッチ)がある
+        // → 全文が画面内のフレームのプロファイルだけを照合に使う
+        const bandW = REGIONS.bannerBand.w;
+        const inside = bb => bb.box.x0 > 8 && bb.box.x1 < bandW - 8;
+        const profiles = [];
+        if (inside(b)) profiles.push(b.profile);
         await seekTo(t + 0.25);
         const b2 = findBanner(video, null, bOpts);
-        if (b2) profiles.push(b2.profile);
+        if (b2 && inside(b2)) profiles.push(b2.profile);
+        if (!profiles.length) {
+          // 端接触しか取れない場合は前後を少し探す(それでも無ければ照合不能=未照合イベント扱い)
+          for (const dt of [-0.4, -0.2, 0.45, 0.6]) {
+            await seekTo(t + dt);
+            const b3 = findBanner(video, null, bOpts);
+            if (b3 && inside(b3)) { profiles.push(b3.profile); break; }
+          }
+        }
         const readFills = async dt => {
           await seekTo(t + dt);
           return { L: gaugeFill(video, REGIONS.fvL), R: gaugeFill(video, REGIONS.fvR) };
