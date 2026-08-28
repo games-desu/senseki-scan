@@ -431,6 +431,22 @@ async function analyze() {
   if (albumWins.length) {
     log('アルバム/ホーム画面の再生を検出し解析対象から除外: ' + albumWins.map(w => w.t0.toFixed(0) + '〜' + w.t1.toFixed(0) + '秒').join(' / '));
   }
+  // レートパネル検証ゲート: 明るく低彩度なコート（砂等）の試合中フレームが classify='rating' に
+  // 誤検出され、vs直後の偽rating窓が試合を破壊する実例（2026-08-28・アカデミー サンド720p）。
+  // 本物のレートパネルには必ず部門ボード（シングルス/ダブルス）が載っている → mode1照合0.85未満の窓を棄却
+  // （実測: 本物=1.00 / 砂の誤検出=0.60〜0.70。mode2は砂で0.85が出るためmode1のみで判定）
+  {
+    const seekToV = V.makeSeeker(video);
+    for (const e of events.filter(e => e.type === 'rating')) {
+      let okR = false;
+      for (const tt of [ (e.t0 + e.t1) / 2, Math.max(e.t0, e.t1 - 0.5), e.t0 + 0.3 ]) {
+        await seekToV(tt);
+        const md = V.matchIcon(V.iconVec(V.cropRegion(video, V.REGIONS.mode1), 24, 8), TPL.mode1);
+        if (md.score >= 0.85) { okR = true; break; }
+      }
+      if (!okR) { e.type = 'rating_rejected'; log(`[検証] ${e.t0.toFixed(0)}秒のレート窓は部門ボード無し→誤検出として棄却`); }
+    }
+  }
   let grouped = V.groupMatches(events);
   // レートパネルの色はランクで変わるため、未収穫ランクの試合は成立しない。取り逃しを可視化する
   const vsCount = events.filter(e => e.type === 'vs').length;

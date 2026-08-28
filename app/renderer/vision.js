@@ -830,7 +830,9 @@ window.Vision = (() => {
         if (last && !last.rating) continue;
         matches.push({ vs: e });
       }
-      else if (e.type === 'winner') { const m = matches[matches.length - 1]; if (m && !m.winner) m.winner = e; }
+      // winnerはratingが来るまで最後のもので上書きする。本物の勝敗パネルは必ずレートパネル直前に出る。
+      // （砂コートで試合中の黄色が偽winnerになり、先勝ちだと本物t458でなく偽t367を掴んだ実例・2026-08-28）
+      else if (e.type === 'winner') { const m = matches[matches.length - 1]; if (m && !m.rating) m.winner = e; }
       else if (e.type === 'rating') { const m = matches[matches.length - 1]; if (m && !m.rating) m.rating = e; }
     }
     return matches.filter(m => m.rating); // レートパネルまで揃った試合のみ
