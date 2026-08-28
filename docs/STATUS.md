@@ -5,12 +5,16 @@
 
 ## 1. 本体アプリ（app/・Electron）
 
-**バージョン: v0.3.3（コード完成・要ビルド&リリース。v0.3.0〜v0.3.2は2026-08-28に一般公開済み）**
+**バージョン: v0.3.6（コード完成・要ビルド&リリース。v0.3.0〜v0.3.5は2026-08-28に一般公開済み）**
 
-### ユーザー作業（未実施）
-1. 再ビルド: 実ターミナルで `cd C:\Users\<user>\Documents\senseki-capture\app; npm run dist`
-   （NSIS工程はClaudeサンドボックスでexe実行不可のため必ず実機で）
-2. ~~GitHub公開リポ作成~~ → **作成・push済み(2026-08-27)** https://github.com/games-desu/senseki-scan（リリース発行手順は `docs/release.md`）
+### リリースの回し方（確立済み・2026-08-28）
+- ユーザー: 実ターミナルで `cd C:\Users\<user>\Documents\senseki-capture\app; npm run dist`（NSISはサンドボックス不可）
+- Claude: `gh release create vX.Y.Z` で発行代行（gh CLI認証済み・exe+blockmap+latest.ymlの3点添付・説明欄は1行=1項目で更新ダイアログにそのまま表示される）
+- 公開リポ: https://github.com/games-desu/senseki-scan ／ 手順詳細は `docs/release.md`
+
+### 残タスク
+- v0.3.6のビルド&発行（バグ報告機能・CSVコピー連携を含む）
+- リンクまとめサイト(games-desu.vercel.app)への掲載とSENSEKI SCANのX告知（FEVER側のアプデ告知は2026-08-28にユーザーが投稿済み）
 
 ### v0.3.0 に入っている機能
 - 複数動画バッチ解析（D&D）／全部門自動識別（クラシックS/D・フィーバーS/D）
