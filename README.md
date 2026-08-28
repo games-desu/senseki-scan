@@ -3,6 +3,12 @@
 Mario Tennis Fever の対戦録画（キャプチャーボード等の長尺MP4）から対戦情報を自動抽出し、
 SENSEKI FEVER の CSV 一括登録フォーマットで出力する Windows ローカルアプリ。
 
+## ダウンロード（利用者向け）
+
+- **[最新版をダウンロード](https://github.com/games-desu/senseki-scan/releases/latest)**（`SENSEKI-SCAN-Setup-<バージョン>.exe`）
+- インストール手順・使い方 → **[利用マニュアル](docs/manual.md)**
+- 以下は開発者向けの情報です
+
 **現在の実装ステータスと残タスクは → [docs/STATUS.md](docs/STATUS.md)**（下のロードマップ表より新しい）
 
 ## 推奨録画設定

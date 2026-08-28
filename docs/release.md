@@ -6,7 +6,7 @@
 
 ## 初回だけの準備
 
-1. GitHub に **公開リポジトリ `senseki-scan`** を作る（https://github.com/new）。
+1. ~~GitHub に公開リポジトリ senseki-scan を作る~~ → **作成済み(2026-08-27)** https://github.com/games-desu/senseki-scan
    - **public 必須**。electron-updater はトークンなしで latest.yml を読むため、私有リポだと全ユーザーが更新確認に失敗する。
    - ソースを置きたくなければ**空のままでよい**（Releases だけ使う）。README 1枚でも可。
 2. Personal Access Token を作る（Settings → Developer settings → Tokens (classic) → `repo` スコープ）。

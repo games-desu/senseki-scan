@@ -78,10 +78,22 @@
   #lightbox img { max-width:94vw; max-height:94vh; border-radius:8px; }
   video { display:none; }
   #log { font:11px Consolas,monospace; color:var(--sub); white-space:pre-wrap; max-height:140px; overflow-y:auto; margin-top:8px; }
+  /* 初回ガイド */
+  #onboard { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:30; align-items:center; justify-content:center; }
+  .onb-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:22px 26px; max-width:640px; width:92vw; max-height:90vh; overflow-y:auto; }
+  .onb-card h2 { font-size:15px; color:var(--accent); display:flex; align-items:center; margin-bottom:4px; }
+  .onb-card .lead { color:var(--sub); font-size:12px; margin-bottom:16px; }
+  .onb-step { display:flex; gap:12px; padding:10px 0; border-bottom:1px solid var(--border); }
+  .onb-step:last-of-type { border-bottom:none; }
+  .onb-step .n { flex:none; width:26px; height:26px; border-radius:50%; border:1px solid var(--accent-dark); color:var(--accent); font-size:13px; font-weight:bold; display:flex; align-items:center; justify-content:center; }
+  .onb-step b { display:block; font-size:13px; margin-bottom:2px; }
+  .onb-step p { color:var(--sub); font-size:12px; line-height:1.6; }
+  .onb-foot { display:flex; align-items:center; gap:12px; margin-top:16px; }
+  .onb-foot .note { color:var(--sub); font-size:11px; }
 </style>
 </head>
 <body>
-<h1><span class="rule"></span>SENSEKI SCAN <span id="ver" class="sub"></span></h1>
+<h1><span class="rule"></span>SENSEKI SCAN <span id="ver" class="sub"></span><button id="helpBtn" style="margin-left:auto; font-size:12px; padding:5px 12px">使い方</button></h1>
 <p class="sub">マリオテニスフィーバーの対戦録画 → SENSEKI FEVER「CSV一括登録」フォーマット。全部門自動識別・解析はすべてこのPC内で完結します。</p>
 <div id="drop">録画ファイル（MP4）をドラッグ&ドロップ、またはクリックして選択（複数まとめてOK）</div>
 <input type="file" id="file" accept="video/*" multiple hidden>
@@ -102,7 +114,7 @@
 <div class="panel" id="viewBar" style="display:none; align-items:center; gap:8px; flex-wrap:wrap">
   <button id="modeSingle">1件ずつ確認</button>
   <button id="modeList">一覧表示</button>
-  <span class="sub" style="margin-bottom:0">1件ずつ確認: Enterで次の試合へ / Shift+Enterで前へ</span>
+  <span class="sub" style="margin-bottom:0">1件ずつ確認: Enter / → で次の試合へ・← で前へ</span>
   <button class="primary" id="exportCsvTop" style="margin-left:auto">CSVを保存</button>
   <button id="resetAll" title="読み込んだ解析結果をすべて消します">クリア</button>
 </div>
@@ -115,6 +127,33 @@
 <video id="video" muted preload="auto"></video>
 <div id="combo"></div>
 <div id="lightbox"><img id="lightboxImg"></div>
+
+<div id="onboard">
+  <div class="onb-card">
+    <h2><span class="rule"></span>SENSEKI SCAN の使い方</h2>
+    <p class="lead">対戦録画から戦績CSVを自動抽出します。解析はすべてこのPC内で完結し、動画がアップロードされることはありません。</p>
+    <div class="onb-step"><span class="n">1</span><div>
+      <b>録画ファイル（MP4）をドラッグ&ドロップ</b>
+      <p>OBS等の元録画をそのまま使ってください（編集ソフトで再エンコードした動画は精度が落ちます）。推奨: 1080p以上・30fps以上・6Mbps以上。複数ファイルまとめてOK。</p>
+    </div></div>
+    <div class="onb-step"><span class="n">2</span><div>
+      <b>解析を待つ</b>
+      <p>動画1本あたり数分かかります。録画時間や試合数によって前後します。</p>
+    </div></div>
+    <div class="onb-step"><span class="n">3</span><div>
+      <b>「1件ずつ確認」で内容をチェック</b>
+      <p>証拠画像と入力欄が並んで表示されます。赤枠＝要確認なので直してください。Enter または → で次の試合へ、← で前へ。修正した内容は次回から自動で学習されます。</p>
+    </div></div>
+    <div class="onb-step"><span class="n">4</span><div>
+      <b>CSVを保存 → SENSEKI FEVER へ</b>
+      <p>保存したCSVは SENSEKI FEVER の「CSV一括登録」にそのまま読み込めます。</p>
+    </div></div>
+    <div class="onb-foot">
+      <button class="primary" id="onbClose">はじめる</button>
+      <span class="note">この画面は右上の「使い方」からいつでも開けます</span>
+    </div>
+  </div>
+</div>
 
 <script src="vision.js"></script>
 <script src="characters.js"></script>
@@ -188,6 +227,15 @@ async function loadUserData() {
   $('setAutoName').checked = !!SETTINGS.autoName;
 }
 const userDataReady = loadUserData().catch(() => {});
+
+// ---- 初回ガイド（初回起動時のみ自動表示・「使い方」でいつでも再表示） ----
+const showOnboard = () => { $('onboard').style.display = 'flex'; };
+$('helpBtn').addEventListener('click', showOnboard);
+$('onbClose').addEventListener('click', () => {
+  $('onboard').style.display = 'none';
+  if (!SETTINGS.onboarded) { SETTINGS.onboarded = true; window.api.saveUserData('settings', SETTINGS); }
+});
+userDataReady.then(() => { if (!SETTINGS.onboarded) showOnboard(); });
 $('setAutoName').addEventListener('change', () => {
   SETTINGS.autoName = $('setAutoName').checked;
   window.api.saveUserData('settings', SETTINGS);
@@ -920,9 +968,9 @@ function renderReview() {
   $('review').innerHTML = `
     <div class="match single">
       <div class="revnav">
-        <button id="revPrev" ${reviewIdx === 0 ? 'disabled' : ''}>← 前へ</button>
+        <button id="revPrev" ${reviewIdx === 0 ? 'disabled' : ''}>← 前へ (←)</button>
         <span class="pos">試合 ${reviewIdx + 1} / ${matches.length}</span>
-        <button id="revNext" class="primary" ${last ? 'disabled' : ''}>${last ? '最後の試合です' : '確認OK・次へ (Enter) →'}</button>
+        <button id="revNext" class="primary" ${last ? 'disabled' : ''}>${last ? '最後の試合です' : '確認OK・次へ (Enter / →)'}</button>
         <div class="dots">${dots}</div>
         <span class="sub" style="margin-left:auto;margin-bottom:0">${m.video ?? ''}</span>
       </div>
@@ -1081,10 +1129,15 @@ document.addEventListener('keydown', e => {
     if (e.key === 'Enter' && combo.idx >= 0 && combo.filtered[combo.idx] != null) { e.preventDefault(); selectCombo(combo.idx); return; }
     if (e.key === 'Enter') closeCombo(); // 候補未選択のEnterは閉じて（1件ビューなら）次の試合へ
   }
-  if (viewMode !== 'single' || !matches.length || e.key !== 'Enter') return;
+  if (viewMode !== 'single' || !matches.length) return;
+  const arrow = e.key === 'ArrowRight' || e.key === 'ArrowLeft';
+  if (e.key !== 'Enter' && !arrow) return;
   if (e.target && e.target.tagName === 'BUTTON') return; // ボタン上のEnterはクリックに任せる
+  // 入力欄内の←→はカーソル移動に使う（試合送りしない）。Enterは従来通り送り
+  if (arrow && e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
   e.preventDefault();
-  if (e.shiftKey) { if (reviewIdx > 0) { reviewIdx--; render(); } }
+  const back = e.key === 'ArrowLeft' || (e.key === 'Enter' && e.shiftKey);
+  if (back) { if (reviewIdx > 0) { reviewIdx--; render(); } }
   else if (reviewIdx < matches.length - 1) { reviewIdx++; render(); }
 });
 
