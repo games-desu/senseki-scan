@@ -50,6 +50,8 @@
   .pair { display:grid; grid-template-columns:400px 1fr; gap:16px; padding:10px 0; border-bottom:1px solid var(--border); align-items:start; }
   .pair:last-of-type { border-bottom:none; padding-bottom:2px; }
   .pair .imgs { display:flex; gap:10px; }
+  .pair .imgs-col { flex-direction:column; gap:6px; }
+  .pair .imgs-col figure > img { max-height:140px; }
   .pair .imgs figure { flex:1; min-width:0; }
   .pair figure { margin:0; }
   .pair figure > img { width:100%; height:auto; max-height:230px; object-fit:contain; border-radius:8px; border:1px solid var(--border); cursor:zoom-in; display:block; background:#000; }
@@ -478,6 +480,13 @@ async function analyze() {
     // --- VS画面: コート・キャラ・名前クロップ ---
     await seekTo((g.vs.t0 + g.vs.t1) / 2);
     m.crops.vsFrame = frameJpeg(640); // 証拠: 対戦カード全景（コート名・キャラ・名前が1枚で確認できる）
+    // 証拠: 試合中の様子（持っているラケット・回線状況などが確認できる。試合中盤の1フレーム）
+    {
+      const midEnd = (g.winner && g.winner.t0) || g.rating.t0;
+      await seekTo((g.vs.t1 + midEnd) / 2);
+      m.crops.midMatch = frameJpeg(640);
+      await seekTo((g.vs.t0 + g.vs.t1) / 2); // VS画面に戻す（以降の読み取りはVSフレーム前提）
+    }
     // コート名は matchIconWh（白チャンネルのみ）。暗チャンネルは背景に支配される（vision.js の注記参照）
     const courtVec = V.textVec(V.cropRegion(video, R.court), 32, 8);
     const court = V.matchIconWh(courtVec, TPL.courts);
@@ -880,7 +889,7 @@ function racketCrop(m, side) {
 function matchCard(m) {
   return `
       <div class="stage">
-        ${evi('対戦カード（コート/キャラ/名前）', m.crops.vsFrame)}
+        ${evi('対戦カード（コート/キャラ/名前）', m.crops.vsFrame)}${evi('試合中', m.crops.midMatch)}
         ${evi('最終スコア', m.crops.winnerPanel)}
         ${evi('レート変動前', m.crops.ratingBefore)}
         ${evi('レート変動後', m.crops.ratingAfter)}
@@ -921,7 +930,7 @@ function matchCardPaired(m) {
   const rk = side => racketCrop(m, side);
   return `
     <div class="pair">
-      ${pairImg('対戦カード', m.crops.vsFrame)}
+      <div class="imgs imgs-col">${pairImg('対戦カード', m.crops.vsFrame)}${pairImg('試合中', m.crops.midMatch)}</div>
       <div>
         <div class="pairhead">コート・キャラ・名前 ← 左の対戦カードと見比べる</div>
         <div class="g2">${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}${field(m, 'mode', 'mode', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'] })}</div>
