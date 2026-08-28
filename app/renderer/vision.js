@@ -40,6 +40,10 @@ window.Vision = (() => {
     fvL: { x: 305,  y: 72, w: 160, h: 20 },
     fvR: { x: 1540, y: 72, w: 160, h: 20 },
     bannerBand: { x: 0, y: 690, w: 1920, h: 320 },
+    // 回線品質アイコン（4本バー・対戦全体で1つ）。クラシック=画面左上／フィーバー=左上HPバーの右
+    // （2026-08-28実測: クラシックはFHD x43-80,y25-70・フィーバーは x373-415,y30-75・やや斜め）
+    connClassic: { x: 36, y: 16, w: 54, h: 60 },
+    connFever:   { x: 366, y: 24, w: 56, h: 58 },
     // Switch(2)本体のアルバム再生バーの凡例帯（「+全画面表示 Y再生 X消去 Bもどる Aメニュー」）。
     // 録画中にホーム→アルバムで過去のスクショ/動画を見返すと、ゲーム映像がほぼ全面に再生され、
     // 中にVS/勝敗/レートパネルが写るとスキャンが誤爆する。凡例は固定UIなので白chテンプレ照合で判定できる
@@ -637,6 +641,30 @@ window.Vision = (() => {
     return frac(img, 0, 0, region.w, region.h, (r, g, b) => lum(r, g, b) > 90);
   }
 
+  // 回線品質アイコン（4本バー）の点灯本数を読む。黄色い縦バーの「列ラン」を数える方式
+  // （バーは黒縁で区切られるため、黄色列の連続ランの本数=点灯本数。斜め表示にも頑健）。
+  // 戻り値 {level, ok}: ok=false はアイコン不在（HUD非表示・リプレイ・カメラ演出中）か判定不能
+  function readConnection(video, mode) {
+    const R0 = (mode && String(mode).indexOf('fever') === 0) ? REGIONS.connFever : REGIONS.connClassic;
+    const img = cropRegion(video, R0);
+    const { data, width, height } = img;
+    // アイコンの黄色は(≈230,230,40)。芝(緑)やテント(赤)を弾くため彩度条件を強めに取る
+    const isYellow = i => { const r = data[i*4], g = data[i*4+1], b = data[i*4+2];
+      return r > 180 && g > 160 && b < 100 && r - b > 90 && g - b > 90; };
+    const colCnt = new Uint16Array(width);
+    let total = 0;
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++)
+      if (isYellow(y * width + x)) { colCnt[x]++; total++; }
+    let runs = 0, len = 0;
+    for (let x = 0; x <= width; x++) {
+      const on = x < width && colCnt[x] >= 4;
+      if (on) len++;
+      else { if (len >= 3) runs++; len = 0; }
+    }
+    if (runs >= 1 && runs <= 4 && total >= 50) return { level: runs, ok: true };
+    return { level: 0, ok: false };
+  }
+
   // フィーバー発動バナー（「〇〇ショット/ブースト」巨大白文字）を現在フレームから探す。
   // 見つかれば 純白グリフのバウンディングボックスと textVec を返す
   function findBanner(video, region, opts = {}) {
@@ -808,6 +836,6 @@ window.Vision = (() => {
 
   return { REGIONS, NUM_SEG, lum, makeSeeker, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
            matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
-           bannerOverlapsPanel, findPanelEnd, readRatingPair,
+           bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection,
            gaugeFill, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
 })();

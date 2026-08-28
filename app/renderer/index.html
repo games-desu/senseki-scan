@@ -757,6 +757,24 @@ async function analyze() {
       log(`m${m.n}: ラケット 自分=${m.myRacket ?? '?'} 相手=${m.oppRacket ?? '?'} (バナー${m.racketEvents.length}件)`);
     }
 
+    // 回線品質: 試合中の4本バーアイコンを複数回サンプリングして平均（→CSVのconnection_quality）。
+    // リアルタイムに変動するため平均を取る。HUD非表示の瞬間(ok=false)はサンプルから除外。
+    // 任意項目なので読めなくてもフラグは立てない（空欄のまま）
+    {
+      setProgress(`試合 ${i + 1}: 回線を確認中…`, null);
+      const ct0 = g.vs.t1 + 8, ct1 = ((g.winner && g.winner.t0) || g.rating.t0) - 5;
+      const vals = [];
+      const K = 7;
+      for (let sIdx = 0; sIdx < K && ct1 > ct0; sIdx++) {
+        await seekTo(ct0 + (ct1 - ct0) * (sIdx + 0.5) / K);
+        const cr = V.readConnection(video, m.mode);
+        if (cr.ok) vals.push(cr.level);
+      }
+      m.connSamples = vals;
+      m.connection = vals.length >= 2
+        ? Math.max(0, Math.min(4, Math.round(vals.reduce((a, b) => a + b, 0) / vals.length))) : null;
+    }
+
     // ミラー戦: レートの増減で勝敗と自分スコアを確定（増減が読めなければ要確認のまま）
     if (m._w && m._w.mirror) {
       const { s1, s2, winnerRow } = m._w;
@@ -825,7 +843,7 @@ function comboSources() {
 
 const EDIT_KEYS = ['playedAt', 'mode', 'myChar', 'partnerChar', 'partnerName', 'oppChar', 'oppName',
   'opp2Char', 'opp2Name', 'myRacket', 'oppRacket', 'court', 'myScore', 'oppScore', 'result',
-  'ratingBefore', 'ratingAfter'];
+  'ratingBefore', 'ratingAfter', 'connection'];
 function snapshotOrig(m) {
   m._orig = {};
   for (const k of EDIT_KEYS) m._orig[k] = m[k] ?? '';
@@ -913,13 +931,14 @@ function matchCard(m) {
         ${field(m, 'result', 'result', m.result, { select: ['win', 'loss'] })}
         ${field(m, 'ratingBefore', 'レート前', m.ratingBefore)}
         ${field(m, 'ratingAfter', 'レート後', m.ratingAfter)}
+        ${field(m, 'connection', '回線 (0〜4)', m.connection ?? '')}
       </div>`;
 }
 
 const FIELD_LABELS = { playedAt: '日時', mode: 'mode', myChar: '自分キャラ', partnerChar: '味方キャラ',
   partnerName: '味方の名前', oppChar: '相手1キャラ', oppName: '相手1の名前', opp2Char: '相手2キャラ',
   opp2Name: '相手2の名前', myRacket: '自分ラケット', oppRacket: '相手ラケット', court: 'コート',
-  myScore: '自分スコア', oppScore: '相手スコア', result: 'result', ratingBefore: 'レート前', ratingAfter: 'レート後' };
+  myScore: '自分スコア', oppScore: '相手スコア', result: 'result', ratingBefore: 'レート前', ratingAfter: 'レート後', connection: '回線' };
 
 // 1件ずつ確認用: 照合ペア型（証拠画像とその入力欄を行ごとに横並び。目線移動を最小にする）
 function matchCardPaired(m) {
@@ -959,7 +978,7 @@ function matchCardPaired(m) {
       <div class="imgs">${pairImg('レート変動前', m.crops.ratingBefore)}${pairImg('レート変動後', m.crops.ratingAfter)}</div>
       <div>
         <div class="pairhead">レート ← 左の2枚と見比べる</div>
-        <div class="g2">${field(m, 'ratingBefore', 'レート前', m.ratingBefore)}${field(m, 'ratingAfter', 'レート後', m.ratingAfter)}</div>
+        <div class="g3">${field(m, 'ratingBefore', 'レート前', m.ratingBefore)}${field(m, 'ratingAfter', 'レート後', m.ratingAfter)}${field(m, 'connection', '回線 (0〜4)', m.connection ?? '')}</div>
       </div>
     </div>`;
 }
@@ -1183,7 +1202,7 @@ const CSV_HEADERS = ['played_at','mode','my_character','my_character_color','my_
   'partner_name','partner_character','partner_character_color','partner_racket1',
   'opponent1_name','opponent1_character','opponent1_character_color','opponent1_racket1',
   'opponent2_name','opponent2_character','opponent2_character_color','opponent2_racket1',
-  'court','my_score','opponent_score','result','rating_before','rating_after','memo'];
+  'court','my_score','opponent_score','result','rating_before','rating_after','memo','connection_quality'];
 const csvEscape = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
 
 async function doExportCsv() {
@@ -1201,6 +1220,7 @@ async function doExportCsv() {
       opponent2_name: m.opp2Name ?? '', opponent2_character: o2C, opponent2_character_color: o2Col, opponent2_racket1: '',
       court: m.court, my_score: m.myScore, opponent_score: m.oppScore, result: m.result,
       rating_before: m.ratingBefore, rating_after: m.ratingAfter, memo: '',
+      connection_quality: m.connection ?? '',
     };
     lines.push(CSV_HEADERS.map(h => csvEscape(row[h])).join(','));
   }

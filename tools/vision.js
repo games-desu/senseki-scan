@@ -34,6 +34,10 @@ window.Vision = (() => {
     fvL: { x: 305,  y: 72, w: 160, h: 20 },
     fvR: { x: 1540, y: 72, w: 160, h: 20 },
     bannerBand: { x: 0, y: 690, w: 1920, h: 320 },
+    // 回線品質アイコン（4本バー・対戦全体で1つ）。クラシック=画面左上／フィーバー=左上HPバーの右
+    // （2026-08-28実測: クラシックはFHD x43-80,y25-70・フィーバーは x373-415,y30-75・やや斜め）
+    connClassic: { x: 36, y: 16, w: 54, h: 60 },
+    connFever:   { x: 366, y: 24, w: 56, h: 58 },
     // Switch(2)本体のアルバム再生バーの凡例帯（「+全画面表示 Y再生 X消去 Bもどる Aメニュー」）。
     // 録画中にホーム→アルバムで過去のスクショ/動画を見返すと、ゲーム映像がほぼ全面に再生され、
     // 中にVS/勝敗/レートパネルが写るとスキャンが誤爆する。凡例は固定UIなので白chテンプレ照合で判定できる
@@ -553,6 +557,58 @@ window.Vision = (() => {
     return frac(img, 0, 0, region.w, region.h, (r, g, b) => lum(r, g, b) > 90);
   }
 
+  // 回線品質アイコン（4本バー・対戦全体で1つ）。クラシック=画面左上／フィーバー=左上HPバーの右
+    // （2026-08-28実測: クラシックはFHD x43-80,y25-70・フィーバーは x373-415,y30-75・やや斜め）
+    connClassic: { x: 36, y: 16, w: 54, h: 60 },
+    connFever:   { x: 366, y: 24, w: 56, h: 58 },
+    // Switch(2)本体のアルバム再生バーの凡例帯（「+全画面表示 Y再生 X消去 Bもどる Aメニュー」）。
+    // 録画中にホーム→アルバムで過去のスクショ/動画を見返すと、ゲーム映像がほぼ全面に再生され、
+    // 中にVS/勝敗/レートパネルが写るとスキャンが誤爆する。凡例は固定UIなので白chテンプレ照合で判定できる
+    // （実測: バー表示中 nccWh 0.995〜0.998 / ライブ全画面 ≤0.06・レート待機画面の誤爆候補でも ≤0.61）。
+    albumBar: { x: 880, y: 1004, w: 900, h: 38 },
+  };
+
+  // シーク後に「新しいフレームが実際に取得できた」ことまで保証するシーカー。
+  // seekedだけ待つと、長時間のシーク連打でフレームが更新されなくなる不具合を踏む。
+  // 対策: rVFC(発火すれば即) + 短いフォールバック + フレームハッシュ監視。
+  // 異なる時刻へのシークでハッシュが3回連続同一ならステイルと判断し、srcを再設定して復旧する。
+  function makeSeeker(video) {
+    let lastHash = null, sameCount = 0;
+    const tiny = () => {
+      const c = document.createElement('canvas'); c.width = 48; c.height = 27;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, 48, 27);
+      const d = ctx.getImageData(0, 0, 48, 27).data;
+      let s = 0; for (let i = 0; i < d.length; i += 16) s = (s * 31 + d[i]) % 1000000007;
+      return s;
+    };
+    // seeked直後のdrawImageは新フレームを返す（実測）。稀に起きる持続的なステイルは下のハッシュ監視で復旧
+    const rawSeek = t => new Promise(res => {
+      video.addEventListener('seeked', () => res(), { once: true });
+      video.currentTime = t;
+    });
+    return async t => {
+      await rawSeek(t);
+      let h = tiny();
+      if (h === lastHash) {
+        if (++sameCount >= 3) {
+          // 静止画面かステイルかを判別: 離れた時刻にプローブして絵が変わるか見る
+          const probeT = Math.max(0.2, Math.min(video.duration - 1, t > video.duration / 2 ? t - 37 : t + 37));
+          await rawSeek(probeT);
+          if (tiny() === h) {
+            // 別時刻でも同じ絵 → 本当にステイル → src再設定で復旧
+            video.src = video.currentSrc;
+            await new Promise(r => video.addEventListener('loadedmetadata', r, { once: true }));
+          }
+          await rawSeek(t);
+          h = tiny();
+          sameCount = 0;
+        }
+      } else sameCount = 0;
+      lastHash = h;
+    };
+  }
+
   // フィーバー発動バナー（「〇〇ショット/ブースト」巨大白文字）を現在フレームから探す。
   // 見つかれば 純白グリフのバウンディングボックスと textVec を返す
   function findBanner(video, region, opts = {}) {
@@ -717,5 +773,5 @@ window.Vision = (() => {
 
   return { REGIONS, NUM_SEG, lum, makeSeeker, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
            matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
-           gaugeFill, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
+           gaugeFill, findBanner, captureStableBanner, profileXcorr, collectBanners, readConnection, TW, TH };
 })();
