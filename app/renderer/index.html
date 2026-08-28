@@ -47,12 +47,12 @@
   .dots i.done { background:var(--accent-dark); }
   .dots i.cur { background:var(--accent); }
   .dots i.warn { background:var(--warn); }
-  .pair { display:grid; grid-template-columns:440px 1fr; gap:18px; padding:14px 0; border-bottom:1px solid var(--border); align-items:start; }
+  .pair { display:grid; grid-template-columns:400px 1fr; gap:16px; padding:10px 0; border-bottom:1px solid var(--border); align-items:start; }
   .pair:last-of-type { border-bottom:none; padding-bottom:2px; }
   .pair .imgs { display:flex; gap:10px; }
   .pair .imgs figure { flex:1; min-width:0; }
   .pair figure { margin:0; }
-  .pair figure > img { width:100%; height:auto; max-height:300px; object-fit:contain; border-radius:8px; border:1px solid var(--border); cursor:zoom-in; display:block; background:#000; }
+  .pair figure > img { width:100%; height:auto; max-height:230px; object-fit:contain; border-radius:8px; border:1px solid var(--border); cursor:zoom-in; display:block; background:#000; }
   .pair figcaption { font-size:10px; color:var(--sub); text-align:center; margin-top:4px; }
   .pairhead { font-size:11px; font-weight:bold; color:var(--accent); margin-bottom:8px; letter-spacing:.5px; }
   .pair .g2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
@@ -62,7 +62,7 @@
   /* 一覧: シアター型（上=大きめの証拠画像を黒帯に並べる・下=入力グリッド） */
   .stage { display:flex; gap:12px; margin-bottom:10px; flex-wrap:wrap; align-items:flex-start; background:#000; border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
   .stage figure { margin:0; }
-  .stage img { height:150px; border-radius:6px; border:1px solid var(--border); cursor:zoom-in; display:block; background:#000; }
+  .stage img { max-height:150px; max-width:560px; width:auto; height:auto; border-radius:6px; border:1px solid var(--border); cursor:zoom-in; display:block; background:#000; }
   .stage figcaption { font-size:10px; color:var(--sub); text-align:center; margin-top:3px; }
   #combo { display:none; position:absolute; z-index:20; background:var(--panel); border:1px solid var(--border); border-radius:8px; max-height:240px; overflow-y:auto; box-shadow:0 6px 18px rgba(0,0,0,.5); }
   #combo button { display:block; width:100%; text-align:left; border:none; border-radius:0; background:none; padding:6px 10px; font-size:12px; }
@@ -107,7 +107,10 @@
   <div id="queue" class="sub"></div>
 </div>
 <div class="panel" id="progPanel" style="display:none">
-  <div id="progress">準備中…</div>
+  <div style="display:flex; align-items:center; gap:10px">
+    <div id="progress" style="flex:1">準備中…</div>
+    <button id="logToggle" style="display:none; font-size:11px; padding:3px 10px" title="解析ログの表示/非表示">ログ</button>
+  </div>
   <div id="bar"><div></div></div>
   <div id="log"></div>
 </div>
@@ -415,6 +418,9 @@ function validateWinnerScores(s1, s2, winnerRow) {
 async function analyze() {
   window.A.phase = 'scan';
   $('progPanel').style.display = 'block';
+  $('bar').style.display = '';
+  $('log').style.display = '';
+  $('logToggle').style.display = 'none';
   const t0 = performance.now();
   const events = await V.scan(video, { albumTpl: TPL.albumBar || [], onProgress: (t, dur) =>
     setProgress(`全編スキャン中… ${t.toFixed(0)}/${dur.toFixed(0)}秒`, t / dur * 0.7) });
@@ -692,14 +698,17 @@ async function analyze() {
         }
         const matched = bestScore >= 0.85 ? bestName : null;
         await seekTo(e.t);
-        const bb = V.findBanner(video);
+        const bb = V.findBanner(video, null, { maxH: 160 }); // collectBannersと同条件（斜めバナー対応）
         let crop = null;
         if (bb) {
+          // 表示用クロップは認識ボックスより少し広げる（グリフ端の欠け対策・認識処理には未使用）
           const img = V.cropRegion(video, R.bannerBand);
+          const PAD = 16;
+          const cx0 = Math.max(0, bb.box.x0 - PAD), cy0 = Math.max(0, bb.box.y0 - PAD);
+          const cx1 = Math.min(img.width - 1, bb.box.x1 + PAD), cy1 = Math.min(img.height - 1, bb.box.y1 + PAD);
           const c = document.createElement('canvas');
-          const bw = bb.box.x1 - bb.box.x0 + 1, bh = bb.box.y1 - bb.box.y0 + 1;
-          c.width = bw; c.height = bh;
-          c.getContext('2d').putImageData(img, -bb.box.x0, -bb.box.y0);
+          c.width = cx1 - cx0 + 1; c.height = cy1 - cy0 + 1;
+          c.getContext('2d').putImageData(img, -cx0, -cy0);
           crop = c.toDataURL('image/png');
         }
         m.racketEvents.push({ t: +e.t.toFixed(1), side: e.side, name: matched, score: +bestScore.toFixed(2), crop });
@@ -851,6 +860,15 @@ function evi(label, src) {
   return src ? `<figure><img src="${src}" data-zoom><figcaption>${label}</figcaption></figure>` : '';
 }
 
+// ラケットの証拠画像: 決定したラケット名と同じ名前のバナーを優先して見せる
+// （side誤帰属で別ラケットのバナーが先頭に来ると、入力値と画像が食い違って見えるため）
+function racketCrop(m, side) {
+  const evs = (m.racketEvents || []).filter(e => e.side === side && e.crop);
+  const decided = side === 'me' ? m.myRacket : m.oppRacket;
+  const hit = (decided && decided !== 'ハテナラケット') ? evs.find(e => e.name === decided) : null;
+  return (hit || evs[0] || {}).crop;
+}
+
 // 一覧ビュー用: シアター型（上=証拠画像を黒帯に並べる・下=入力グリッド）
 function matchCard(m) {
   return `
@@ -859,7 +877,7 @@ function matchCard(m) {
         ${evi('最終スコア', m.crops.winnerPanel)}
         ${evi('レート変動前', m.crops.ratingBefore)}
         ${evi('レート変動後', m.crops.ratingAfter)}
-        ${(m.racketEvents || []).filter(e => e.crop).slice(0, 2).map(e => evi(`ラケット発動 (${e.side === 'me' ? '自分' : e.side === 'opp' ? '相手' : '?'})`, e.crop)).join('')}
+        ${evi('ラケット発動 (自分)', racketCrop(m, 'me'))}${evi('ラケット発動 (相手)', racketCrop(m, 'opp'))}
       </div>
       <div class="grid">
         ${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}
@@ -871,8 +889,8 @@ function matchCard(m) {
         ${field(m, 'oppName', '相手1の名前（画像を見て入力）', m.oppName ?? '', { crop: m.crops.oppname, ph: '任意', combo: 'name' })}
         ${m.isDoubles ? field(m, 'opp2Char', '相手2キャラ', m.opp2Char, { combo: 'char' }) : ''}
         ${m.isDoubles ? field(m, 'opp2Name', '相手2の名前（画像を見て入力）', m.opp2Name ?? '', { crop: m.crops.opp2name, ph: '任意', combo: 'name' }) : ''}
-        ${m.mode && m.mode.startsWith('fever') ? field(m, 'myRacket', '自分ラケット', m.myRacket ?? '', { crop: m.racketEvents && (m.racketEvents.find(e => e.side === 'me') || {}).crop, ph: '例: トゲゾーラケット', combo: 'racket' }) : ''}
-        ${m.mode && m.mode.startsWith('fever') ? field(m, 'oppRacket', '相手ラケット', m.oppRacket ?? '', { crop: m.racketEvents && (m.racketEvents.find(e => e.side === 'opp') || {}).crop, ph: '任意', combo: 'racket' }) : ''}
+        ${m.mode && m.mode.startsWith('fever') ? field(m, 'myRacket', '自分ラケット', m.myRacket ?? '', { crop: racketCrop(m, 'me'), ph: '例: トゲゾーラケット', combo: 'racket' }) : ''}
+        ${m.mode && m.mode.startsWith('fever') ? field(m, 'oppRacket', '相手ラケット', m.oppRacket ?? '', { crop: racketCrop(m, 'opp'), ph: '任意', combo: 'racket' }) : ''}
         ${field(m, 'court', 'コート', m.court, { combo: 'court' })}
         ${field(m, 'myScore', '自分スコア', m.myScore)}
         ${field(m, 'oppScore', '相手スコア', m.oppScore)}
@@ -893,7 +911,7 @@ function matchCardPaired(m) {
   const pairImg = (label, src) => src
     ? `<figure><img src="${src}" data-zoom><figcaption>${label}</figcaption></figure>`
     : `<div class="noimg">${label}（画像なし）</div>`;
-  const rk = side => m.racketEvents && (m.racketEvents.find(e => e.side === side) || {}).crop;
+  const rk = side => racketCrop(m, side);
   return `
     <div class="pair">
       ${pairImg('対戦カード', m.crops.vsFrame)}
@@ -1234,6 +1252,10 @@ async function processQueue() {
   processing = false;
   renderQueue();
   setProgress(`完了: 全${matches.length}試合を検出しました。内容を確認してCSVを保存してください`, 1);
+  // 完了後はログ・バーを畳んで確認画面を広く使う（「ログ」ボタンで再表示）
+  $('bar').style.display = 'none';
+  $('log').style.display = 'none';
+  $('logToggle').style.display = 'inline-block';
 }
 
 async function analyzeFile(f) {
@@ -1256,6 +1278,10 @@ async function analyzeFile(f) {
 }
 
 $('lightbox').addEventListener('click', () => { $('lightbox').style.display = 'none'; });
+$('logToggle').addEventListener('click', () => {
+  const l = $('log');
+  l.style.display = l.style.display === 'none' ? '' : 'none';
+});
 window.api.appVersion().then(v => { $('ver').textContent = 'v' + v; });
 if (window.api.onUpdateDownloaded) {
   window.api.onUpdateDownloaded(v => {
