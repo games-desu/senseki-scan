@@ -827,9 +827,13 @@ async function analyze() {
       setProgress(`試合 ${i + 1}: 回線を確認中…`, null);
       const ct0 = g.vs.t1 + 8, ct1 = ((g.winner && g.winner.t0) || g.rating.t0) - 5;
       const vals = [];
-      const K = 7;
-      for (let sIdx = 0; sIdx < K && ct1 > ct0; sIdx++) {
-        await seekTo(ct0 + (ct1 - ct0) * (sIdx + 0.5) / K);
+      // 2.5秒に1回サンプリング(ユーザー要望2026-08-29: 7点では少なく正しく判定できない)。
+      // 長時間の試合でも解析時間が破綻しないよう上限120点
+      const STRIDE = 2.5;
+      const nS = Math.min(120, Math.max(0, Math.floor((ct1 - ct0) / STRIDE)));
+      for (let sIdx = 0; sIdx < nS; sIdx++) {
+        if (sIdx % 10 === 0) setProgress(`試合 ${i + 1}: 回線を確認中… ${sIdx}/${nS}`, null);
+        await seekTo(ct0 + (ct1 - ct0) * (sIdx + 0.5) / nS);
         const cr = V.readConnection(video, m.mode);
         if (cr.ok) {
           vals.push(cr.level);
@@ -851,7 +855,7 @@ async function analyze() {
       // 全部1回きり(通常あり得ない)の場合のみ記録値と同じ本数のクロップを残す
       if (m.connCrops) {
         const cnt = lv => vals.filter(v => v === lv).length;
-        const kept = m.connCrops.filter(c => cnt(c.level) >= 2);
+        const kept = m.connCrops.filter(c => cnt(c.level) >= Math.max(2, Math.ceil(vals.length * 0.1)));
         m.connCrops = kept.length ? kept : m.connCrops.filter(c => c.level === m.connection);
       }
     }
