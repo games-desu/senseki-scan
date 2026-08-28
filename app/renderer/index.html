@@ -729,6 +729,13 @@ async function analyze() {
       m.oppRacket = decide(names.opp);
       if (!m.myRacket || m.myRacket === 'ハテナラケット') m.flags.myRacket = true;
       if (!m.oppRacket || m.oppRacket === 'ハテナラケット') m.flags.oppRacket = true;
+      // 自分ラケットが読めなかった場合は直前のフィーバー試合と同じラケットを仮入力する
+      // （自分のラケットは連戦で変えないことが多い・ユーザー要望2026-08-28）。要確認フラグは維持
+      if (!m.myRacket) {
+        const prev = [...matches, ...videoMatches].reverse().find(x =>
+          x.mode && x.mode.startsWith('fever') && x.myRacket && x.myRacket !== 'ハテナラケット');
+        if (prev) { m.myRacket = prev.myRacket; (m.auto ??= {}).myRacket = true; }
+      }
       // 未帰属/未照合バナーの要確認判定（2026-08-27精緻化）:
       // - 照合スコア0.7未満の未照合イベントはコートギミック演出（「パトカーふんさい」等の帯）の
       //   誤検出が主でラケット情報を持たない → フラグ根拠にしない（全問正解の試合が過剰フラグされていた実例）
