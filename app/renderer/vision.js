@@ -614,12 +614,18 @@ window.Vision = (() => {
              after: { value: last.value, conf: last.conf, stable: true } };
   }
 
-  // 現在フレームのバナーが勝敗パネルのスコア枠側(x>=1400)に届いているか。
+  // 現在フレームのバナーが勝敗パネルの「スコア数字の帯」に実際に重なっているか。
   // winner棄却ガード用: ダブルス勝敗画面は左側に演出テキストが出てfindBannerが反応するが、
-  // スコア枠に届かないバナーは黄色枠の誤検出源にならないので弾いてはいけない
+  // スコア枠に届かないバナーは黄色枠の誤検出源にならないので弾いてはいけない。
+  // x条件だけだと、パネル下端〜コートの白い横帯(帯下端 y976-1009)がfindBannerに拾われて
+  // x1=1919となり、本物の勝敗パネルを3試合分スキップした実例(2026-08-29・クレイ/ワンダー)
+  // → 数字行の縦帯(dw1digit上端〜dw2digit下端)に重なる場合のみ真のオーバーラップとする
   function bannerOverlapsPanel(video) {
     const b = findBanner(video);
-    return !!(b && b.box.x1 >= 1400);
+    if (!b) return false;
+    const y0 = REGIONS.bannerBand.y + b.box.y0, y1 = REGIONS.bannerBand.y + b.box.y1;
+    const top = REGIONS.dw1digit.y, bot = REGIONS.dw2digit.y + REGIONS.dw2digit.h;
+    return b.box.x1 >= 1400 && y1 >= top && y0 <= bot;
   }
 
   // ダブルス勝敗パネルの「最後の表示フレーム」を探す。

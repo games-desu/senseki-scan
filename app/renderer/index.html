@@ -521,6 +521,121 @@ async function analyze() {
   const R = V.REGIONS;
   const startTime = parseStartTime(fileInfo.name, fileInfo.lastModified, video.duration);
   const videoMatches = []; // この動画ぶん（バッチではmatchesへ追記される）
+  // 勝敗パネル処理。後段の再探索パスからも呼ぶため関数化(2026-08-29)
+  const processWinner = async (m, g) => {
+      // --- Winnerパネル: スコアと勝敗 ---
+      // シーン分類で窓が取れていればその周辺、なければレートパネル直前26秒を逆走査で直接探す。
+      // ダブルスはスコア枠の位置が違うため専用領域(dw1digit/dw2digit)で探す
+      const searchT0 = g.winner ? g.winner.t0 - 1.0 : g.rating.t0 - 26;
+      const searchT1 = g.winner ? g.winner.t1 + 1.0 : g.rating.t0 - 0.5;
+      // スコア読みはシングルス/ダブルスとも枠内クリーン領域(dw1digit/dw2digit)+クリーン書体
+      // (panelFont収穫分∪ratingFont=0〜9全カバー)に統一。旧w1digit塊読みはFHDシングルスで
+      // 7-4を8-6と誤読した実例があり引退（パネルはどちらも同じ小型デザインと実測で確認済み）
+      const scoreFont = [...TPL.panelFont, ...TPL.ratingFont];
+      // 高ビットレート録画では近接シーク連打がステイルフレームを返し、実在する勝敗画面を
+      // 取り逃すことがある(2026-08-29・48Mbps FHDで3試合同時に再現。直後の再実行では成立した)
+      // → 見つからなければ1回だけ再試行する
+      let wloc = await V.locateWinner(video, searchT0, searchT1, scoreFont, true);
+      if (!wloc) wloc = await V.locateWinner(video, searchT0, searchT1, scoreFont, true);
+      const rDigit1 = R.dw1digit;
+      const rDigit2 = R.dw2digit;
+      if (wloc) {
+        const winnerRow = wloc.row;
+        // スコアは0〜8の1桁。単一グリフのとき桁のテンプレ候補を保持する（妥当性検証の読み直しに使う）
+        const readScore = (region, mode) => {
+          const glyphs = V.readGlyphs(V.cropRegion(video, region), mode, scoreFont);
+          const p = V.parseNumber(glyphs);
+          const digits = glyphs.filter(g => /^[0-9]$/.test(g.label ?? ''));
+          p.cands = digits.length === 1
+            ? (digits[0].candidates || []).filter(c => /^[0-9]$/.test(c.label)).map(c => ({ v: +c.label, s: c.score }))
+            : null;
+          return p;
+        };
+        // スコア読み: パネルは接戦時に「途中スコアで静止→最終値を一瞬表示して消滅」する（8-6が
+        // 7/2表示から最後の一瞬だけ8/6になる実例）。従来のwloc.t±0.3のbest-conf採用は途中表示を
+        // 高confで拾ってしまう（4→6誤読の正体とみられる）ため、両モードとも
+        // 「パネル最終表示フレーム(findPanelEnd)とその直前」で読む。
+        // 採用規則: シングルスは実績あるbest-conf維持・ダブルスは「conf>=0.5のうち値が最大」
+        // （スコアは増える方向にしか更新されないため）
+        let s1 = { value: null, conf: 0 }, s2 = { value: null, conf: 0 };
+        const tRead = await V.findPanelEnd(video, wloc);
+        // 採用規則も統一: conf>=0.5のうち値が最大（スコアは増える方向にしか更新されないため、
+        // 接戦時の「途中スコアで静止→最終値を一瞬表示」を拾っても最終値が勝つ。4→6誤読の根治）
+        const pick = (cur, p) => {
+          if (p.value == null || p.conf < 0.5) return cur;
+          if (cur.value == null || p.value > cur.value || (p.value === cur.value && p.conf > cur.conf)) return p;
+          return cur;
+        };
+        // 読み位置は最終フレームの少し手前: tReadちょうどはパネルのスライドアウトが始まっている
+        // ことがあり、動き出したフレームは数字がズレて誤読する（3→2 conf0.92の実例）
+        for (const dt of [-0.1, -0.25, -0.4]) {
+          await seekTo(tRead + dt);
+          s1 = pick(s1, readScore(rDigit1, winnerRow === 1 ? 'inkonyellow' : 'lightink'));
+          s2 = pick(s2, readScore(rDigit2, winnerRow === 2 ? 'inkonyellow' : 'lightink'));
+        }
+        ({ s1, s2 } = validateWinnerScores(s1, s2, winnerRow));
+        await seekTo(tRead);
+        // 証拠: 最終スコアパネル（シングルス/ダブルス共通の小型パネル: 実測 x1385-1690, y765-990）
+        m.crops.winnerPanel = regionJpeg({ x: 1360, y: 740, w: 360, h: 270 }, 300);
+        const i1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.w1icon), 16, 16), TPL.panelIcons);
+        const i2 = V.matchIcon(V.iconVec(V.cropRegion(video, R.w2icon), 16, 16), TPL.panelIcons);
+        // 自分の行 = VSで判定した自分キャラとアイコンが一致する行。
+        // ミラー戦（同キャラ対戦）はアイコンで判別不能、ダブルスは行=チームでアイコンがペア
+        // → どちらも後段でレート増減から勝敗を確定する
+        let myRow = 1, mirror = false;
+        if (m.isDoubles) mirror = true;
+        else if (i1.name === m.myChar && i2.name !== m.myChar) myRow = 1;
+        else if (i2.name === m.myChar && i1.name !== m.myChar) myRow = 2;
+        // 両行が自キャラ名に照合されても、高信頼(>=0.9)が片行だけで他方が低信頼(<=0.8)なら
+        // 低信頼側は未収穫アイコンの誤マッチとみなし、高信頼行を自分と確定する
+        // (マリオ未収穫→次点ハナチャン@0.68で偽ミラー化しスコア空欄になった実例・2026-08-29。
+        //  本物のミラー戦は両行とも高信頼で一致するためこの規則にはかからない)
+        else if (i1.name === m.myChar && i2.name === m.myChar && i1.score >= 0.9 && i2.score <= 0.8) myRow = 1;
+        else if (i1.name === m.myChar && i2.name === m.myChar && i2.score >= 0.9 && i1.score <= 0.8) myRow = 2;
+        else if (m.myChar === m.oppChar || i1.name === i2.name) mirror = true;
+        // どちらの行も自キャラ名に一致しない = パネルアイコン辞書の未収穫キャラの可能性が高い。
+        // 「スコアが低い方=自分でない」の当て推量は実戦で逆を引いた（キャサリンvsベビィワリオで
+        // win/スコア反転の無警告誤り・2026-08-28）→ ミラー戦扱いにしてレート増減で確定（不能ならフラグ）
+        else mirror = true;
+        m._w = { s1, s2, winnerRow, mirror };
+        if (!mirror) {
+          const mine = myRow === 1 ? s1 : s2, opp = myRow === 1 ? s2 : s1;
+          m.myScore = mine.value; m.oppScore = opp.value;
+          if (mine.value == null || mine.conf < 0.8 || mine.autoFixed || mine.suspect) m.flags.myScore = true;
+          if (opp.value == null || opp.conf < 0.8 || opp.autoFixed || opp.suspect) m.flags.oppScore = true;
+          if (mine.autoFixed) (m.auto ??= {}).myScore = true;
+          if (opp.autoFixed) (m.auto ??= {}).oppScore = true;
+          m.result = winnerRow === myRow ? 'win' : 'loss';
+        }
+      } else {
+        m.myScore = null; m.oppScore = null; m.result = '';
+        m.flags.myScore = m.flags.oppScore = m.flags.result = true;
+      }
+  };
+  // ミラー戦/ダブルスの勝敗をレート増減で確定する後段（processWinnerとペアで使う）
+  const resolveWinnerByRating = (m) => {
+      // ミラー戦: レートの増減で勝敗と自分スコアを確定（増減が読めなければ要確認のまま）
+      if (m._w && m._w.mirror) {
+        const { s1, s2, winnerRow } = m._w;
+        const winScore = winnerRow === 1 ? s1 : s2, loseScore = winnerRow === 1 ? s2 : s1;
+        if (m.ratingBefore != null && m.ratingAfter != null && m.ratingBefore !== m.ratingAfter && !m.ratingSuspect) {
+          m.result = m.ratingAfter > m.ratingBefore ? 'win' : 'loss';
+          const mineS = m.result === 'win' ? winScore : loseScore, oppS = m.result === 'win' ? loseScore : winScore;
+          m.myScore = mineS.value; m.oppScore = oppS.value;
+          if (mineS.value == null || mineS.autoFixed || mineS.suspect) m.flags.myScore = true;
+          if (oppS.value == null || oppS.autoFixed || oppS.suspect) m.flags.oppScore = true;
+          if (mineS.autoFixed) (m.auto ??= {}).myScore = true;
+          if (oppS.autoFixed) (m.auto ??= {}).oppScore = true;
+          // ダブルスはレート増減が確かなら信頼。シングルスのミラー戦は必ず目視確認
+          if (!m.isDoubles || m.flags.ratingBefore || m.flags.ratingAfter) m.flags.result = true;
+        } else {
+          m.myScore = null; m.oppScore = null; m.result = '';
+          m.flags.myScore = m.flags.oppScore = m.flags.result = true;
+        }
+      }
+      delete m._w;
+  };
+
   for (let i = 0; i < grouped.length; i++) {
     const g = grouped[i];
     setProgress(`${fileInfo.name}: 試合 ${i + 1}/${grouped.length} を解析中…`, 0.7 + 0.3 * i / grouped.length);
@@ -604,94 +719,7 @@ async function analyze() {
     m.playedAt = startTime ? fmtDT(new Date(startTime.getTime() + g.vs.t0 * 1000)) : '';
     if (!m.playedAt) m.flags.playedAt = true;
 
-    // --- Winnerパネル: スコアと勝敗 ---
-    // シーン分類で窓が取れていればその周辺、なければレートパネル直前26秒を逆走査で直接探す。
-    // ダブルスはスコア枠の位置が違うため専用領域(dw1digit/dw2digit)で探す
-    const searchT0 = g.winner ? g.winner.t0 - 1.0 : g.rating.t0 - 26;
-    const searchT1 = g.winner ? g.winner.t1 + 1.0 : g.rating.t0 - 0.5;
-    // スコア読みはシングルス/ダブルスとも枠内クリーン領域(dw1digit/dw2digit)+クリーン書体
-    // (panelFont収穫分∪ratingFont=0〜9全カバー)に統一。旧w1digit塊読みはFHDシングルスで
-    // 7-4を8-6と誤読した実例があり引退（パネルはどちらも同じ小型デザインと実測で確認済み）
-    const scoreFont = [...TPL.panelFont, ...TPL.ratingFont];
-    // 高ビットレート録画では近接シーク連打がステイルフレームを返し、実在する勝敗画面を
-    // 取り逃すことがある(2026-08-29・48Mbps FHDで3試合同時に再現。直後の再実行では成立した)
-    // → 見つからなければ1回だけ再試行する
-    let wloc = await V.locateWinner(video, searchT0, searchT1, scoreFont, true);
-    if (!wloc) wloc = await V.locateWinner(video, searchT0, searchT1, scoreFont, true);
-    const rDigit1 = R.dw1digit;
-    const rDigit2 = R.dw2digit;
-    if (wloc) {
-      const winnerRow = wloc.row;
-      // スコアは0〜8の1桁。単一グリフのとき桁のテンプレ候補を保持する（妥当性検証の読み直しに使う）
-      const readScore = (region, mode) => {
-        const glyphs = V.readGlyphs(V.cropRegion(video, region), mode, scoreFont);
-        const p = V.parseNumber(glyphs);
-        const digits = glyphs.filter(g => /^[0-9]$/.test(g.label ?? ''));
-        p.cands = digits.length === 1
-          ? (digits[0].candidates || []).filter(c => /^[0-9]$/.test(c.label)).map(c => ({ v: +c.label, s: c.score }))
-          : null;
-        return p;
-      };
-      // スコア読み: パネルは接戦時に「途中スコアで静止→最終値を一瞬表示して消滅」する（8-6が
-      // 7/2表示から最後の一瞬だけ8/6になる実例）。従来のwloc.t±0.3のbest-conf採用は途中表示を
-      // 高confで拾ってしまう（4→6誤読の正体とみられる）ため、両モードとも
-      // 「パネル最終表示フレーム(findPanelEnd)とその直前」で読む。
-      // 採用規則: シングルスは実績あるbest-conf維持・ダブルスは「conf>=0.5のうち値が最大」
-      // （スコアは増える方向にしか更新されないため）
-      let s1 = { value: null, conf: 0 }, s2 = { value: null, conf: 0 };
-      const tRead = await V.findPanelEnd(video, wloc);
-      // 採用規則も統一: conf>=0.5のうち値が最大（スコアは増える方向にしか更新されないため、
-      // 接戦時の「途中スコアで静止→最終値を一瞬表示」を拾っても最終値が勝つ。4→6誤読の根治）
-      const pick = (cur, p) => {
-        if (p.value == null || p.conf < 0.5) return cur;
-        if (cur.value == null || p.value > cur.value || (p.value === cur.value && p.conf > cur.conf)) return p;
-        return cur;
-      };
-      // 読み位置は最終フレームの少し手前: tReadちょうどはパネルのスライドアウトが始まっている
-      // ことがあり、動き出したフレームは数字がズレて誤読する（3→2 conf0.92の実例）
-      for (const dt of [-0.1, -0.25, -0.4]) {
-        await seekTo(tRead + dt);
-        s1 = pick(s1, readScore(rDigit1, winnerRow === 1 ? 'inkonyellow' : 'lightink'));
-        s2 = pick(s2, readScore(rDigit2, winnerRow === 2 ? 'inkonyellow' : 'lightink'));
-      }
-      ({ s1, s2 } = validateWinnerScores(s1, s2, winnerRow));
-      await seekTo(tRead);
-      // 証拠: 最終スコアパネル（シングルス/ダブルス共通の小型パネル: 実測 x1385-1690, y765-990）
-      m.crops.winnerPanel = regionJpeg({ x: 1360, y: 740, w: 360, h: 270 }, 300);
-      const i1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.w1icon), 16, 16), TPL.panelIcons);
-      const i2 = V.matchIcon(V.iconVec(V.cropRegion(video, R.w2icon), 16, 16), TPL.panelIcons);
-      // 自分の行 = VSで判定した自分キャラとアイコンが一致する行。
-      // ミラー戦（同キャラ対戦）はアイコンで判別不能、ダブルスは行=チームでアイコンがペア
-      // → どちらも後段でレート増減から勝敗を確定する
-      let myRow = 1, mirror = false;
-      if (m.isDoubles) mirror = true;
-      else if (i1.name === m.myChar && i2.name !== m.myChar) myRow = 1;
-      else if (i2.name === m.myChar && i1.name !== m.myChar) myRow = 2;
-      // 両行が自キャラ名に照合されても、高信頼(>=0.9)が片行だけで他方が低信頼(<=0.8)なら
-      // 低信頼側は未収穫アイコンの誤マッチとみなし、高信頼行を自分と確定する
-      // (マリオ未収穫→次点ハナチャン@0.68で偽ミラー化しスコア空欄になった実例・2026-08-29。
-      //  本物のミラー戦は両行とも高信頼で一致するためこの規則にはかからない)
-      else if (i1.name === m.myChar && i2.name === m.myChar && i1.score >= 0.9 && i2.score <= 0.8) myRow = 1;
-      else if (i1.name === m.myChar && i2.name === m.myChar && i2.score >= 0.9 && i1.score <= 0.8) myRow = 2;
-      else if (m.myChar === m.oppChar || i1.name === i2.name) mirror = true;
-      // どちらの行も自キャラ名に一致しない = パネルアイコン辞書の未収穫キャラの可能性が高い。
-      // 「スコアが低い方=自分でない」の当て推量は実戦で逆を引いた（キャサリンvsベビィワリオで
-      // win/スコア反転の無警告誤り・2026-08-28）→ ミラー戦扱いにしてレート増減で確定（不能ならフラグ）
-      else mirror = true;
-      m._w = { s1, s2, winnerRow, mirror };
-      if (!mirror) {
-        const mine = myRow === 1 ? s1 : s2, opp = myRow === 1 ? s2 : s1;
-        m.myScore = mine.value; m.oppScore = opp.value;
-        if (mine.value == null || mine.conf < 0.8 || mine.autoFixed || mine.suspect) m.flags.myScore = true;
-        if (opp.value == null || opp.conf < 0.8 || opp.autoFixed || opp.suspect) m.flags.oppScore = true;
-        if (mine.autoFixed) (m.auto ??= {}).myScore = true;
-        if (opp.autoFixed) (m.auto ??= {}).oppScore = true;
-        m.result = winnerRow === myRow ? 'win' : 'loss';
-      }
-    } else {
-      m.myScore = null; m.oppScore = null; m.result = '';
-      m.flags.myScore = m.flags.oppScore = m.flags.result = true;
-    }
+    await processWinner(m, g);
 
     // --- レートパネル: mode・レート前後 ---
     await seekTo(g.rating.t0 + 0.6);
@@ -860,29 +888,22 @@ async function analyze() {
       }
     }
 
-    // ミラー戦: レートの増減で勝敗と自分スコアを確定（増減が読めなければ要確認のまま）
-    if (m._w && m._w.mirror) {
-      const { s1, s2, winnerRow } = m._w;
-      const winScore = winnerRow === 1 ? s1 : s2, loseScore = winnerRow === 1 ? s2 : s1;
-      if (m.ratingBefore != null && m.ratingAfter != null && m.ratingBefore !== m.ratingAfter && !m.ratingSuspect) {
-        m.result = m.ratingAfter > m.ratingBefore ? 'win' : 'loss';
-        const mineS = m.result === 'win' ? winScore : loseScore, oppS = m.result === 'win' ? loseScore : winScore;
-        m.myScore = mineS.value; m.oppScore = oppS.value;
-        if (mineS.value == null || mineS.autoFixed || mineS.suspect) m.flags.myScore = true;
-        if (oppS.value == null || oppS.autoFixed || oppS.suspect) m.flags.oppScore = true;
-        if (mineS.autoFixed) (m.auto ??= {}).myScore = true;
-        if (oppS.autoFixed) (m.auto ??= {}).oppScore = true;
-        // ダブルスはレート増減が確かなら信頼。シングルスのミラー戦は必ず目視確認
-        if (!m.isDoubles || m.flags.ratingBefore || m.flags.ratingAfter) m.flags.result = true;
-      } else {
-        m.myScore = null; m.oppScore = null; m.result = '';
-        m.flags.myScore = m.flags.oppScore = m.flags.result = true;
-      }
-    }
-    delete m._w;
+    resolveWinnerByRating(m);
 
     videoMatches.push(m);
     log(`m${m.n}: ${m.playedAt} ${m.mode} ${m.myChar} vs ${m.oppChar} ${m.myScore}-${m.oppScore} ${m.result} R${m.ratingBefore}→${m.ratingAfter} @${m.court}`);
+  }
+  // 勝敗画面の後段再探索: 高ビットレート動画では抽出中の持続的なデコーダ負荷でステイルフレームが
+  // 続き、実在する勝敗画面を取り逃すことがある(2026-08-29・48Mbps FHDで3試合同時に発生。
+  // 同じ検索窓がバッチ完了後の単独実行では毎回成立した)。デコーダが落ち着いてからもう一度探す
+  for (let i = 0; i < grouped.length && i < videoMatches.length; i++) {
+    const m = videoMatches[i];
+    if (!m || m.crops.winnerPanel || m.myScore != null || m.result) continue;
+    setProgress(`勝敗画面を再探索中… (試合 ${m.n})`, null);
+    await processWinner(m, grouped[i]);
+    resolveWinnerByRating(m);
+    if (m.myScore != null || m.result) log(`m${m.n}: 再探索で勝敗を取得 ${m.myScore ?? '?'}-${m.oppScore ?? '?'} ${m.result || ''}`);
+    else log(`m${m.n}: 再探索でも勝敗画面が見つかりませんでした`);
   }
   // レート連鎖検証: 同一動画内の「同一部門」では前試合のafter = 次試合のbefore。
   // fever/クラシックのシングルス/ダブルスは別レートなので部門をまたいで連鎖してはいけない
