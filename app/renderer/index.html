@@ -479,6 +479,11 @@ async function analyze() {
 
     // --- VS画面: コート・キャラ・名前クロップ ---
     await seekTo((g.vs.t0 + g.vs.t1) / 2);
+    // ステイルフレーム対策: VS画面でないフレームを掴んだら少しずらして1回だけ再シーク
+    // （試合中のギミック演出帯が名前クロップに写り込む実例・2026-08-28）
+    if (V.classify(V.frameToData(video, 192, 108)) !== 'vs') {
+      await seekTo(g.vs.t0 + 0.3);
+    }
     m.crops.vsFrame = frameJpeg(640); // 証拠: 対戦カード全景（コート名・キャラ・名前が1枚で確認できる）
     // 証拠: 試合中の様子（持っているラケット・回線状況などが確認できる。試合中盤の1フレーム）
     {
@@ -618,7 +623,10 @@ async function analyze() {
       else if (i1.name === m.myChar && i2.name !== m.myChar) myRow = 1;
       else if (i2.name === m.myChar && i1.name !== m.myChar) myRow = 2;
       else if (m.myChar === m.oppChar || i1.name === i2.name) mirror = true;
-      else if (i1.score < i2.score) myRow = 2;
+      // どちらの行も自キャラ名に一致しない = パネルアイコン辞書の未収穫キャラの可能性が高い。
+      // 「スコアが低い方=自分でない」の当て推量は実戦で逆を引いた（キャサリンvsベビィワリオで
+      // win/スコア反転の無警告誤り・2026-08-28）→ ミラー戦扱いにしてレート増減で確定（不能ならフラグ）
+      else mirror = true;
       m._w = { s1, s2, winnerRow, mirror };
       if (!mirror) {
         const mine = myRow === 1 ? s1 : s2, opp = myRow === 1 ? s2 : s1;
@@ -949,7 +957,7 @@ function matchCardPaired(m) {
   const rk = side => racketCrop(m, side);
   return `
     <div class="pair">
-      <div class="imgs imgs-col">${pairImg('対戦カード', m.crops.vsFrame)}${pairImg('試合中', m.crops.midMatch)}</div>
+      <div class="imgs">${pairImg('対戦カード', m.crops.vsFrame)}${pairImg('試合中', m.crops.midMatch)}</div>
       <div>
         <div class="pairhead">コート・キャラ・名前 ← 左の対戦カードと見比べる</div>
         <div class="g2">${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}${field(m, 'mode', 'mode', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'] })}</div>

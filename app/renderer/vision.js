@@ -592,7 +592,9 @@ window.Vision = (() => {
         continue; // 出現前
       }
       const p = parseNumber(readGlyphs(cropRegion(video, REGIONS.rating), 'fillink', templates, NUM_SEG));
-      if (p.conf >= 0.7 && p.value != null && p.value >= 1000 && p.value <= 9999) seq.push({ value: p.value, conf: p.conf });
+      // 受理conf 0.75: 劣化フレームの誤読（3,389→3189@0.71が安定ラン化しレート連鎖を汚染した実例・2026-08-28）を遮断。
+      // 正読は0.83以上に分布し、0.7〜0.75帯はほぼ誤読
+      if (p.conf >= 0.75 && p.value != null && p.value >= 1000 && p.value <= 9999) seq.push({ value: p.value, conf: p.conf });
     }
     const runs = [];
     for (const r of seq) {
