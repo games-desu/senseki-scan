@@ -493,11 +493,15 @@ window.Vision = (() => {
     return d < 1e-9 ? 0 : (sab - sa * sb / n) / d;
   }
   function matchIconWh(v, lib) {
-    let best = null;
+    let best = null, second = 0;
     for (const t of lib) {
       const s = nccWh(v, t.v);
-      if (!best || s > best.score) best = { name: t.name, score: s };
+      if (!best || s > best.score) {
+        if (best && best.name !== t.name) second = Math.max(second, best.score);
+        best = { name: t.name, score: s };
+      } else if (t.name !== best.name && s > second) second = s;
     }
+    if (best) best.second = second; // 異ラベル2位(僅差判定用)
     return best;
   }
 
@@ -663,14 +667,24 @@ window.Vision = (() => {
     let total = 0;
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++)
       if (isYellow(y * width + x)) { colCnt[x]++; total++; }
-    let runs = 0, len = 0;
+    // ラン抽出(幅と峰高さつき)。単純なラン数だけだと黄色背景(クレイの観客テント等)が
+    // 領域を覆ったとき全列が黄色となり4本が1ランに融合して「1」と誤読した実例(2026-08-29)
+    const runsArr = [];
+    let len = 0, peak = 0, yellowCols = 0;
     for (let x = 0; x <= width; x++) {
-      const on = x < width && colCnt[x] >= 4;
-      if (on) len++;
-      else { if (len >= 3) runs++; len = 0; }
+      const cnt = x < width ? colCnt[x] : 0;
+      if (cnt >= 4) { len++; peak = Math.max(peak, cnt); yellowCols++; }
+      else { if (len >= 3) runsArr.push({ w: len, peak }); len = 0; peak = 0; }
     }
-    if (runs >= 1 && runs <= 4 && total >= 50) return { level: runs, ok: true };
-    return { level: 0, ok: false };
+    if (yellowCols / width > 0.72) return { level: 0, ok: false }; // 黄色背景が領域を覆っている
+    const runs = runsArr.length;
+    if (!(runs >= 1 && runs <= 4 && total >= 50)) return { level: 0, ok: false };
+    if (runsArr.some(r => r.w > 14)) return { level: 0, ok: false }; // バー幅を超える塊は別物
+    // バーは左→右へ高くなる階段状(アンチエイリアス誤差の許容-2px)
+    for (let i = 1; i < runs; i++) if (runsArr[i].peak < runsArr[i - 1].peak - 2) return { level: 0, ok: false };
+    // 1本のみ=最短バーのはず。背の高い単独の塊は黄色い別物
+    if (runs === 1 && runsArr[0].peak > height * 0.55) return { level: 0, ok: false };
+    return { level: runs, ok: true };
   }
 
   // フィーバー発動バナー（「〇〇ショット/ブースト」巨大白文字）を現在フレームから探す。

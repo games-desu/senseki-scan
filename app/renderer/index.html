@@ -654,6 +654,8 @@ async function analyze() {
     m.court = court.name; m.courtConf = court.score;
     m._courtVec = Array.from(courtVec); // 教えるサイクル用（修正確定時に辞書へ）
     if (court.score < 0.85) m.flags.court = true;
+    // 似た名前のコート(ハード⇔クレイ等)の無警告取り違え対策: 異ラベル2位と僅差なら要確認
+    if (court.second != null && court.score - court.second < 0.04) m.flags.court = true;
     // ダブルス判定: シングルスではカードが無いy帯(852-882)に「左=青カード AND 右=オレンジカード AND 中央=黒帯」が同時に揃うか
     // （単色チェックだと水面コートの青や клейコートのオレンジなど背景に誤爆する）
     const l1img = V.cropRegion(video, R.dIconL1);
@@ -797,8 +799,26 @@ async function analyze() {
           }
         }
         const matched = bestScore >= 0.85 ? bestName : null;
+        // 表示用クロップは「最も見切れの少ないフレーム」を選ぶ(ドッスンショットが
+        // 見切れ表示になった実例・2026-08-29)。e.t優先で前後を数点見て一番幅の広いボックスを採用
         await seekTo(e.t);
-        const bb = V.findBanner(video, null, { maxH: 160 }); // collectBannersと同条件（斜めバナー対応）
+        let bb = V.findBanner(video, null, { maxH: 160 }); // collectBannersと同条件（斜めバナー対応）
+        {
+          const bandW = V.REGIONS.bannerBand.w;
+          const isPartial = b => !b || b.box.x0 <= 8 || b.box.x1 >= bandW - 8;
+          if (isPartial(bb)) {
+            let bestB = bb, bestW = bb ? bb.box.x1 - bb.box.x0 : -1, bestT = e.t;
+            for (const dt of [0.25, -0.25, 0.5, -0.5, 0.8]) {
+              await seekTo(e.t + dt);
+              const b2 = V.findBanner(video, null, { maxH: 160 });
+              if (!b2) continue;
+              const w2 = b2.box.x1 - b2.box.x0;
+              if (!isPartial(b2)) { bestB = b2; bestT = e.t + dt; break; }
+              if (w2 > bestW) { bestB = b2; bestW = w2; bestT = e.t + dt; }
+            }
+            if (bestB) { bb = bestB; await seekTo(bestT); }
+          }
+        }
         let crop = null;
         if (bb) {
           // 表示用クロップは認識ボックスより少し広げる（グリフ端の欠け対策・認識処理には未使用）
@@ -1027,6 +1047,21 @@ function racketCrop(m, side) {
   const hit = (decided && decided !== 'ハテナラケット') ? evs.find(e => e.name === decided) : null;
   return (hit || evs[0] || {}).crop;
 }
+// ハテナラケットは「複数種のバナーが出た」ことが判定根拠なので、種類別に最大3枚見せる
+// (1枚ではランダム発動が確認できない・ユーザー要望2026-08-29)
+function racketCrops(m, side) {
+  const decided = side === 'me' ? m.myRacket : m.oppRacket;
+  if (decided !== 'ハテナラケット') { const c = racketCrop(m, side); return c ? [c] : []; }
+  const evs = (m.racketEvents || []).filter(e => e.side === side && e.crop);
+  const seen = new Set(), out = [];
+  for (const e of evs) {
+    const key = e.name || ('?' + out.length);
+    if (seen.has(key)) continue;
+    seen.add(key); out.push(e.crop);
+    if (out.length >= 3) break;
+  }
+  return out;
+}
 
 // 一覧ビュー用: シアター型（上=証拠画像を黒帯に並べる・下=入力グリッド）
 function matchCard(m) {
@@ -1036,7 +1071,7 @@ function matchCard(m) {
         ${evi('最終スコア', m.crops.winnerPanel, 'small')}
         ${evi('レート変動前', m.crops.ratingBefore)}
         ${evi('レート変動後', m.crops.ratingAfter)}
-        ${evi('ラケット発動 (自分)', racketCrop(m, 'me'))}${evi('ラケット発動 (相手)', racketCrop(m, 'opp'))}
+        ${racketCrops(m, 'me').map((c, i) => evi('ラケット発動 (自分' + (i ? '・種類' + (i + 1) : '') + ')', c)).join('')}${racketCrops(m, 'opp').map((c, i) => evi('ラケット発動 (相手' + (i ? '・種類' + (i + 1) : '') + ')', c)).join('')}
       </div>
       <div class="grid">
         ${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}
@@ -1086,7 +1121,7 @@ function matchCardPaired(m) {
     </div>
     ${isFever ? `
     <div class="pair">
-      <div class="imgs">${pairImg('ラケット発動（自分）', rk('me'))}${pairImg('ラケット発動（相手）', rk('opp'))}</div>
+      <div class="imgs">${racketCrops(m, 'me').map((c, i) => pairImg('ラケット発動（自分' + (i ? '・種類' + (i + 1) : '') + '）', c)).join('') || pairImg('ラケット発動（自分）', null)}${racketCrops(m, 'opp').map((c, i) => pairImg('ラケット発動（相手' + (i ? '・種類' + (i + 1) : '') + '）', c)).join('') || pairImg('ラケット発動（相手）', null)}</div>
       <div>
         <div class="pairhead">ラケット ← 左の発動バナーと見比べる</div>
         <div class="g2">${field(m, 'myRacket', '自分ラケット', m.myRacket ?? '', { ph: '例: トゲゾーラケット', combo: 'racket' })}${field(m, 'oppRacket', '相手ラケット', m.oppRacket ?? '', { ph: '任意', combo: 'racket' })}</div>
