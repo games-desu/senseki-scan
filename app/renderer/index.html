@@ -798,7 +798,10 @@ async function analyze() {
             if (s > bestScore) { bestScore = s; bestName = tref.name; }
           }
         }
-        const matched = bestScore >= 0.85 ? bestName : null;
+        // 閾値0.93: 同名の実測は0.95〜1.00。0.85だと未収穫ラケットが語尾の共通部
+        // (「〜ショット」等)で別ラケットに0.88〜0.90誤マッチする(マジック→フリーズ@0.89・
+        // ピンボールのレール→サンボ@0.92の実例)。誤名確定より未照合フラグの方が安全
+        const matched = bestScore >= 0.93 ? bestName : null;
         // 表示用クロップは「最も見切れの少ないフレーム」を選ぶ(ドッスンショットが
         // 見切れ表示になった実例・2026-08-29)。e.t優先で前後を数点見て一番幅の広いボックスを採用
         await seekTo(e.t);

@@ -811,8 +811,14 @@ window.Vision = (() => {
     // maxH緩和: メタルブースト等の斜め表示バナーは文字ボックス高が110pxを超える(FHD実測131px)。
     // 他の呼び出し箇所(勝敗パネル棄却ガード等)は既定のまま、バナー収集だけ広げる
     const bOpts = { maxH: 160 };
+    const gauges = []; // {t, L, R} 時系列(side帰属のエッジ検出に使う)
+    // HUD可視性ゲート: フィーバーショット発動中はHUD全体が非表示になり、ゲージ領域には
+    // 背景(ピンボールの市松床等)が写る。輝度率ベースの読みが汚染され偽エッジになるため、
+    // 回線アイコン(HUDと同時に消える)が成立するフレームのサンプルだけを時系列に採用する
+    const hudOk = () => readConnection(video, 'fever').ok;
     while (t < t1) {
       await seekTo(t);
+      if (hudOk()) gauges.push({ t, L: gaugeFill(video, REGIONS.fvL), R: gaugeFill(video, REGIONS.fvR) });
       const b = findBanner(video, null, bOpts);
       if (b) {
         // 見切れガード: 帯の端に接触したバナーはスライド途中で文字が欠けており、
@@ -833,21 +839,54 @@ window.Vision = (() => {
             if (b3 && inside(b3)) { profiles.push(b3.profile); break; }
           }
         }
-        const readFills = async dt => {
+        events.push({ t, profiles, side: null });
+        // バナー表示中(スキップ区間)もゲージのエッジを見逃さないよう追加サンプル
+        for (const dt of [1.3, 2.6]) {
           await seekTo(t + dt);
-          return { L: gaugeFill(video, REGIONS.fvL), R: gaugeFill(video, REGIONS.fvR) };
-        };
-        const p1 = await readFills(-2.2), p2 = await readFills(-1.4);
-        const a1 = await readFills(1.8), a2 = await readFills(2.8), a3 = await readFills(4.0);
-        const dropL = Math.max(p1.L, p2.L) - Math.min(a1.L, a2.L, a3.L);
-        const dropR = Math.max(p1.R, p2.R) - Math.min(a1.R, a2.R, a3.R);
-        let side = null;
-        if (dropL >= 0.15 && dropL - dropR >= 0.08) side = 'me';
-        else if (dropR >= 0.15 && dropR - dropL >= 0.08) side = 'opp';
-        events.push({ t, profiles, side, dropL: +dropL.toFixed(2), dropR: +dropR.toFixed(2) });
+          if (hudOk()) gauges.push({ t: t + dt, L: gaugeFill(video, REGIONS.fvL), R: gaugeFill(video, REGIONS.fvR) });
+        }
         t += 4.0; // 同一バナーの再ヒット回避
       } else t += step;
       if (onProgress) onProgress(t, t1);
+    }
+    // ---- side帰属: ゲージ時系列の「充填→空」エッジ検出方式(2026-08-29刷新) ----
+    // 旧方式(バナー窓ごとの減少量比較)は、両者がほぼ同時に発動すると必ず誤る
+    // (自分の発動でゲージが空→直後の相手バナーの窓で「自分側が減った」と誤読。
+    //  実測: 5+件の誤帰属は全て同時発動が絡んでいた)。
+    // 新方式: 各ゲージ独立に「2点以上>=0.25 → <=0.15 → 次点も<=0.18」の遷移をエッジ=発動とみなし、
+    // 各バナーを最も時刻の近い未消費エッジに割り当てる(基準はバナー出現の0.3s前後)。
+    // 両ゲージが同時(<=0.8s差)にエッジ = リプレイ等のHUD非表示アーティファクト → 双方破棄
+    // エッジ=「直前2点の最小値から0.22以上の急落・落下先は0.45以下・次点も低いまま」。
+    // 絶対閾値だと不成立: ゲージ読みは明るい画素率のため「空」の基準値が左右で違う
+    // (実測: 自分側=0.08・相手側=0.29前後。相手側領域に常時明るい表示が混入している)。
+    // 相対ドロップなら両側で成立し、発動時のグロー→暗転(1.0→0.37)も正しくエッジになる
+    const edges = { L: [], R: [] };
+    gauges.sort((a, b) => a.t - b.t);
+    for (const k of ['L', 'R']) {
+      for (let i = 2; i < gauges.length - 1; i++) {
+        const prevMin = Math.min(gauges[i - 2][k], gauges[i - 1][k]);
+        if (prevMin - gauges[i][k] >= 0.22 && gauges[i][k] <= 0.45 &&
+            gauges[i + 1][k] <= gauges[i][k] + 0.08) {
+          edges[k].push((gauges[i - 1].t + gauges[i].t) / 2);
+        }
+      }
+    }
+    for (const eL of [...edges.L]) for (const eR of [...edges.R]) {
+      if (Math.abs(eL - eR) <= 0.8) {
+        edges.L = edges.L.filter(x => x !== eL);
+        edges.R = edges.R.filter(x => x !== eR);
+      }
+    }
+    for (const e of events) {
+      let best = null;
+      for (const k of ['L', 'R']) for (const te of edges[k]) {
+        const d = Math.abs(te - (e.t + 0.3));
+        if (d <= 3.5 && (!best || d < best.d)) best = { k, te, d };
+      }
+      if (best) {
+        e.side = best.k === 'L' ? 'me' : 'opp';
+        edges[best.k] = edges[best.k].filter(x => x !== best.te);
+      }
     }
     return events;
   }
