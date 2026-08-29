@@ -1,7 +1,7 @@
 {
   "name": "senseki-capture",
   "productName": "SENSEKI SCAN",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "マリオテニスフィーバーの対戦録画からSENSEKI FEVER用の戦績CSVを自動生成するローカルアプリ",
   "main": "main.js",
   "author": "ガメス",
