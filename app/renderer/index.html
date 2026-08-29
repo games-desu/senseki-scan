@@ -73,6 +73,15 @@
   #combo button.current { color:var(--accent); }
   #combo .empty { padding:8px 10px; font-size:11px; color:var(--sub); }
   .namecrop { height:26px; border-radius:4px; display:block; margin-bottom:3px; background:#000; }
+  .fgrid { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px; }
+  .fgrid .field { min-width:140px; }
+  .fieldcrop { max-height:84px; max-width:260px; width:auto; border-radius:4px; display:block; margin-bottom:3px; background:#000; cursor:zoom-in; }
+  .fcardwide { display:flex; flex-direction:column; }
+  .fcardwide .g3 { display:flex; gap:8px; }
+  .fcardwide > img { max-height:150px; width:auto; align-self:flex-start; margin-bottom:4px; border-radius:6px; cursor:zoom-in; background:#000; }
+  .vsthumb { margin-left:auto; }
+  .vsthumb img { max-height:64px; border-radius:4px; cursor:zoom-in; opacity:.85; }
+  .vsthumb figcaption { font-size:9px; color:var(--sub); text-align:center; }
   .evi { display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
   .evi figure { margin:0; }
   .evi img { height:96px; border-radius:6px; border:1px solid var(--border); cursor:zoom-in; display:block; background:#000; }
@@ -663,6 +672,7 @@ async function analyze() {
     const court = V.matchIconWh(courtVec, TPL.courts);
     m.court = court.name; m.courtConf = court.score;
     m._courtVec = Array.from(courtVec); // 教えるサイクル用（修正確定時に辞書へ）
+    m.crops.court = regionJpeg({ x: 25, y: 20, w: 480, h: 86 }, 320); // 証拠: コート名
     if (court.score < 0.85) m.flags.court = true;
     // 似た名前のコート(ハード⇔クレイ等)の無警告取り違え対策: 異ラベル2位と僅差なら要確認
     if (court.second != null && court.score - court.second < 0.04) m.flags.court = true;
@@ -687,6 +697,9 @@ async function analyze() {
       if (opc.score < 0.8) m.flags.oppChar = true;
       // 表示クロップは名前プレート下のコート写り込みをトリム(認識用textVecはR.oppnameのまま)
       m.crops.oppname = cropDataUrl({ ...R.oppname, h: Math.round(R.oppname.h * 0.72) });
+      // フィールドカード用: キャラゾーンのズーム(青カード=自分/オレンジ=相手の背景色も確認できる)
+      m.crops.myiconZ = regionJpeg({ x: 668, y: 850, w: 154, h: 140 }, 150);
+      m.crops.oppiconZ = regionJpeg({ x: 1116, y: 850, w: 154, h: 140 }, 150);
       const nv = V.textVec(V.cropRegion(video, R.oppname), 32, 8);
       m._nameVecs = { oppName: Array.from(nv) };
       const hit = nameFromVec(nv);
@@ -720,6 +733,14 @@ async function analyze() {
       m.crops.partnername = cropDataUrl(myRow === 1 ? R.dNameL2 : R.dNameL1);
       m.crops.oppname = cropDataUrl(R.dNameR1);
       m.crops.opp2name = cropDataUrl(R.dNameR2);
+      // フィールドカード用: 各キャラゾーンのズーム
+      {
+        const zi = r => regionJpeg({ x: r.x - 14, y: r.y - 10, w: r.w + 28, h: r.h + 20 }, 140);
+        m.crops.myiconZ = zi(myRow === 1 ? R.dIconL1 : R.dIconL2);
+        m.crops.pticonZ = zi(myRow === 1 ? R.dIconL2 : R.dIconL1);
+        m.crops.oppiconZ = zi(R.dIconR1);
+        m.crops.opp2iconZ = zi(R.dIconR2);
+      }
       m._nameVecs = {};
       for (const [key, reg] of [['partnerName', myRow === 1 ? R.dNameL2 : R.dNameL1],
                                 ['oppName', R.dNameR1], ['opp2Name', R.dNameR2]]) {
@@ -736,7 +757,9 @@ async function analyze() {
 
     // --- レートパネル: mode・レート前後 ---
     await seekTo(g.rating.t0 + 0.6);
-    m.crops.ratingBefore = regionJpeg({ x: 630, y: 275, w: 670, h: 400 }, 330); // 証拠: レート変動前パネル
+    m.crops.ratingBefore = regionJpeg({ x: 1015, y: 533, w: 285, h: 100 }, 240); // 証拠: レート変動前(数字部のみ)
+    m.crops.mode1 = regionJpeg({ x: 640, y: 283, w: 235, h: 84 }, 190);  // 証拠: 部門ボード(シングルス/ダブルス)
+    m.crops.mode2 = regionJpeg({ x: 985, y: 286, w: 315, h: 74 }, 230);  // 証拠: フィーバーラケット あり/なし
     const md1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode1), 24, 8), TPL.mode1);
     const md2 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode2), 32, 8), TPL.mode2);
     const singles = md1.name === 'シングルス' && md1.score > 0.85;
@@ -747,7 +770,7 @@ async function analyze() {
     // （ランク付きパネルは1枚の中でカウント演出があり、静止時間もスキップ操作次第のため）
     const { before, after } = await V.readRatingPair(video, g.rating.t0, g.rating.t1, TPL.ratingFont);
     await seekTo(g.rating.t1 - 0.4);
-    m.crops.ratingAfter = regionJpeg({ x: 630, y: 275, w: 670, h: 400 }, 330); // 証拠: レート変動後パネル
+    m.crops.ratingAfter = regionJpeg({ x: 1015, y: 533, w: 285, h: 100 }, 240); // 証拠: レート変動後(数字部のみ)
     m.ratingBefore = before.value; m.ratingAfter = after.value;
     if (before.value == null || !before.stable || before.conf < 0.8) m.flags.ratingBefore = true;
     if (after.value == null || !after.stable || after.conf < 0.8) m.flags.ratingAfter = true;
@@ -1013,11 +1036,13 @@ function field(m, key, label, value, opts = {}) {
   const id = `f_${m.n}_${key}`;
   const auto = m.auto && m.auto[key] ? '<span class="autofix">[自動補正]</span>'
     : m.autoName && m.autoName[key] ? '<span class="autofix">[自動入力]</span>' : '';
+  const cropList = opts.crops ? opts.crops.filter(Boolean) : (opts.crop ? [opts.crop] : []);
+  const imgS = cropList.map(c => `<img class="${opts.crops ? 'fieldcrop' : 'namecrop'}" src="${c}" data-zoom>`).join('');
   if (opts.select) {
     const options = opts.select.map(o => `<option value="${o}" ${String(o) === String(value) ? 'selected' : ''}>${o}</option>`).join('');
-    return `<div class="field${cls}"><label>${label}${auto}</label><select id="${id}" data-n="${m.n}" data-key="${key}">${options}</select></div>`;
+    return `<div class="field${cls}"><label>${label}${auto}</label>${imgS}<select id="${id}" data-n="${m.n}" data-key="${key}">${options}</select></div>`;
   }
-  const img = opts.crop ? `<img class="namecrop" src="${opts.crop}">` : '';
+  const img = imgS;
   const combo = opts.combo ? ` data-combo="${opts.combo}" autocomplete="off" spellcheck="false"` : '';
   return `<div class="field${cls}"><label>${label}${auto}</label>${img}<input id="${id}" data-n="${m.n}" data-key="${key}" value="${value ?? ''}" placeholder="${opts.ph ?? ''}"${combo}></div>`;
 }
@@ -1128,53 +1153,42 @@ const FIELD_LABELS = { playedAt: '日時', mode: 'mode', myChar: '自分キャ�
   opp2Name: '相手2の名前', myRacket: '自分ラケット', oppRacket: '相手ラケット', court: 'コート',
   myScore: '自分スコア', oppScore: '相手スコア', result: 'result', ratingBefore: 'レート前', ratingAfter: 'レート後', connection: '回線' };
 
-// 1件ずつ確認用: 照合ペア型（証拠画像とその入力欄を行ごとに横並び。目線移動を最小にする）
+// 1件ずつ確認用: フィールドカード型（全入力欄の真上にその根拠画像を置く・ユーザー設計 2026-08-29。
+// mode先頭・レートは数字のみ・部門ボード画像・対戦カード全景は右上の小サムネ(クリック拡大・クロップ切れ時の保険)）
 function matchCardPaired(m) {
   const isFever = m.mode && m.mode.startsWith('fever');
-  const pairImg = (label, src) => src
-    ? `<figure><img src="${src}" data-zoom><figcaption>${label}</figcaption></figure>`
-    : `<div class="noimg">${label}（画像なし）</div>`;
-  const rk = side => racketCrop(m, side);
+  const rkme = racketCrops(m, 'me'), rkopp = racketCrops(m, 'opp');
+  const rkLabel = (base, arr) => arr.some(c => c.unknown) ? base + '（画像は帰属不明バナー）' : base;
   return `
-    <div class="pair">
-      <div class="imgs">${pairImg('対戦カード', m.crops.vsFrame)}</div>
-      <div>
-        <div class="pairhead">コート・キャラ・名前 ← 左の対戦カードと見比べる</div>
-        <div class="g2">${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}${field(m, 'mode', 'mode', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'] })}</div>
-        <div class="g2">${field(m, 'court', 'コート', m.court, { combo: 'court' })}${field(m, 'myChar', '自分キャラ', m.myChar, { combo: 'char' })}</div>
-        ${m.isDoubles ? `<div class="g2">${field(m, 'partnerChar', '味方キャラ', m.partnerChar, { combo: 'char' })}${field(m, 'partnerName', '味方の名前（画像を見て入力）', m.partnerName ?? '', { crop: m.crops.partnername, ph: '任意', combo: 'name' })}</div>` : ''}
-        <div class="g2">${field(m, 'oppChar', '相手1キャラ', m.oppChar, { combo: 'char' })}${field(m, 'oppName', '相手1の名前（画像を見て入力）', m.oppName ?? '', { crop: m.crops.oppname, ph: '任意', combo: 'name' })}</div>
-        ${m.isDoubles ? `<div class="g2">${field(m, 'opp2Char', '相手2キャラ', m.opp2Char, { combo: 'char' })}${field(m, 'opp2Name', '相手2の名前（画像を見て入力）', m.opp2Name ?? '', { crop: m.crops.opp2name, ph: '任意', combo: 'name' })}</div>` : ''}
-      </div>
+    <div class="fgrid">
+      ${field(m, 'mode', '部門 (mode)', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'], crops: [m.crops.mode1, m.crops.mode2] })}
+      ${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}
+      ${field(m, 'court', 'コート', m.court, { combo: 'court', crops: [m.crops.court] })}
+      <figure class="vsthumb"><img src="${m.crops.vsFrame}" data-zoom><figcaption>対戦カード全景</figcaption></figure>
     </div>
-    ${isFever ? `
-    <div class="pair">
-      <div class="imgs">${racketCrops(m, 'me').map((c, i) => pairImg(c.unknown ? '発動バナー（帰属不明）' : 'ラケット発動（自分' + (i ? '・種類' + (i + 1) : '') + '）', c.crop)).join('') || pairImg('ラケット発動（自分）', null)}${racketCrops(m, 'opp').map((c, i) => pairImg(c.unknown ? '発動バナー（帰属不明）' : 'ラケット発動（相手' + (i ? '・種類' + (i + 1) : '') + '）', c.crop)).join('') || pairImg('ラケット発動（相手）', null)}</div>
-      <div>
-        <div class="pairhead">ラケット ← 左の発動バナーと見比べる</div>
-        <div class="g2">${field(m, 'myRacket', '自分ラケット', m.myRacket ?? '', { ph: '例: トゲゾーラケット', combo: 'racket' })}${field(m, 'oppRacket', '相手ラケット', m.oppRacket ?? '', { ph: '任意', combo: 'racket' })}</div>
-      </div>
+    <div class="fgrid">
+      ${field(m, 'myChar', '自分キャラ', m.myChar, { combo: 'char', crops: [m.crops.myiconZ] })}
+      ${m.isDoubles ? field(m, 'partnerChar', '味方キャラ', m.partnerChar, { combo: 'char', crops: [m.crops.pticonZ] }) : ''}
+      ${field(m, 'oppChar', '相手1キャラ', m.oppChar, { combo: 'char', crops: [m.crops.oppiconZ] })}
+      ${m.isDoubles ? field(m, 'opp2Char', '相手2キャラ', m.opp2Char, { combo: 'char', crops: [m.crops.opp2iconZ] }) : ''}
+    </div>
+    <div class="fgrid">
+      ${m.isDoubles ? field(m, 'partnerName', '味方の名前（任意）', m.partnerName ?? '', { crop: m.crops.partnername, ph: '任意', combo: 'name' }) : ''}
+      ${field(m, 'oppName', '相手1の名前（任意）', m.oppName ?? '', { crop: m.crops.oppname, ph: '任意', combo: 'name' })}
+      ${m.isDoubles ? field(m, 'opp2Name', '相手2の名前（任意）', m.opp2Name ?? '', { crop: m.crops.opp2name, ph: '任意', combo: 'name' }) : ''}
+    </div>
+    ${isFever ? `<div class="fgrid">
+      ${field(m, 'myRacket', rkLabel('自分ラケット', rkme), m.myRacket ?? '', { combo: 'racket', ph: '例: トゲゾーラケット', crops: rkme.map(c => c.crop) })}
+      ${field(m, 'oppRacket', rkLabel('相手ラケット', rkopp), m.oppRacket ?? '', { combo: 'racket', ph: '任意', crops: rkopp.map(c => c.crop) })}
     </div>` : ''}
-    <div class="pair">
-      <div style="max-width:200px">${pairImg('最終スコア', m.crops.winnerPanel)}</div>
-      <div>
-        <div class="pairhead">スコア・勝敗 ← 左のパネルと見比べる</div>
+    <div class="fgrid">
+      <div class="fcardwide">
+        ${m.crops.winnerPanel ? `<img src="${m.crops.winnerPanel}" data-zoom>` : '<div class="noimg">最終スコア（画像なし）</div>'}
         <div class="g3">${field(m, 'myScore', '自分スコア', m.myScore)}${field(m, 'oppScore', '相手スコア', m.oppScore)}${field(m, 'result', 'result', m.result, { select: ['win', 'loss'] })}</div>
       </div>
-    </div>
-    <div class="pair">
-      <div class="imgs">${pairImg('レート変動前', m.crops.ratingBefore)}${pairImg('レート変動後', m.crops.ratingAfter)}</div>
-      <div>
-        <div class="pairhead">レート ← 左の2枚と見比べる</div>
-        <div class="g2">${field(m, 'ratingBefore', 'レート前', m.ratingBefore)}${field(m, 'ratingAfter', 'レート後', m.ratingAfter)}</div>
-      </div>
-    </div>
-    <div class="pair">
-      <div class="imgs">${(m.connCrops || []).map(c => `<div style="max-width:110px">${pairImg('回線 ' + c.level, c.img)}</div>`).join('') || `<div class="noimg">回線（画像なし）</div>`}</div>
-      <div>
-        <div class="pairhead">回線 ← 試合中に読めた本数の種類（記録値は平均）</div>
-        <div class="g3">${field(m, 'connection', '回線 (0〜4)', m.connection ?? '')}</div>
-      </div>
+      ${field(m, 'ratingBefore', 'レート前', m.ratingBefore, { crops: [m.crops.ratingBefore] })}
+      ${field(m, 'ratingAfter', 'レート後', m.ratingAfter, { crops: [m.crops.ratingAfter] })}
+      ${field(m, 'connection', '回線 (0〜4)', m.connection ?? '', { crops: (m.connCrops || []).map(c => c.img) })}
     </div>`;
 }
 
