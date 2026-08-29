@@ -124,7 +124,6 @@
     <button id="logToggle" style="display:none; font-size:11px; padding:3px 10px" title="解析ログの表示/非表示">ログ</button>
   </div>
   <div id="bar"><div></div></div>
-  <div id="log"></div>
 </div>
 <div class="panel" id="viewBar" style="display:none; align-items:center; gap:8px; flex-wrap:wrap">
   <button id="modeSingle">1件ずつ確認</button>
@@ -141,6 +140,10 @@
   <button id="copyCsv" style="margin-left:6px" title="ファイルを作らずクリップボード経由でSENSEKI FEVERへ渡せます">CSVをコピー</button>
   <button id="openFever" style="margin-left:6px">一括登録ページを開く</button>
   <span class="sub" style="margin-left:8px">「CSVをコピー」→一括登録ページの「クリップボードから読み込む」が最短です。赤枠＝要確認・青枠＝手修正済み</span>
+</div>
+<div class="panel" id="logPanel" style="display:none">
+  <div class="sub" style="margin-bottom:4px">解析ログ</div>
+  <div id="log"></div>
 </div>
 <video id="video" muted preload="auto"></video>
 <div id="combo"></div>
@@ -463,7 +466,7 @@ async function analyze() {
   window.A.phase = 'scan';
   $('progPanel').style.display = 'block';
   $('bar').style.display = '';
-  $('log').style.display = '';
+  $('logPanel').style.display = 'block';
   $('logToggle').style.display = 'none';
   const t0 = performance.now();
   const events = await V.scan(video, { albumTpl: TPL.albumBar || [], onProgress: (t, dur) =>
@@ -1532,7 +1535,7 @@ async function processQueue() {
   setProgress(`完了: 全${matches.length}試合を検出しました。内容を確認してCSVを保存してください`, 1);
   // 完了後はログ・バーを畳んで確認画面を広く使う（「ログ」ボタンで再表示）
   $('bar').style.display = 'none';
-  $('log').style.display = 'none';
+  $('logPanel').style.display = 'none';
   $('logToggle').style.display = 'inline-block';
 }
 
@@ -1557,8 +1560,9 @@ async function analyzeFile(f) {
 
 $('lightbox').addEventListener('click', () => { $('lightbox').style.display = 'none'; });
 $('logToggle').addEventListener('click', () => {
-  const l = $('log');
-  l.style.display = l.style.display === 'none' ? '' : 'none';
+  const l = $('logPanel');
+  l.style.display = l.style.display === 'none' ? 'block' : 'none';
+  if (l.style.display === 'block') l.scrollIntoView({ behavior: 'smooth', block: 'end' });
 });
 
 // ---- バグ報告 ----
