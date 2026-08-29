@@ -656,6 +656,23 @@ window.Vision = (() => {
   // 回線品質アイコン（4本バー）の点灯本数を読む。黄色い縦バーの「列ラン」を数える方式
   // （バーは黒縁で区切られるため、黄色列の連続ランの本数=点灯本数。斜め表示にも頑健）。
   // 戻り値 {level, ok}: ok=false はアイコン不在（HUD非表示・リプレイ・カメラ演出中）か判定不能
+  // HUD可視性プロキシ: 回線アイコンの「存在」だけを判定(本数の構造検証はしない)。
+  // readConnectionの厳格化に伴い、ゲージ時系列のHUDゲートが過剰にサンプルを落として
+  // side帰属のエッジを取りこぼした実例(2026-08-29第3実戦)への対応
+  function connIconPresent(video) {
+    const R0 = REGIONS.connFever;
+    const img = cropRegion(video, R0);
+    const { data, width, height } = img;
+    const isYellow = i => { const r = data[i*4], g = data[i*4+1], b = data[i*4+2];
+      return r > 180 && g > 160 && b < 100 && r - b > 90 && g - b > 90; };
+    let total = 0; const colHas = new Uint8Array(width);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++)
+      if (isYellow(y * width + x)) { total++; colHas[x] = 1; }
+    let yellowCols = 0; for (let x = 0; x < width; x++) yellowCols += colHas[x];
+    if (yellowCols / width > 0.85) return false; // 黄色背景フラッド(アイコン判別不能)
+    return total >= 40;
+  }
+
   function readConnection(video, mode) {
     const R0 = (mode && String(mode).indexOf('fever') === 0) ? REGIONS.connFever : REGIONS.connClassic;
     const img = cropRegion(video, R0);
@@ -815,7 +832,7 @@ window.Vision = (() => {
     // HUD可視性ゲート: フィーバーショット発動中はHUD全体が非表示になり、ゲージ領域には
     // 背景(ピンボールの市松床等)が写る。輝度率ベースの読みが汚染され偽エッジになるため、
     // 回線アイコン(HUDと同時に消える)が成立するフレームのサンプルだけを時系列に採用する
-    const hudOk = () => readConnection(video, 'fever').ok;
+    const hudOk = () => connIconPresent(video);
     while (t < t1) {
       await seekTo(t);
       if (hudOk()) gauges.push({ t, L: gaugeFill(video, REGIONS.fvL), R: gaugeFill(video, REGIONS.fvR) });

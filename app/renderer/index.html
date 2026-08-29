@@ -470,6 +470,7 @@ async function analyze() {
   // （実測: 本物=1.00 / 砂の誤検出=0.60〜0.70。mode2は砂で0.85が出るためmode1のみで判定）
   {
     const seekToV = V.makeSeeker(video);
+    const rejectedRatings = [];
     for (const e of events.filter(e => e.type === 'rating')) {
       let okR = false;
       for (const tt of [ (e.t0 + e.t1) / 2, Math.max(e.t0, e.t1 - 0.5), e.t0 + 0.3 ]) {
@@ -477,7 +478,11 @@ async function analyze() {
         const md = V.matchIcon(V.iconVec(V.cropRegion(video, V.REGIONS.mode1), 24, 8), TPL.mode1);
         if (md.score >= 0.85) { okR = true; break; }
       }
-      if (!okR) { e.type = 'rating_rejected'; log(`[警告] ${e.t0.toFixed(0)}秒のレート窓は部門ボード照合が低く棄却しました。試合中の誤検出なら正常ですが、未対応の新パネル様式の場合は試合が消えます（辞書更新で対応できるため、直後の試合が欠けていたら録画を添えて報告してください）`); }
+      if (!okR) { e.type = 'rating_rejected'; rejectedRatings.push(e.t0); }
+    }
+    if (rejectedRatings.length) {
+      const head = rejectedRatings.slice(0, 8).map(t => t.toFixed(0)).join('/');
+      log(`[警告] 部門ボード照合が低いレート窓を${rejectedRatings.length}件棄却しました(${head}${rejectedRatings.length > 8 ? '…' : ''}秒)。メニュー/試合中の誤検出なら正常ですが、未対応の新パネル様式の場合は試合が消えます。直後の試合が欠けていたら録画を添えて報告してください`);
     }
   }
   let grouped = V.groupMatches(events);
@@ -575,6 +580,11 @@ async function analyze() {
         }
         ({ s1, s2 } = validateWinnerScores(s1, s2, winnerRow));
         await seekTo(tRead);
+        // tReadのフレームに勝者枠の黄色が無ければステイルフレーム(コート床が写った実例)→wloc.tで撮り直す
+        {
+          const yfr = r => V.frac(V.cropRegion(video, r), 0, 0, r.w, r.h, (rr, gg, bb) => rr > 200 && gg > 180 && bb < 120);
+          if (Math.max(yfr(rDigit1), yfr(rDigit2)) < 0.1) await seekTo(wloc.t);
+        }
         // 証拠: 最終スコアパネル（シングルス/ダブルス共通の小型パネル: 実測 x1385-1690, y765-990）
         m.crops.winnerPanel = regionJpeg({ x: 1360, y: 740, w: 360, h: 270 }, 300);
         const i1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.w1icon), 16, 16), TPL.panelIcons);
@@ -675,7 +685,8 @@ async function analyze() {
       m.oppChar = opc.name; m.oppCharConf = opc.score;
       if (myc.score < 0.8) m.flags.myChar = true;
       if (opc.score < 0.8) m.flags.oppChar = true;
-      m.crops.oppname = cropDataUrl(R.oppname);
+      // 表示クロップは名前プレート下のコート写り込みをトリム(認識用textVecはR.oppnameのまま)
+      m.crops.oppname = cropDataUrl({ ...R.oppname, h: Math.round(R.oppname.h * 0.72) });
       const nv = V.textVec(V.cropRegion(video, R.oppname), 32, 8);
       m._nameVecs = { oppName: Array.from(nv) };
       const hit = nameFromVec(nv);
@@ -1054,13 +1065,27 @@ function racketCrop(m, side) {
 // (1枚ではランダム発動が確認できない・ユーザー要望2026-08-29)
 function racketCrops(m, side) {
   const decided = side === 'me' ? m.myRacket : m.oppRacket;
-  if (decided !== 'ハテナラケット') { const c = racketCrop(m, side); return c ? [c] : []; }
+  if (decided !== 'ハテナラケット') {
+    const c = racketCrop(m, side);
+    if (c) return [{ crop: c }];
+    // その側に帰属できたバナーが無い場合、帰属不明のバナーを見せる(手入力の手がかり。
+    // 自分の発動画像が1枚も出なかった実例=side=nullイベントは表示対象外だった・2026-08-29)
+    const un = (m.racketEvents || []).filter(e => !e.side && e.crop && e.score >= 0.7);
+    const seen0 = new Set(), out0 = [];
+    for (const e of un) {
+      const key = e.name || ('?' + out0.length);
+      if (seen0.has(key)) continue;
+      seen0.add(key); out0.push({ crop: e.crop, unknown: true });
+      if (out0.length >= 2) break;
+    }
+    return out0;
+  }
   const evs = (m.racketEvents || []).filter(e => e.side === side && e.crop);
   const seen = new Set(), out = [];
   for (const e of evs) {
     const key = e.name || ('?' + out.length);
     if (seen.has(key)) continue;
-    seen.add(key); out.push(e.crop);
+    seen.add(key); out.push({ crop: e.crop });
     if (out.length >= 3) break;
   }
   return out;
@@ -1074,7 +1099,7 @@ function matchCard(m) {
         ${evi('最終スコア', m.crops.winnerPanel, 'small')}
         ${evi('レート変動前', m.crops.ratingBefore)}
         ${evi('レート変動後', m.crops.ratingAfter)}
-        ${racketCrops(m, 'me').map((c, i) => evi('ラケット発動 (自分' + (i ? '・種類' + (i + 1) : '') + ')', c)).join('')}${racketCrops(m, 'opp').map((c, i) => evi('ラケット発動 (相手' + (i ? '・種類' + (i + 1) : '') + ')', c)).join('')}
+        ${racketCrops(m, 'me').map((c, i) => evi(c.unknown ? '発動バナー(帰属不明)' : 'ラケット発動 (自分' + (i ? '・種類' + (i + 1) : '') + ')', c.crop)).join('')}${racketCrops(m, 'opp').map((c, i) => evi(c.unknown ? '発動バナー(帰属不明)' : 'ラケット発動 (相手' + (i ? '・種類' + (i + 1) : '') + ')', c.crop)).join('')}
       </div>
       <div class="grid">
         ${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}
@@ -1124,7 +1149,7 @@ function matchCardPaired(m) {
     </div>
     ${isFever ? `
     <div class="pair">
-      <div class="imgs">${racketCrops(m, 'me').map((c, i) => pairImg('ラケット発動（自分' + (i ? '・種類' + (i + 1) : '') + '）', c)).join('') || pairImg('ラケット発動（自分）', null)}${racketCrops(m, 'opp').map((c, i) => pairImg('ラケット発動（相手' + (i ? '・種類' + (i + 1) : '') + '）', c)).join('') || pairImg('ラケット発動（相手）', null)}</div>
+      <div class="imgs">${racketCrops(m, 'me').map((c, i) => pairImg(c.unknown ? '発動バナー（帰属不明）' : 'ラケット発動（自分' + (i ? '・種類' + (i + 1) : '') + '）', c.crop)).join('') || pairImg('ラケット発動（自分）', null)}${racketCrops(m, 'opp').map((c, i) => pairImg(c.unknown ? '発動バナー（帰属不明）' : 'ラケット発動（相手' + (i ? '・種類' + (i + 1) : '') + '）', c.crop)).join('') || pairImg('ラケット発動（相手）', null)}</div>
       <div>
         <div class="pairhead">ラケット ← 左の発動バナーと見比べる</div>
         <div class="g2">${field(m, 'myRacket', '自分ラケット', m.myRacket ?? '', { ph: '例: トゲゾーラケット', combo: 'racket' })}${field(m, 'oppRacket', '相手ラケット', m.oppRacket ?? '', { ph: '任意', combo: 'racket' })}</div>
