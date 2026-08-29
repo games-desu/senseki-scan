@@ -76,6 +76,8 @@
   .fgrid { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px; }
   .fgrid .field { min-width:140px; }
   .fieldcrop { max-height:84px; max-width:260px; width:auto; border-radius:4px; display:block; margin-bottom:3px; background:#000; cursor:zoom-in; }
+  .field .seqplay { height:96px; border-radius:4px; display:block; margin-bottom:3px; background:#000; cursor:zoom-in; }
+  .conninline .fieldcrop { display:inline-block; height:44px; max-height:44px; width:auto; margin-right:3px; vertical-align:bottom; }
   .fcardwide { display:flex; flex-direction:column; }
   .fcardwide .g3 { display:flex; gap:8px; }
   .fcardwide > img { max-height:150px; width:auto; align-self:flex-start; margin-bottom:4px; border-radius:6px; cursor:zoom-in; background:#000; }
@@ -879,7 +881,17 @@ async function analyze() {
           c.getContext('2d').putImageData(img, -cx0, -cy0);
           crop = c.toDataURL('image/png');
         }
-        m.racketEvents.push({ t: +e.t.toFixed(1), side: e.side, name: matched, score: +bestScore.toFixed(2), crop });
+        // 発動タイミングのパラパラ再生用フレーム列(コート全体・誰が撃ったか目視確認できる。
+        // GIFエンコーダ不要のJS巡回再生方式・ユーザー要望2026-08-30)
+        let seq = null;
+        if (e.side || bestScore >= 0.7) {
+          seq = [];
+          for (const sdt of [-1.2, -0.4, 0.4, 1.2, 2.0, 2.8]) {
+            await seekTo(e.t + sdt);
+            seq.push(frameJpeg(384));
+          }
+        }
+        m.racketEvents.push({ t: +e.t.toFixed(1), side: e.side, name: matched, score: +bestScore.toFixed(2), crop, seq });
         if (e.side && matched) names[e.side][matched] = (names[e.side][matched] || 0) + 1;
       }
       const decide = obj => {
@@ -1043,7 +1055,7 @@ function snapshotOrig(m) {
 }
 
 function field(m, key, label, value, opts = {}) {
-  const cls = m.edited && m.edited[key] ? ' edited' : (m.flags[key] ? ' flag' : '');
+  const cls = (m.edited && m.edited[key] ? ' edited' : (m.flags[key] ? ' flag' : '')) + (opts.cls ? ' ' + opts.cls : '');
   const id = `f_${m.n}_${key}`;
   const auto = m.auto && m.auto[key] ? '<span class="autofix">[自動補正]</span>'
     : m.autoName && m.autoName[key] ? '<span class="autofix">[自動入力]</span>' : '';
@@ -1053,7 +1065,7 @@ function field(m, key, label, value, opts = {}) {
     const options = opts.select.map(o => `<option value="${o}" ${String(o) === String(value) ? 'selected' : ''}>${o}</option>`).join('');
     return `<div class="field${cls}"><label>${label}${auto}</label>${imgS}<select id="${id}" data-n="${m.n}" data-key="${key}">${options}</select></div>`;
   }
-  const img = imgS;
+  const img = imgS + (opts.extra || '');
   const combo = opts.combo ? ` data-combo="${opts.combo}" autocomplete="off" spellcheck="false"` : '';
   return `<div class="field${cls}"><label>${label}${auto}</label>${img}<input id="${id}" data-n="${m.n}" data-key="${key}" value="${value ?? ''}" placeholder="${opts.ph ?? ''}"${combo}></div>`;
 }
@@ -1097,13 +1109,33 @@ function racketCrop(m, side) {
   const hit = (decided && decided !== 'ハテナラケット') ? evs.find(e => e.name === decided) : null;
   return (hit || evs[0] || {}).crop;
 }
+// 発動パラパラ再生: seqフレーム列をJSで巡回(GIF不要)。SEQ_REGにrender時登録し、常時アニメータが回す
+const SEQ_REG = {};
+function seqPlayers(m, arr) {
+  return arr.filter(c => c.seq).map(c => {
+    const key = m.n + ':' + c.evIdx;
+    SEQ_REG[key] = c.seq;
+    return `<img class="seqplay" data-zoom data-seq="${key}" src="${c.seq[0]}" title="発動前後の様子(自動再生・クリックで拡大)">`;
+  }).join('');
+}
+setInterval(() => {
+  document.querySelectorAll('img.seqplay').forEach(el => {
+    const seq = SEQ_REG[el.dataset.seq];
+    if (!seq) return;
+    el._i = ((el._i ?? 0) + 1) % seq.length;
+    el.src = seq[el._i];
+  });
+}, 400);
+
 // ハテナラケットは「複数種のバナーが出た」ことが判定根拠なので、種類別に最大3枚見せる
 // (1枚ではランダム発動が確認できない・ユーザー要望2026-08-29)
 function racketCrops(m, side) {
+  const evs0 = m.racketEvents || [];
+  const withSeq = c => { const ev = evs0.find(e => e.crop === c.crop); if (ev && ev.seq) { c.seq = ev.seq; c.evIdx = evs0.indexOf(ev); } return c; };
   const decided = side === 'me' ? m.myRacket : m.oppRacket;
   if (decided !== 'ハテナラケット') {
     const c = racketCrop(m, side);
-    if (c) return [{ crop: c }];
+    if (c) return [withSeq({ crop: c })];
     // その側に帰属できたバナーが無い場合、帰属不明のバナーを見せる(手入力の手がかり。
     // 自分の発動画像が1枚も出なかった実例=side=nullイベントは表示対象外だった・2026-08-29)
     const un = (m.racketEvents || []).filter(e => !e.side && e.crop && e.score >= 0.7);
@@ -1111,7 +1143,7 @@ function racketCrops(m, side) {
     for (const e of un) {
       const key = e.name || ('?' + out0.length);
       if (seen0.has(key)) continue;
-      seen0.add(key); out0.push({ crop: e.crop, unknown: true });
+      seen0.add(key); out0.push(withSeq({ crop: e.crop, unknown: true }));
       if (out0.length >= 2) break;
     }
     return out0;
@@ -1121,7 +1153,7 @@ function racketCrops(m, side) {
   for (const e of evs) {
     const key = e.name || ('?' + out.length);
     if (seen.has(key)) continue;
-    seen.add(key); out.push({ crop: e.crop });
+    seen.add(key); out.push(withSeq({ crop: e.crop }));
     if (out.length >= 3) break;
   }
   return out;
@@ -1175,7 +1207,7 @@ function matchCardPaired(m) {
       ${field(m, 'playedAt', '日時 (played_at)', m.playedAt, { crops: [m.crops.vsFrame] })}
       ${field(m, 'mode', '部門 (mode)', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'], crops: [m.crops.mode1, m.crops.mode2] })}
       ${field(m, 'court', 'コート', m.court, { combo: 'court', crops: [m.crops.court] })}
-      ${field(m, 'connection', '回線 (0〜4)', m.connection ?? '', { crops: (m.connCrops || []).map(c => c.img) })}
+      ${field(m, 'connection', '回線 (0〜4)', m.connection ?? '', { crops: (m.connCrops || []).map(c => c.img), cls: 'conninline' })}
     </div>
     <div class="fgrid">
       ${field(m, 'myChar', '自分キャラ', m.myChar, { combo: 'char', crops: [m.crops.myiconZ] })}
@@ -1189,8 +1221,8 @@ function matchCardPaired(m) {
       ${m.isDoubles ? field(m, 'opp2Name', '相手2の名前（任意）', m.opp2Name ?? '', { crop: m.crops.opp2name, ph: '任意', combo: 'name' }) : ''}
     </div>
     ${isFever ? `<div class="fgrid">
-      ${field(m, 'myRacket', rkLabel('自分ラケット', rkme), m.myRacket ?? '', { combo: 'racket', ph: '例: トゲゾーラケット', crops: rkme.map(c => c.crop) })}
-      ${field(m, 'oppRacket', rkLabel('相手ラケット', rkopp), m.oppRacket ?? '', { combo: 'racket', ph: '任意', crops: rkopp.map(c => c.crop) })}
+      ${field(m, 'myRacket', rkLabel('自分ラケット', rkme), m.myRacket ?? '', { combo: 'racket', ph: '例: トゲゾーラケット', crops: rkme.map(c => c.crop), extra: seqPlayers(m, rkme) })}
+      ${field(m, 'oppRacket', rkLabel('相手ラケット', rkopp), m.oppRacket ?? '', { combo: 'racket', ph: '任意', crops: rkopp.map(c => c.crop), extra: seqPlayers(m, rkopp) })}
     </div>` : ''}
     <div class="fgrid">
       ${field(m, 'myScore', '自分スコア', m.myScore, { crops: [m.crops.scoreMine || m.crops.winnerPanel] })}
