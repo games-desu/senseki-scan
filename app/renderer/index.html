@@ -596,6 +596,8 @@ async function analyze() {
         }
         // 証拠: 最終スコアパネル（シングルス/ダブルス共通の小型パネル: 実測 x1385-1690, y765-990）
         m.crops.winnerPanel = regionJpeg({ x: 1360, y: 740, w: 360, h: 270 }, 300);
+      // 行別クロップ(自分行/相手行の分割表示用。ミラー未確定時はresolveWinnerByRatingで割り当て)
+      m._scoreRows = [regionJpeg({ x: 1390, y: 762, w: 330, h: 118 }, 260), regionJpeg({ x: 1390, y: 878, w: 330, h: 118 }, 260)];
         const i1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.w1icon), 16, 16), TPL.panelIcons);
         const i2 = V.matchIcon(V.iconVec(V.cropRegion(video, R.w2icon), 16, 16), TPL.panelIcons);
         // 自分の行 = VSで判定した自分キャラとアイコンが一致する行。
@@ -625,6 +627,7 @@ async function analyze() {
           if (mine.autoFixed) (m.auto ??= {}).myScore = true;
           if (opp.autoFixed) (m.auto ??= {}).oppScore = true;
           m.result = winnerRow === myRow ? 'win' : 'loss';
+        if (m._scoreRows) { m.crops.scoreMine = m._scoreRows[myRow - 1]; m.crops.scoreOpp = m._scoreRows[myRow === 1 ? 1 : 0]; }
         }
       } else {
         m.myScore = null; m.oppScore = null; m.result = '';
@@ -639,6 +642,10 @@ async function analyze() {
         const winScore = winnerRow === 1 ? s1 : s2, loseScore = winnerRow === 1 ? s2 : s1;
         if (m.ratingBefore != null && m.ratingAfter != null && m.ratingBefore !== m.ratingAfter && !m.ratingSuspect) {
           m.result = m.ratingAfter > m.ratingBefore ? 'win' : 'loss';
+        if (m._scoreRows) {
+          const myRowR = (m.result === 'win') === (winnerRow === 1) ? 1 : 2;
+          m.crops.scoreMine = m._scoreRows[myRowR - 1]; m.crops.scoreOpp = m._scoreRows[myRowR === 1 ? 1 : 0];
+        }
           const mineS = m.result === 'win' ? winScore : loseScore, oppS = m.result === 'win' ? loseScore : winScore;
           m.myScore = mineS.value; m.oppScore = oppS.value;
           if (mineS.value == null || mineS.autoFixed || mineS.suspect) m.flags.myScore = true;
@@ -653,6 +660,7 @@ async function analyze() {
         }
       }
       delete m._w;
+    delete m._scoreRows;
   };
 
   for (let i = 0; i < grouped.length; i++) {
@@ -757,9 +765,9 @@ async function analyze() {
 
     // --- レートパネル: mode・レート前後 ---
     await seekTo(g.rating.t0 + 0.6);
-    m.crops.ratingBefore = regionJpeg({ x: 1015, y: 533, w: 285, h: 100 }, 240); // 証拠: レート変動前(数字部のみ)
-    m.crops.mode1 = regionJpeg({ x: 640, y: 283, w: 235, h: 84 }, 190);  // 証拠: 部門ボード(シングルス/ダブルス)
-    m.crops.mode2 = regionJpeg({ x: 985, y: 286, w: 315, h: 74 }, 230);  // 証拠: フィーバーラケット あり/なし
+    m.crops.ratingBefore = regionJpeg({ x: 1030, y: 543, w: 255, h: 80 }, 180); // 証拠: レート変動前(数字にフォーカス)
+    m.crops.mode1 = regionJpeg({ x: 648, y: 289, w: 220, h: 72 }, 120);  // 証拠: 部門ボード(シングルス/ダブルス・小型表示)
+    m.crops.mode2 = regionJpeg({ x: 995, y: 293, w: 295, h: 58 }, 140);  // 証拠: フィーバーラケット あり/なし(余白詰め)
     const md1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode1), 24, 8), TPL.mode1);
     const md2 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode2), 32, 8), TPL.mode2);
     const singles = md1.name === 'シングルス' && md1.score > 0.85;
@@ -770,7 +778,7 @@ async function analyze() {
     // （ランク付きパネルは1枚の中でカウント演出があり、静止時間もスキップ操作次第のため）
     const { before, after } = await V.readRatingPair(video, g.rating.t0, g.rating.t1, TPL.ratingFont);
     await seekTo(g.rating.t1 - 0.4);
-    m.crops.ratingAfter = regionJpeg({ x: 1015, y: 533, w: 285, h: 100 }, 240); // 証拠: レート変動後(数字部のみ)
+    m.crops.ratingAfter = regionJpeg({ x: 1030, y: 543, w: 255, h: 80 }, 180); // 証拠: レート変動後(数字にフォーカス)
     m.ratingBefore = before.value; m.ratingAfter = after.value;
     if (before.value == null || !before.stable || before.conf < 0.8) m.flags.ratingBefore = true;
     if (after.value == null || !after.stable || after.conf < 0.8) m.flags.ratingAfter = true;
@@ -1153,17 +1161,18 @@ const FIELD_LABELS = { playedAt: '日時', mode: 'mode', myChar: '自分キャ�
   opp2Name: '相手2の名前', myRacket: '自分ラケット', oppRacket: '相手ラケット', court: 'コート',
   myScore: '自分スコア', oppScore: '相手スコア', result: 'result', ratingBefore: 'レート前', ratingAfter: 'レート後', connection: '回線' };
 
-// 1件ずつ確認用: フィールドカード型（全入力欄の真上にその根拠画像を置く・ユーザー設計 2026-08-29。
-// mode先頭・レートは数字のみ・部門ボード画像・対戦カード全景は右上の小サムネ(クリック拡大・クロップ切れ時の保険)）
+// 1件ずつ確認用: フィールドカード型（全入力欄の真上にその根拠画像・ユーザー設計 2026-08-29改2）
+// 行構成: [日時|mode|コート|回線|全景] [キャラ] [名前] [ラケット] [スコア自分/相手/result] [レート前後]
 function matchCardPaired(m) {
   const isFever = m.mode && m.mode.startsWith('fever');
   const rkme = racketCrops(m, 'me'), rkopp = racketCrops(m, 'opp');
   const rkLabel = (base, arr) => arr.some(c => c.unknown) ? base + '（画像は帰属不明バナー）' : base;
   return `
     <div class="fgrid">
-      ${field(m, 'mode', '部門 (mode)', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'], crops: [m.crops.mode1, m.crops.mode2] })}
       ${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}
+      ${field(m, 'mode', '部門 (mode)', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'], crops: [m.crops.mode1, m.crops.mode2] })}
       ${field(m, 'court', 'コート', m.court, { combo: 'court', crops: [m.crops.court] })}
+      ${field(m, 'connection', '回線 (0〜4)', m.connection ?? '', { crops: (m.connCrops || []).map(c => c.img) })}
       <figure class="vsthumb"><img src="${m.crops.vsFrame}" data-zoom><figcaption>対戦カード全景</figcaption></figure>
     </div>
     <div class="fgrid">
@@ -1182,13 +1191,13 @@ function matchCardPaired(m) {
       ${field(m, 'oppRacket', rkLabel('相手ラケット', rkopp), m.oppRacket ?? '', { combo: 'racket', ph: '任意', crops: rkopp.map(c => c.crop) })}
     </div>` : ''}
     <div class="fgrid">
-      <div class="fcardwide">
-        ${m.crops.winnerPanel ? `<img src="${m.crops.winnerPanel}" data-zoom>` : '<div class="noimg">最終スコア（画像なし）</div>'}
-        <div class="g3">${field(m, 'myScore', '自分スコア', m.myScore)}${field(m, 'oppScore', '相手スコア', m.oppScore)}${field(m, 'result', 'result', m.result, { select: ['win', 'loss'] })}</div>
-      </div>
+      ${field(m, 'myScore', '自分スコア', m.myScore, { crops: [m.crops.scoreMine || m.crops.winnerPanel] })}
+      ${field(m, 'oppScore', '相手スコア', m.oppScore, { crops: [m.crops.scoreOpp] })}
+      ${field(m, 'result', 'result', m.result, { select: ['win', 'loss'] })}
+    </div>
+    <div class="fgrid">
       ${field(m, 'ratingBefore', 'レート前', m.ratingBefore, { crops: [m.crops.ratingBefore] })}
       ${field(m, 'ratingAfter', 'レート後', m.ratingAfter, { crops: [m.crops.ratingAfter] })}
-      ${field(m, 'connection', '回線 (0〜4)', m.connection ?? '', { crops: (m.connCrops || []).map(c => c.img) })}
     </div>`;
 }
 
