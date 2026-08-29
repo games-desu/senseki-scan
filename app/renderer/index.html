@@ -1169,11 +1169,10 @@ function matchCardPaired(m) {
   const rkLabel = (base, arr) => arr.some(c => c.unknown) ? base + '（画像は帰属不明バナー）' : base;
   return `
     <div class="fgrid">
-      ${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}
+      ${field(m, 'playedAt', '日時 (played_at)', m.playedAt, { crops: [m.crops.vsFrame] })}
       ${field(m, 'mode', '部門 (mode)', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'], crops: [m.crops.mode1, m.crops.mode2] })}
       ${field(m, 'court', 'コート', m.court, { combo: 'court', crops: [m.crops.court] })}
       ${field(m, 'connection', '回線 (0〜4)', m.connection ?? '', { crops: (m.connCrops || []).map(c => c.img) })}
-      <figure class="vsthumb"><img src="${m.crops.vsFrame}" data-zoom><figcaption>対戦カード全景</figcaption></figure>
     </div>
     <div class="fgrid">
       ${field(m, 'myChar', '自分キャラ', m.myChar, { combo: 'char', crops: [m.crops.myiconZ] })}
