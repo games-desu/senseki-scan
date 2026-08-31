@@ -11,6 +11,9 @@
 - ユーザー: 実ターミナルで `cd C:\Users\<user>\Documents\senseki-capture\app; npm run dist`（NSISはサンドボックス不可）
 - Claude: `gh release create vX.Y.Z` で発行代行（gh CLI認証済み・exe+blockmap+latest.ymlの3点添付・説明欄は1行=1項目で更新ダイアログにそのまま表示される）
 - 公開リポ: https://github.com/games-desu/senseki-scan ／ 手順詳細は `docs/release.md`
+- **exe/blockmap/latest.ymlは必ず同じビルドから3点同時に上げる**。exeだけ差し替えると
+  全ユーザーが `sha512 checksum mismatch` で更新不能になる(v0.3.11で発生・2026-08-30)。
+  公開前後に `node tools/verify-release.js [--local]` で照合すること
 
 ### v0.3.7(公開済み 2026-08-29・実戦フィードバック対応)
 - コート/ラケットのプルダウンを全候補化(コート=FEVERマスタ18種静的リスト・ラケット31種。カーペットが候補に出なかった)

@@ -32,6 +32,35 @@ publish される3点セット（すべて必要）:
 注意: cmd式 `set GH_TOKEN=...` をPowerShellで実行すると環境変数が設定されず、publishが黙ってスキップされる。
 タグ名は `v<version>`（例 `v0.3.1`）にすること。
 
+### 3点セットは「同じビルド」で揃える（最重要）
+
+**exe だけを後から差し替えてはいけない。** `latest.yml` には exe の sha512 とバイト数が
+焼き込まれており、electron-updater はDL後に必ずそれを照合する。ビルドし直した exe だけを
+上げ直すと、`latest.yml` と `blockmap` は前のビルドのままになり、全ユーザーの更新が
+
+```
+更新のダウンロードに失敗しました
+sha512 checksum mismatch, expected <latest.ymlの値> got <実ファイルの値>
+```
+
+で100%失敗する。exe は正常でも latest.yml がズレているだけでこうなる。
+再ビルドしたら **exe / blockmap / latest.yml の3つとも** 同じ `app/dist/` から上げ直すこと。
+
+実例: v0.3.11 で exe のみ約8時間後に差し替え（latest.yml と blockmap は前ビルドのまま）→
+全ユーザーが更新不能になった(2026-08-30)。
+
+### 公開前・公開後のチェック
+
+```powershell
+node tools/verify-release.js --local     # アップロード前: app/dist/ の3点セットを照合
+node tools/verify-release.js             # 公開後: 実際のReleaseをDLして照合
+node tools/verify-release.js 0.3.11      # バージョン指定
+```
+
+3点セットが同一ビルドなら `OK` / 終了コード0。ズレていれば不一致の内訳と
+**本来あるべき latest.yml の中身**を出力するので、それを Release に添付し直せば復旧できる
+（ずれた blockmap は削除してよい。差分DLが効かず全体DLになるだけで無害）。
+
 ## 動作の流れ（ユーザー側）
 
 1. アプリ起動 → 数秒後に裏で更新確認（失敗しても無害・オフラインOK）
