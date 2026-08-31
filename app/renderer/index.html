@@ -89,7 +89,18 @@
   .evi img { height:96px; border-radius:6px; border:1px solid var(--border); cursor:zoom-in; display:block; background:#000; }
   .evi figcaption { font-size:10px; color:var(--sub); text-align:center; margin-top:2px; }
   #lightbox { display:none; position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:10; align-items:center; justify-content:center; cursor:zoom-out; }
-  #lightbox img { max-width:94vw; max-height:94vh; border-radius:8px; }
+  #lightbox img { max-width:min(94vw,1280px); max-height:84vh; border-radius:8px; }
+  #lightbox img.big { width:min(94vw,1280px); height:auto; } /* コマ送りは画面いっぱいに拡大して見る */
+  .lbnav { display:none; position:absolute; top:50%; transform:translateY(-50%); width:52px; height:92px;
+    align-items:center; justify-content:center; background:rgba(18,22,28,.72); color:#e9eef5;
+    border:1px solid var(--border); border-radius:10px; font-size:30px; line-height:1; cursor:pointer; }
+  .lbnav:hover { background:rgba(42,50,62,.92); }
+  #lbPrev { left:16px; } #lbNext { right:16px; }
+  .lbbar { position:absolute; bottom:14px; display:flex; align-items:center; gap:14px; cursor:default;
+    color:var(--sub); font-size:12px; background:rgba(18,22,28,.72); border:1px solid var(--border);
+    border-radius:10px; padding:6px 14px; }
+  .lbbar button { font-size:11px; padding:4px 10px; }
+  .lbhint { opacity:.7; }
   video { display:none; }
   #log { font:11px Consolas,monospace; color:var(--sub); white-space:pre-wrap; max-height:140px; overflow-y:auto; margin-top:8px; }
   /* 初回ガイド */
@@ -149,7 +160,16 @@
 </div>
 <video id="video" muted preload="auto"></video>
 <div id="combo"></div>
-<div id="lightbox"><img id="lightboxImg"></div>
+<div id="lightbox">
+  <button id="lbPrev" class="lbnav" title="前の画像 (←)">&lsaquo;</button>
+  <img id="lightboxImg">
+  <button id="lbNext" class="lbnav" title="次の画像 (→)">&rsaquo;</button>
+  <div class="lbbar">
+    <button id="lbPlay">自動再生 (Space)</button>
+    <span id="lbCap"></span>
+    <span class="lbhint">←/→ で画像送り ／ Esc・背景クリックで閉じる</span>
+  </div>
+</div>
 
 <div id="bugmodal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:30; align-items:center; justify-content:center">
   <div class="onb-card">
@@ -785,8 +805,8 @@ async function analyze() {
     await seekTo(g.rating.t1 - 0.4);
     m.crops.ratingAfter = regionJpeg({ x: 1030, y: 543, w: 255, h: 80 }, 180); // 証拠: レート変動後(数字にフォーカス)
     m.ratingBefore = before.value; m.ratingAfter = after.value;
-    if (before.value == null || !before.stable || before.conf < 0.8) m.flags.ratingBefore = true;
-    if (after.value == null || !after.stable || after.conf < 0.8) m.flags.ratingAfter = true;
+    if (before.value == null || !before.stable || before.conf < 0.8 || before.weak) m.flags.ratingBefore = true;
+    if (after.value == null || !after.stable || after.conf < 0.8 || after.weak) m.flags.ratingAfter = true;
     // レート連鎖補完: 変動前 = 同一modeの直前試合の変動後（画面はカウント演出で変動前の静止表示が
     // ほぼ無いことがあり、連鎖の方が確実）。矛盾したら連鎖を優先して要確認に
     const chainKey = m.mode;
@@ -828,6 +848,15 @@ async function analyze() {
     // サニティ: 1試合のレート変動が±200を超えることはない（桁落ち誤読の検出網）
     if (m.ratingBefore != null && m.ratingAfter != null && Math.abs(m.ratingAfter - m.ratingBefore) > 200) {
       m.flags.ratingBefore = true; m.flags.ratingAfter = true; m.ratingSuspect = true;
+    }
+    // 試合をすればレートは必ず動く → 前後が同値なら片方が誤読（カウント後を取り逃した等）
+    if (m.ratingBefore != null && m.ratingAfter === m.ratingBefore) {
+      m.flags.ratingBefore = true; m.flags.ratingAfter = true; m.ratingSuspect = true;
+    }
+    // 勝敗とレートの増減が矛盾する → レートか勝敗のどちらかが誤り
+    if (m.result && m.ratingBefore != null && m.ratingAfter != null && m.ratingAfter !== m.ratingBefore &&
+        (m.result === 'win') !== (m.ratingAfter > m.ratingBefore)) {
+      m.flags.ratingBefore = true; m.flags.ratingAfter = true; m.flags.result = true;
     }
 
     // フィーバー: 発動バナー（〇〇ショット/ブースト）を収集→列プロファイル照合でラケット特定。
@@ -888,7 +917,7 @@ async function analyze() {
           seq = [];
           for (const sdt of [-1.2, -0.4, 0.4, 1.2, 2.0, 2.8]) {
             await seekTo(e.t + sdt);
-            seq.push(frameJpeg(384));
+            seq.push(frameJpeg(640));
           }
         }
         m.racketEvents.push({ t: +e.t.toFixed(1), side: e.side, name: matched, score: +bestScore.toFixed(2), crop, seq });
@@ -903,7 +932,12 @@ async function analyze() {
         // 本物のハテナラケット（ランダム発動）はほぼ均等に割れるので優勢判定にかからない。
         const sorted = ks.sort((a, b) => obj[b] - obj[a]);
         if (obj[sorted[0]] >= 2 && obj[sorted[0]] >= 2 * obj[sorted[1]]) return sorted[0];
-        return 'ハテナラケット';
+        // 帰属できたイベントが2件（1種1件ずつ）しかない状態でハテナと断定しない。
+        // ワルイージピンボールのようにHUDが読めずside帰属が数件しか付かないコートでは、
+        // 「自分=かざん／相手=カーブ」が「相手=ハテナ」に化ける（m9実例・2026-08-31）。
+        // ハテナ（ランダム発動）なら同じ側から3件以上のバナーが出るのが普通
+        const total = ks.reduce((s, k) => s + obj[k], 0);
+        return total >= 3 ? 'ハテナラケット' : null;
       };
       m.myRacket = decide(names.me);
       m.oppRacket = decide(names.opp);
@@ -914,7 +948,10 @@ async function analyze() {
       if (!m.myRacket) {
         const prev = [...matches, ...videoMatches].reverse().find(x =>
           x.mode && x.mode.startsWith('fever') && x.myRacket && x.myRacket !== 'ハテナラケット');
-        if (prev) { m.myRacket = prev.myRacket; (m.auto ??= {}).myRacket = true; }
+        // ただし、この試合で照合できたバナー名の中に前試合のラケットが1本も無いなら
+        // ラケットを変えている＝持ち越しは誤り（m9でビリキューが入ったが実際はかざん/カーブ・2026-08-31）
+        const seen = new Set((m.racketEvents || []).filter(e => e.name).map(e => e.name));
+        if (prev && (!seen.size || seen.has(prev.myRacket))) { m.myRacket = prev.myRacket; (m.auto ??= {}).myRacket = true; }
       }
       // 未帰属/未照合バナーの要確認判定（2026-08-27精緻化）:
       // - 照合スコア0.7未満の未照合イベントは相手ネームプレート表示（黒帯の名前テキスト）等の
@@ -1118,8 +1155,55 @@ function seqPlayers(m, arr) {
     return `<img class="seqplay" data-zoom data-seq="${key}" src="${c.seq[0]}" title="発動前後の様子(自動再生・クリックで拡大)">`;
   }).join('');
 }
+// ---- 拡大表示: 同じグループの画像を矢印で行き来できる ----
+// (パラパラ再生を拡大するとその1コマしか見えない、というユーザー要望 2026-08-31)
+const SEQ_DT = [-1.2, -0.4, 0.4, 1.2, 2.0, 2.8]; // 発動時刻からの相対秒(seqの並び順)
+let LB = null; // { items:[{src,label}], i, timer, seq }
+
+function openLightbox(items, idx, opts = {}) {
+  if (!items.length) return;
+  LB = { items, i: Math.max(0, Math.min(idx, items.length - 1)), timer: null, seq: !!opts.seq };
+  const multi = items.length > 1;
+  $('lbPrev').style.display = $('lbNext').style.display = multi ? 'flex' : 'none';
+  $('lbPlay').style.display = (opts.seq && multi) ? 'inline-block' : 'none';
+  $('lbPlay').textContent = '自動再生 (Space)';
+  $('lightbox').style.display = 'flex';
+  lbShow();
+}
+function lbShow() {
+  if (!LB) return;
+  const it = LB.items[LB.i];
+  $('lightboxImg').className = LB.seq ? 'big' : '';
+  $('lightboxImg').src = it.src;
+  $('lbCap').textContent = (it.label || '') + (LB.items.length > 1 ? '   ' + (LB.i + 1) + ' / ' + LB.items.length : '');
+}
+function lbStep(d) {
+  if (!LB || LB.items.length < 2) return;
+  LB.i = (LB.i + d + LB.items.length) % LB.items.length;
+  lbShow();
+}
+function lbPlay(on) {
+  if (!LB) return;
+  if (LB.timer) { clearInterval(LB.timer); LB.timer = null; }
+  if (on) LB.timer = setInterval(() => lbStep(1), 400);
+  $('lbPlay').textContent = LB.timer ? '停止 (Space)' : '自動再生 (Space)';
+}
+function closeLightbox() {
+  if (LB && LB.timer) clearInterval(LB.timer);
+  LB = null;
+  $('lightbox').style.display = 'none';
+}
+// 画像の見出し(figcaption / 入力欄ラベル)を拡大時のキャプションに使う
+function imgLabel(el) {
+  const fc = el.closest('figure') && el.closest('figure').querySelector('figcaption');
+  if (fc) return fc.textContent.trim();
+  const lb = el.closest('.field') && el.closest('.field').querySelector('label');
+  return lb ? lb.textContent.replace('[自動補正]', '').replace('[自動入力]', '').trim() : '';
+}
+
 setInterval(() => {
   document.querySelectorAll('img.seqplay').forEach(el => {
+    if (LB && LB.seq) return; // 拡大中はコマ送りを操作に任せる
     const seq = SEQ_REG[el.dataset.seq];
     if (!seq) return;
     el._i = ((el._i ?? 0) + 1) % seq.length;
@@ -1296,8 +1380,16 @@ function renderReview() {
 
 function bindMatchEvents(root) {
   root.querySelectorAll('img[data-zoom]').forEach(img => img.addEventListener('click', () => {
-    $('lightboxImg').src = img.src;
-    $('lightbox').style.display = 'flex';
+    const seq = img.dataset.seq ? SEQ_REG[img.dataset.seq] : null;
+    if (seq) { // パラパラ再生: 今映っているコマから開始して前後へ送れる
+      const dt = i => (SEQ_DT[i] == null ? '' : ' (発動' + (SEQ_DT[i] > 0 ? '+' : '') + SEQ_DT[i] + '秒)');
+      openLightbox(seq.map((src, i) => ({ src, label: '発動前後のコマ' + dt(i) })), img._i ?? 0, { seq: true });
+      return;
+    }
+    // 静止画: 同じ試合カード内の根拠画像をまとめて見比べられるようにする
+    const scope = img.closest('.match') || root;
+    const group = [...scope.querySelectorAll('img[data-zoom]:not([data-seq])')];
+    openLightbox(group.map(g => ({ src: g.src, label: imgLabel(g) })), Math.max(0, group.indexOf(img)));
   }));
   root.querySelectorAll('input,select').forEach(el => el.addEventListener('input', () => onFieldInput(el)));
 }
@@ -1426,7 +1518,13 @@ document.addEventListener('mousedown', e => {
 // ---- キーボード操作（候補ナビ＋1件ビューのEnter送り） ----
 document.addEventListener('keydown', e => {
   if (e.isComposing) return; // IME変換中は処理しない
-  if (e.key === 'Escape') { $('lightbox').style.display = 'none'; }
+  if (LB) { // 拡大表示中はライトボックスの操作を優先する
+    if (e.key === 'Escape') { closeLightbox(); return; }
+    if (e.key === 'ArrowRight') { e.preventDefault(); lbPlay(false); lbStep(1); return; }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); lbPlay(false); lbStep(-1); return; }
+    if (e.key === ' ' && LB.seq) { e.preventDefault(); lbPlay(!LB.timer); return; }
+    return;
+  }
   if (combo) {
     if (e.key === 'ArrowDown') { e.preventDefault(); combo.idx = Math.min(combo.filtered.length - 1, combo.idx + 1); renderCombo(); return; }
     if (e.key === 'ArrowUp') { e.preventDefault(); combo.idx = Math.max(0, combo.idx - 1); renderCombo(); return; }
@@ -1590,7 +1688,12 @@ async function analyzeFile(f) {
   }
 }
 
-$('lightbox').addEventListener('click', () => { $('lightbox').style.display = 'none'; });
+$('lightbox').addEventListener('click', e => {
+  if (e.target.id === 'lightbox' || e.target.id === 'lightboxImg') closeLightbox();
+});
+$('lbPrev').addEventListener('click', () => { lbPlay(false); lbStep(-1); });
+$('lbNext').addEventListener('click', () => { lbPlay(false); lbStep(1); });
+$('lbPlay').addEventListener('click', () => lbPlay(!(LB && LB.timer)));
 $('logToggle').addEventListener('click', () => {
   const l = $('logPanel');
   l.style.display = l.style.display === 'none' ? 'block' : 'none';

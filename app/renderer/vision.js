@@ -164,13 +164,18 @@ window.Vision = (() => {
   // darkink: 明るい背景に暗い縁取り文字
   // lightink: 暗い背景に明るい文字（Winnerパネル敗者側）
   // inkonyellow: 黄色ハイライト上の黒文字（Winnerパネル勝者側）
+  const LOOSE = { p: 0.78, floor: 150, sat: 46 }; // fillink2 の緩和量(6.2Mbps実測でsat42以上が安全域)
   function mask(img, mode) {
     const { data, width, height } = img;
     const m = new Uint8Array(width * height);
     // fillink: 塗りの白は「クロップ内で最も明るい層」。暗い背景が透けるパネル（飛行船コート等）では
     // 全体が暗くなるため、固定215でなく輝度分布の上位から適応的に閾値を決める（180〜215にクランプ）
+    // fillink2: ビットレートが低い録画では、塗りの白にコート色/パネル色がにじんで彩度が上がり、
+    // 固定の彩度ガード(<15)と閾値では数字が丸ごと欠ける(6.2Mbps FHDで「3,271」の7が消え
+    // 「321」=3桁になり棄却された実例・2026-08-31)。通常読みが失敗したときだけ使う緩和マスク
     let fillThr = 215, lightThr = 120;
-    if (mode === 'fillink' || mode === 'lightink') {
+    const loose = mode === 'fillink2';
+    if (mode === 'fillink' || mode === 'fillink2' || mode === 'lightink') {
       const hist = new Uint32Array(256);
       for (let i = 0; i < width * height; i++) {
         hist[Math.min(255, lum(data[i * 4], data[i * 4 + 1], data[i * 4 + 2]) | 0)]++;
@@ -178,7 +183,8 @@ window.Vision = (() => {
       let acc = 0, p98 = 255;
       const cut = width * height * 0.02;
       for (let L = 255; L >= 0; L--) { acc += hist[L]; if (acc >= cut) { p98 = L; break; } }
-      fillThr = Math.max(180, Math.min(215, p98 * 0.92));
+      fillThr = loose ? Math.max(LOOSE.floor, Math.min(215, p98 * LOOSE.p))
+                      : Math.max(180, Math.min(215, p98 * 0.92));
       // lightink: 数字(明るい層p98)と背景(中央値)の間に適応的に閾値を置く。
       // コート色が透けてパネル全体の明るさが変わる（クレイで数字上端が固定120を割る実例）
       let acc2 = 0, med = 128;
@@ -189,7 +195,7 @@ window.Vision = (() => {
     for (let i = 0; i < width * height; i++) {
       const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
       const L = lum(r, g, b);
-      if (mode === 'fillink') m[i] = (L > fillThr && Math.max(r, g, b) - Math.min(r, g, b) < 15) ? 1 : 0;
+      if (mode === 'fillink' || mode === 'fillink2') m[i] = (L > fillThr && Math.max(r, g, b) - Math.min(r, g, b) < (loose ? LOOSE.sat : 15)) ? 1 : 0;
       else if (mode === 'darkink') m[i] = L < 150 ? 1 : 0;
       else if (mode === 'lightink') m[i] = L > lightThr ? 1 : 0;
       else if (mode === 'inkonyellow') m[i] = L < 110 ? 1 : 0;
@@ -586,7 +592,8 @@ window.Vision = (() => {
   // 静止時間はプレイヤーのボタン操作次第でバラバラ。固定オフセット読みは桁欠け/中間値を拾うため、
   // 表示中を0.4s刻みで全走査し「最初の安定ラン(同値2回以上)=変動前」「最後の安定ラン=変動後」を採る。
   // レートは4桁なので value>=1000 で桁欠け読みを排除
-  async function readRatingPair(video, t0, t1, templates) {
+  // パネル表示中を走査して「最初/最後の安定ラン」を拾う。maskモードと受理confは呼び出し側指定
+  async function ratingRuns(video, t0, t1, templates, modes, minConf) {
     const seekTo = makeSeeker(video);
     const seq = [];
     for (let t = t0 + 0.2; t <= t1 + 4.0; t += 0.4) {
@@ -595,10 +602,14 @@ window.Vision = (() => {
         if (t > t0 + 1.5) break; // パネル消滅
         continue; // 出現前
       }
-      const p = parseNumber(readGlyphs(cropRegion(video, REGIONS.rating), 'fillink', templates, NUM_SEG));
-      // 受理conf 0.75: 劣化フレームの誤読（3,389→3189@0.71が安定ラン化しレート連鎖を汚染した実例・2026-08-28）を遮断。
-      // 正読は0.83以上に分布し、0.7〜0.75帯はほぼ誤読
-      if (p.conf >= 0.75 && p.value != null && p.value >= 1000 && p.value <= 9999) seq.push({ value: p.value, conf: p.conf });
+      const img = cropRegion(video, REGIONS.rating);
+      let best = null;
+      for (const mode of modes) {
+        const p = parseNumber(readGlyphs(img, mode, templates, NUM_SEG));
+        if (p.value == null || p.value < 1000 || p.value > 9999) continue; // レートは必ず4桁
+        if (!best || p.conf > best.conf) best = p;
+      }
+      if (best && best.conf >= minConf) seq.push({ value: best.value, conf: best.conf });
     }
     const runs = [];
     for (const r of seq) {
@@ -616,6 +627,26 @@ window.Vision = (() => {
     }
     return { before: { value: first.value, conf: first.conf, stable: true },
              after: { value: last.value, conf: last.conf, stable: true } };
+  }
+
+  async function readRatingPair(video, t0, t1, templates) {
+    // 通常読み: fillink + 受理conf 0.75。0.75は「劣化フレームの誤読（3,389→3189@0.71が
+    // 安定ラン化しレート連鎖を汚染した実例・2026-08-28）」を遮断するための値なので下げない
+    const strict = await ratingRuns(video, t0, t1, templates, ['fillink'], 0.75);
+    if (strict.before.value != null && strict.after.value != null) return strict;
+    // 読めなかった側だけ、緩和マスクでもう一度走査する。ビットレートの低い録画では
+    // 塗りに色がにじんで数字が丸ごと欠ける（「3,271」→「321」＝3桁で棄却）／確信度が
+    // 0.75に届かない（「3,278」を0.69で8フレーム安定読み）という取りこぼしが出る（6.2Mbps実測）。
+    // 緩和読みの値は weak=true で返し、呼び出し側で必ず要確認にする＝無警告の誤りは増やさない
+    const loose = await ratingRuns(video, t0, t1, templates, ['fillink2', 'lightink'], 0.60);
+    // 緩和読みで前後がそろったら、そちらを丸ごと採用する。通常読みが安定ランを1つしか
+    // 拾えないと「変動前の値を変動後として返す」ため（m10: 画面は3422→3446なのにカウント後の
+    // 3446が0.71で棄却され、変動後=3422が無警告で入っていた・2026-08-31）
+    if (loose.before.value != null && loose.after.value != null) {
+      return { before: { ...loose.before, weak: true }, after: { ...loose.after, weak: true } };
+    }
+    const pick = (s, l) => (s.value != null ? s : (l.value != null ? { ...l, weak: true } : s));
+    return { before: pick(strict.before, loose.before), after: pick(strict.after, loose.after) };
   }
 
   // 現在フレームのバナーが勝敗パネルの「スコア数字の帯」に実際に重なっているか。
@@ -928,7 +959,7 @@ window.Vision = (() => {
     return matches.filter(m => m.rating); // レートパネルまで揃った試合のみ
   }
 
-  return { REGIONS, NUM_SEG, lum, makeSeeker, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
+  return { REGIONS, NUM_SEG, LOOSE, lum, makeSeeker, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
            matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
            bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection,
            gaugeFill, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
