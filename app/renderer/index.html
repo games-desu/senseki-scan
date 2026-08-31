@@ -292,10 +292,12 @@ async function loadTemplates() {
 
 // ---- 設定＋相手名データ（UI要望5: 案A=履歴候補・案B=名前画像テンプレ照合） ----
 let SETTINGS = { autoName: true };
-let NAMES = { history: [], vecs: [] }; // history: {name,count,lastUsed} / vecs: {name, v:[textVec 32x8]}
+let NAMES = { history: [], vecs: [] }; // history: {name,count,lastUsed} / vecs: {name, v:[旧形式], s:{v,ar}}
+let CHARS = { glyphs: [] };            // 文字辞書 {c, v:[16x16]}（入力された名前から自動で育つ）
 async function loadUserData() {
   SETTINGS = { autoName: true, ...(await window.api.loadUserData('settings') || {}) };
   NAMES = { history: [], vecs: [], ...(await window.api.loadUserData('names-user') || {}) };
+  CHARS = { glyphs: [], ...(await window.api.loadUserData('chars-user') || {}) };
   $('setAutoName').checked = !!SETTINGS.autoName;
 }
 const userDataReady = loadUserData().catch(() => {});
@@ -317,6 +319,16 @@ $('setAutoName').addEventListener('change', () => {
 // 同一名は同一フォント描画なので一致時は0.98台に乗る（実測: 同一人物0.984〜0.986/別人0.33以下）。
 // 旧形式(欄全体の32x8ベクトル)しか持たない辞書エントリは、別人の誤マッチが多いので照合に使わない
 // （文字数が同じというだけで0.97に達する。名前候補プルダウンの履歴としては引き続き使う）
+// 名前画像に一致する過去の名前が無いときは、文字辞書で1文字ずつ読む（初対戦の相手にも効く）。
+// 文字辞書はユーザーが入力した名前を教師に育つ（harvestGlyphs）。しきい値0.90は
+// 「辞書に無い文字の最良スコアが0.897まで」という実測に基づく＝知らない字は読まずに諦める
+function ocrName(band) {
+  if (!SETTINGS.autoName || !band || !CHARS.glyphs.length) return null;
+  const r = V.readName(band, CHARS.glyphs, 0.90);
+  if (!r || !r.text || [...r.text].length > 10) return null;
+  return { name: r.text, s: r.conf, ocr: true };
+}
+
 function nameFromSig(sig) {
   if (!SETTINGS.autoName || !sig || !NAMES.vecs.length) return null;
   let best = null, second = 0;
@@ -337,8 +349,29 @@ function nameFromSig(sig) {
 
 // CSV保存時に確定した名前を収穫: 履歴(案A)と名前画像テンプレ(案B)へ追記。
 // 自動入力のまま確定した名前はテンプレ再登録しない（既存テンプレで当たった=情報増なし）
+// 入力された名前を教師に文字辞書を育てる（実質のOCR学習）。
+// 名前画像を「入力された文字数」に合わせて分割できたときだけ収穫する＝ラベルのズレが起きない。
+// 文字同士がくっついて分割数が足りない場合は見送る（例: 詰まった英大文字）
+function harvestGlyphs(m, key, name) {
+  const band = m._nameBands && m._nameBands[key];
+  if (!band) return 0;
+  const cs = [...name];
+  const gl = V.nameGlyphs(band, cs.length);
+  if (!gl) return 0;
+  let added = 0;
+  for (let i = 0; i < cs.length; i++) {
+    const c = cs[i];
+    const mine = CHARS.glyphs.filter(t => t.c === c);
+    if (mine.length >= 3) continue;                                  // 1文字3枚まで
+    if (mine.some(t => V.ncc(gl[i].v, t.v) >= 0.99)) continue;       // 酷似は増やさない
+    CHARS.glyphs.push({ c, v: Array.from(gl[i].v, x => Math.round(x * 1000) / 1000) });
+    added++;
+  }
+  return added;
+}
+
 function harvestNames() {
-  let changed = false;
+  let changed = false, glyphsAdded = 0;
   for (const m of matches) {
     if (m._harvested) continue;
     m._harvested = true;
@@ -354,12 +387,18 @@ function harvestNames() {
       if ((vec || sig) && !(m.autoName && m.autoName[key])) {
         const r3 = a => Array.from(a, x => Math.round(x * 1000) / 1000); // 保存サイズを抑える
         NAMES.vecs.push({ name, v: vec, s: sig ? { v: r3(sig.v), ar: +sig.ar.toFixed(4) } : null });
+        glyphsAdded += harvestGlyphs(m, key, name);
         const mine = NAMES.vecs.filter(t => t.name === name);
         if (mine.length > 3) NAMES.vecs.splice(NAMES.vecs.indexOf(mine[0]), 1); // 同名は直近3つまで
       }
     }
   }
   if (changed) { window.api.saveUserData('names-user', NAMES); COMBO_SRC = null; }
+  if (glyphsAdded) {
+    window.api.saveUserData('chars-user', CHARS);
+    const kinds = new Set(CHARS.glyphs.map(g => g.c)).size;
+    log(`文字辞書: +${glyphsAdded}枚 → 計${CHARS.glyphs.length}枚 / ${kinds}文字（次回から初対戦の相手名も読めます）`);
+  }
 }
 
 // 教えるサイクル(キャラ/コート): ユーザーが修正して確定した値のアイコン/コート名画像をユーザー辞書へ追記。
@@ -746,9 +785,11 @@ async function analyze() {
       m.crops.myiconZ = regionJpeg({ x: 668, y: 850, w: 154, h: 140 }, 150);
       m.crops.oppiconZ = regionJpeg({ x: 1116, y: 850, w: 154, h: 140 }, 150);
       const ncrop = V.cropRegion(video, R.oppname);
+      const nband = V.nameBand(ncrop);
       m._nameVecs = { oppName: Array.from(V.textVec(ncrop, 32, 8)) }; // 旧形式(互換のため保存は継続)
-      m._nameSigs = { oppName: V.nameSig(ncrop) };
-      const hit = nameFromSig(m._nameSigs.oppName);
+      m._nameSigs = { oppName: V.sigFromBand(nband) };
+      m._nameBands = { oppName: nband }; // 文字収穫用（保存はしない・セッション内のみ）
+      const hit = nameFromSig(m._nameSigs.oppName) || ocrName(nband);
       if (hit) { m.oppName = hit.name; (m.autoName ??= {}).oppName = true; }
     } else {
       // ダブルス: 4アイコン照合 + 「ガメス」の名前画像で自分の行を特定
@@ -787,13 +828,15 @@ async function analyze() {
         m.crops.oppiconZ = zi(R.dIconR1);
         m.crops.opp2iconZ = zi(R.dIconR2);
       }
-      m._nameVecs = {}; m._nameSigs = {};
+      m._nameVecs = {}; m._nameSigs = {}; m._nameBands = {};
       for (const [key, reg] of [['partnerName', myRow === 1 ? R.dNameL2 : R.dNameL1],
                                 ['oppName', R.dNameR1], ['opp2Name', R.dNameR2]]) {
         const ncrop = V.cropRegion(video, reg);
+        const nband = V.nameBand(ncrop);
         m._nameVecs[key] = Array.from(V.textVec(ncrop, 32, 8)); // 旧形式(互換のため保存は継続)
-        m._nameSigs[key] = V.nameSig(ncrop);
-        const hit = nameFromSig(m._nameSigs[key]);
+        m._nameSigs[key] = V.sigFromBand(nband);
+        m._nameBands[key] = nband;
+        const hit = nameFromSig(m._nameSigs[key]) || ocrName(nband);
         if (hit) { m[key] = hit.name; (m.autoName ??= {})[key] = true; }
       }
     }

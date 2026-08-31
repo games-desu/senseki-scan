@@ -485,7 +485,12 @@ window.Vision = (() => {
   // 右列が左寄せで欄サイズも違うため、枠正規化は同一人物の一致率にも効く。
   // 刷新後の同素材実測: 同一人物 0.984〜0.986 / 別人 最大0.325（完全分離）
   const NAME_SIG = { W: 48, H: 12, AR_TOL: 1.12 };
-  function nameSig(img) {
+  // 1文字は16x16 + セル重ね0.25。24x24だと1セル≒1pxで平滑化が効かず、枠が1px違うだけで
+  // 同じ字のNCCが0.98→0.77に落ちる（「り」の実例）。重ねを入れると同字1位正解45/45・
+  // 辞書に無い字の最良スコアは0.897までに収まる（しきい値0.90で誤読ゼロ）
+  const GLYPH = { W: 16, H: 16, OV: 0.25 };
+  // 名前プレート → 白文字マスク・文字帯(y0..y1)・文字列の枠(x0..x1)・列インク
+  function nameBand(img) {
     const { data, width: w, height: h } = img;
     const m = new Uint8Array(w * h);
     for (let i = 0; i < w * h; i++) {
@@ -537,18 +542,94 @@ window.Vision = (() => {
     for (const gg of gs) if (gg[1] - gg[0] > g0[1] - g0[0]) g0 = gg;
     const x0 = g0[0], x1 = g0[1];
     if (x1 - x0 < 4) return null;
-    // 枠を W x H に面積平均でリサンプル（位置・欄サイズ・寄せ方向に不変になる）
-    const { W, H } = NAME_SIG;
+    return { m, w, h, x0, x1, y0, y1, cols };
+  }
+  // 枠を W x H に面積平均でリサンプル（位置・欄サイズ・寄せ方向に不変になる）
+  function resample(b, x0, x1, y0, y1, W, H, ov = 0) {
     const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
     const v = new Float32Array(W * H);
     for (let ty = 0; ty < H; ty++) for (let tx = 0; tx < W; tx++) {
-      const sx0 = x0 + Math.floor(tx / W * bw), sx1 = Math.max(sx0 + 1, x0 + Math.floor((tx + 1) / W * bw));
-      const sy0 = y0 + Math.floor(ty / H * bh), sy1 = Math.max(sy0 + 1, y0 + Math.floor((ty + 1) / H * bh));
+      let sx0, sx1, sy0, sy1;
+      if (ov) { // 隣のセルと少し重ねて平滑化する（1pxのずれで別字に化けるのを防ぐ）
+        sx0 = Math.max(0, Math.round(x0 + (tx - ov) / W * bw));
+        sx1 = Math.min(b.w, Math.max(sx0 + 1, Math.round(x0 + (tx + 1 + ov) / W * bw)));
+        sy0 = Math.max(0, Math.round(y0 + (ty - ov) / H * bh));
+        sy1 = Math.min(b.h, Math.max(sy0 + 1, Math.round(y0 + (ty + 1 + ov) / H * bh)));
+      } else {
+        sx0 = x0 + Math.floor(tx / W * bw); sx1 = Math.max(sx0 + 1, x0 + Math.floor((tx + 1) / W * bw));
+        sy0 = y0 + Math.floor(ty / H * bh); sy1 = Math.max(sy0 + 1, y0 + Math.floor((ty + 1) / H * bh));
+      }
       let c = 0, n = 0;
-      for (let sy = sy0; sy < sy1; sy++) for (let sx = sx0; sx < sx1; sx++) { c += m[sy * w + sx]; n++; }
-      v[ty * W + tx] = c / n;
+      for (let sy = sy0; sy < sy1; sy++) for (let sx = sx0; sx < sx1; sx++) { c += b.m[sy * b.w + sx]; n++; }
+      v[ty * W + tx] = n ? c / n : 0;
     }
-    return { v, ar: bw / bh, w: bw, h: bh };
+    return v;
+  }
+  function sigFromBand(b) {
+    if (!b) return null;
+    const bw = b.x1 - b.x0 + 1, bh = b.y1 - b.y0 + 1;
+    return { v: resample(b, b.x0, b.x1, b.y0, b.y1, NAME_SIG.W, NAME_SIG.H), ar: bw / bh, w: bw, h: bh };
+  }
+  function nameSig(img) { return sigFromBand(nameBand(img)); }
+
+  // ---- 文字分割とOCR（2026-08-31追加・ユーザーが入力した名前を教師に文字辞書を育てる） ----
+  // ストローク塊。1文字=1塊とは限らない（「け」「は」「ぬ」は縦棒が離れて2塊・濁点も別塊）。
+  // 文字への束ね方は用途で変える: 学習時は入力文字数に合わせて隙間の狭い順に併合し、
+  // 読み取り時はテンプレ照合スコアが最大になる区切りをDPで選ぶ
+  function nameStrokes(b) {
+    const groups = [];
+    for (let x = b.x0; x <= b.x1; x++) {
+      if (b.cols[x] < 1) continue;
+      const last = groups[groups.length - 1];
+      if (last && x - last.x1 <= 1) last.x1 = x; else groups.push({ x0: x, x1: x });
+    }
+    return groups;
+  }
+  // 文字箱 → 24x24（縦は文字帯全体を基準にする＝上付き/下付きの違いも形として残る）
+  function glyphVec(b, x0, x1) { return resample(b, x0, x1, b.y0, b.y1, GLYPH.W, GLYPH.H, GLYPH.OV); }
+
+  // 学習用: 期待文字数に合わせて塊を併合する。併合だけでは届かない（塊が足りない＝
+  // 文字同士がくっついている）場合は null を返して収穫を見送る
+  function nameGlyphs(b, count) {
+    if (!b || !count) return null;
+    let gs = nameStrokes(b);
+    if (gs.length < count) return null;
+    while (gs.length > count) {
+      let bi = -1, bg = Infinity;
+      for (let i = 0; i + 1 < gs.length; i++) {
+        const gap = gs[i + 1].x0 - gs[i].x1 - 1;
+        if (gap < bg) { bg = gap; bi = i; }
+      }
+      if (bi < 0) return null;
+      gs[bi] = { x0: gs[bi].x0, x1: gs[bi + 1].x1 };
+      gs.splice(bi + 1, 1);
+    }
+    return gs.map(g => ({ v: glyphVec(b, g.x0, g.x1), x0: g.x0, x1: g.x1 }));
+  }
+
+  // 読み取り用: 1文字=1〜3塊としてDPで最良の区切りを選ぶ。
+  // 誤った区切り（「け」の縦棒だけ等）はどのテンプレにも当たらないので自然に選ばれない
+  function readName(b, lib, minScore = 0.90) {
+    if (!b || !lib || !lib.length) return null;
+    const gs = nameStrokes(b);
+    if (!gs.length || gs.length > 24) return null;
+    const n = gs.length;
+    const best = new Array(n + 1).fill(null);
+    best[0] = { sum: 0, cnt: 0, text: '', min: 1 };
+    for (let i = 0; i < n; i++) {
+      if (!best[i]) continue;
+      for (let k = 1; k <= 3 && i + k <= n; k++) {
+        const v = glyphVec(b, gs[i].x0, gs[i + k - 1].x1);
+        let hit = null;
+        for (const t of lib) { const s = ncc(v, t.v); if (!hit || s > hit.s) hit = { c: t.c, s }; }
+        if (!hit || hit.s < minScore) continue;
+        const cand = { sum: best[i].sum + hit.s, cnt: best[i].cnt + 1, text: best[i].text + hit.c, min: Math.min(best[i].min, hit.s) };
+        const cur = best[i + k];
+        if (!cur || cand.sum / cand.cnt > cur.sum / cur.cnt) best[i + k] = cand;
+      }
+    }
+    const r = best[n];
+    return r ? { text: r.text, conf: r.min, avg: r.sum / r.cnt } : null;
   }
   // シグネチャ同士のスコア。文字列の縦横比が違えば別人（同一人物は実測で比1.00）
   function nameSigScore(a, b) {
@@ -1042,7 +1123,7 @@ window.Vision = (() => {
     return matches.filter(m => m.rating); // レートパネルまで揃った試合のみ
   }
 
-  return { REGIONS, NUM_SEG, LOOSE, NAME_SIG, nameSig, nameSigScore, lum, makeSeeker, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
+  return { REGIONS, NUM_SEG, LOOSE, NAME_SIG, GLYPH, nameSig, nameSigScore, nameBand, sigFromBand, nameStrokes, glyphVec, nameGlyphs, readName, lum, makeSeeker, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
            matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
            bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection,
            gaugeFill, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
