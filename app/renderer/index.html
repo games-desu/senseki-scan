@@ -294,10 +294,12 @@ async function loadTemplates() {
 let SETTINGS = { autoName: true };
 let NAMES = { history: [], vecs: [] }; // history: {name,count,lastUsed} / vecs: {name, v:[旧形式], s:{v,ar}}
 let CHARS = { glyphs: [] };            // 文字辞書 {c, v:[16x16]}（入力された名前から自動で育つ）
+let MYSIG = { sigs: [] };              // 自分の名前のシグネチャ（シングルスVS画面から自動で貯まる）
 async function loadUserData() {
   SETTINGS = { autoName: true, ...(await window.api.loadUserData('settings') || {}) };
   NAMES = { history: [], vecs: [], ...(await window.api.loadUserData('names-user') || {}) };
   CHARS = { glyphs: [], ...(await window.api.loadUserData('chars-user') || {}) };
+  MYSIG = { sigs: [], ...(await window.api.loadUserData('myname-user') || {}) };
   $('setAutoName').checked = !!SETTINGS.autoName;
 }
 const userDataReady = loadUserData().catch(() => {});
@@ -319,6 +321,26 @@ $('setAutoName').addEventListener('change', () => {
 // 同一名は同一フォント描画なので一致時は0.98台に乗る（実測: 同一人物0.984〜0.986/別人0.33以下）。
 // 旧形式(欄全体の32x8ベクトル)しか持たない辞書エントリは、別人の誤マッチが多いので照合に使わない
 // （文字数が同じというだけで0.97に達する。名前候補プルダウンの履歴としては引き続き使う）
+// 自分の名前は毎試合同じなので、シングルスVS画面の自分側プレートからシグネチャを貯めておき、
+// ダブルスで「どちらの行が自分か」を決めるのに使う。ユーザーが名前を入力する必要はない。
+// 実測: シングルスの自分名 vs ダブルス左列の自分 = 0.938〜0.949 / 味方 = 0.000〜0.231
+// （左列は右寄せ・シングルスは左寄せで欄サイズも違うが、インク枠の正規化で一致する）
+function learnMySig(sig) {
+  if (!sig) return;
+  if (MYSIG.sigs.some(t => V.nameSigScore(sig, t) >= 0.995)) return; // 酷似は増やさない
+  MYSIG.sigs.push({ v: Array.from(sig.v, x => Math.round(x * 1000) / 1000), ar: +sig.ar.toFixed(4) });
+  if (MYSIG.sigs.length > 3) MYSIG.sigs.shift();  // 直近3枚（名前を変えても入れ替わる）
+  window.api.saveUserData('myname-user', MYSIG);
+}
+// 2行のシグネチャから自分の行を決める。決められなければ null
+function myRowFromSigs(sig1, sig2) {
+  if (!MYSIG.sigs.length || !sig1 || !sig2) return null;
+  const sc = g => Math.max(0, ...MYSIG.sigs.map(t => V.nameSigScore(g, t)));
+  const s1 = sc(sig1), s2 = sc(sig2);
+  if (Math.max(s1, s2) < 0.85 || Math.abs(s1 - s2) < 0.30) return null;
+  return { row: s1 > s2 ? 1 : 2, s1, s2 };
+}
+
 // 名前画像に一致する過去の名前が無いときは、文字辞書で1文字ずつ読む（初対戦の相手にも効く）。
 // 文字辞書はユーザーが入力した名前を教師に育つ（harvestGlyphs）。しきい値0.90は
 // 「辞書に無い文字の最良スコアが0.897まで」という実測に基づく＝知らない字は読まずに諦める
@@ -784,6 +806,7 @@ async function analyze() {
       // フィールドカード用: キャラゾーンのズーム(青カード=自分/オレンジ=相手の背景色も確認できる)
       m.crops.myiconZ = regionJpeg({ x: 668, y: 850, w: 154, h: 140 }, 150);
       m.crops.oppiconZ = regionJpeg({ x: 1116, y: 850, w: 154, h: 140 }, 150);
+      learnMySig(V.nameSig(V.cropRegion(video, R.myname))); // 自分の名前を覚える（ダブルスの行判定に使う）
       const ncrop = V.cropRegion(video, R.oppname);
       const nband = V.nameBand(ncrop);
       m._nameVecs = { oppName: Array.from(V.textVec(ncrop, 32, 8)) }; // 旧形式(互換のため保存は継続)
@@ -797,19 +820,32 @@ async function analyze() {
       const vL1 = iv('dIconL1'), vL2 = iv('dIconL2'), vR1 = iv('dIconR1'), vR2 = iv('dIconR2');
       const ic = v => V.matchIcon(v, TPL.dblIcons || []);
       const l1 = ic(vL1), l2 = ic(vL2), r1 = ic(vR1), r2 = ic(vR2);
-      let s1 = 0, s2 = 0;
-      const nv1 = V.textVec(V.cropRegion(video, R.dNameL1), 32, 8);
-      const nv2 = V.textVec(V.cropRegion(video, R.dNameL2), 32, 8);
-      for (const t of (TPL.myname || [])) {
-        s1 = Math.max(s1, V.ncc(nv1, t.v));
-        s2 = Math.max(s2, V.ncc(nv2, t.v));
+      // 自分の行判定: まず自分の名前シグネチャ（シングルスから自動学習）で決める。
+      // 旧方式（欄全体のtextVecを同梱mynameと照合）は、同じ文字数の味方名と僅差になる
+      // （実測: 差0.021で外れた側が0.979。しかも同梱テンプレは開発者の名前なので他の利用者には効かない）
+      const cL1 = V.cropRegion(video, R.dNameL1), cL2 = V.cropRegion(video, R.dNameL2);
+      const sigL1 = V.nameSig(cL1), sigL2 = V.nameSig(cL2);
+      let myRow, myRowWeak = false;
+      const mr = myRowFromSigs(sigL1, sigL2);
+      if (mr) myRow = mr.row;
+      else {
+        let s1 = 0, s2 = 0;
+        const nv1 = V.textVec(cL1, 32, 8), nv2 = V.textVec(cL2, 32, 8);
+        for (const t of (TPL.myname || [])) {
+          s1 = Math.max(s1, V.ncc(nv1, t.v));
+          s2 = Math.max(s2, V.ncc(nv2, t.v));
+        }
+        myRow = s1 >= s2 ? 1 : 2;
+        myRowWeak = Math.abs(s1 - s2) < 0.10; // 余裕が無い＝自分と味方が入れ替わりうる
+        log(`m${m.n}: 自分の行を旧方式で判定(自分の名前を未学習) s1=${s1.toFixed(3)} s2=${s2.toFixed(3)}`);
       }
-      const myRow = s1 >= s2 ? 1 : 2;
       const mine = myRow === 1 ? l1 : l2, part = myRow === 1 ? l2 : l1;
       m._iconVecs = { myChar: Array.from(myRow === 1 ? vL1 : vL2), partnerChar: Array.from(myRow === 1 ? vL2 : vL1),
                       oppChar: Array.from(vR1), opp2Char: Array.from(vR2) };
       m.myChar = mine.name; m.myCharConf = mine.score;
       m.partnerChar = part.name; m.partnerCharConf = part.score;
+      // 自分の行が僅差でしか決まらなかった＝自分と味方が入れ替わっている可能性がある
+      if (myRowWeak) { m.flags.myChar = true; m.flags.partnerChar = true; }
       m.oppChar = r1.name; m.oppCharConf = r1.score;
       m.opp2Char = r2.name; m.opp2CharConf = r2.score;
       if (Math.max(s1, s2) < 0.75) { m.flags.myChar = true; m.flags.partnerChar = true; }
