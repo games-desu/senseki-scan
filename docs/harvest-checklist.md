@@ -5,6 +5,9 @@
 撮れたら samples/ に入れて「収穫用」と伝えてください。ラベルは映像から目視確定するので、
 **SENSEKI FEVERへの登録は不要**です。
 
+**運用**: 収穫が終わるたびにClaudeがこのファイルのチェックを更新してコミットします。
+進み具合は https://github.com/games-desu/senseki-scan/blob/main/docs/harvest-checklist.md でいつでも確認できます。
+
 ## 0. 最初にパイロット1本（5分でOK）
 
 - [ ] シングルス1試合を最後まで（勝敗パネルが映るところまで）＋任意の未収穫ラケットで発動1〜2回
