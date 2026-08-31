@@ -938,12 +938,32 @@ window.Vision = (() => {
     const xs = span(colCnt, width, minColCnt, 30);
     if (!xs || xs[1] - xs[0] < minW) return null;
     const box = { x0: xs[0], x1: xs[1], y0: ys[0], y1: ys[1] };
-    // バナーのリボン（高彩度の帯）がテキスト周辺にあること（白い雲や観客の誤検出除け）
+    // バナーのリボン（斜めストライプの帯）がテキストの下にあること（白い雲や観客の誤検出除け）。
+    // リボンの色はショットごとに違う（ファイアバー=橙／マジック=青紫／ドッスン=灰）ので、
+    // 高彩度だけを条件にすると **灰色リボンのラケットが丸ごと検出できない**
+    // （2026-08-31実測: ドッスンショットは ribbonSat=0.000 で棄却されていた。
+    //  「画面端で見切れて収穫失敗」と記録していた現象の正体もこれ）。
+    // 彩度が無くてもストライプの明暗差は残るので「高彩度 or 帯の輝度分散が大きい」で通す。
+    // 実測: 色リボン sat 0.44〜0.77 / sd 57〜91、灰リボン sat 0.000 / sd 47.3、
+    //       誤検出（テキストの下がコート面なだけ）sd 21.9〜28.6
     const pad = 12;
-    const ribbon = frac(img, Math.max(0, box.x0 - pad), Math.min(height - 1, box.y1),
-                        Math.min(width, box.x1 + pad), Math.min(height, box.y1 + 26),
+    const rx0 = Math.max(0, box.x0 - pad), rx1 = Math.min(width, box.x1 + pad);
+    const ry0 = Math.min(height - 1, box.y1), ry1 = Math.min(height, box.y1 + 26);
+    const ribbon = frac(img, rx0, ry0, rx1, ry1,
                         (r, g, b) => Math.max(r, g, b) - Math.min(r, g, b) > 80);
-    if (ribbon < 0.15) return null;
+    if (ribbon < 0.15) {
+      // 無彩色リボン扱いにする条件は厳しめに: 帯の輝度分散 + 文字幅。
+      // 実測の低彩度誤検出はワルイージピンボールの得点演出メダル「Mario Tennis Fever」で
+      // 幅475〜558（本物のバナーは最短の7文字名でも701）。幅660で切れば両立する
+      let n = 0, s = 0, s2 = 0;
+      for (let y = ry0; y < ry1; y++) for (let x = rx0; x < rx1; x++) {
+        const i = (y * width + x) * 4;
+        const L = lum(data[i], data[i + 1], data[i + 2]);
+        n++; s += L; s2 += L * L;
+      }
+      const sd = n ? Math.sqrt(Math.max(0, s2 / n - (s / n) * (s / n))) : 0;
+      if (sd < 35 || box.x1 - box.x0 < 660) return null;
+    }
     // バナー文字には黒縁取りがある（実測0.32）。コートの白線+砂の誤検出は0.02〜0.03
     const darkIn = frac(img, box.x0, box.y0, box.x1 + 1, box.y1 + 1, (r, g, b) => lum(r, g, b) < 80);
     if (darkIn < 0.10) return null;
