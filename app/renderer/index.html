@@ -313,16 +313,26 @@ $('setAutoName').addEventListener('change', () => {
   window.api.saveUserData('settings', SETTINGS);
 });
 
-// 名前クロップの textVec を過去に確定した名前テンプレと照合（白chのみ=背景のコート色に不変）。
-// 同一名は同一フォント描画なので一致時は0.9台に乗る。閾値未満なら自動入力しない
-function nameFromVec(vec) {
-  if (!SETTINGS.autoName || !NAMES.vecs.length) return null;
-  let best = null;
+// 名前クロップのシグネチャ（インク枠を正規化・V.nameSig）を、過去に確定した名前と照合する。
+// 同一名は同一フォント描画なので一致時は0.98台に乗る（実測: 同一人物0.984〜0.986/別人0.33以下）。
+// 旧形式(欄全体の32x8ベクトル)しか持たない辞書エントリは、別人の誤マッチが多いので照合に使わない
+// （文字数が同じというだけで0.97に達する。名前候補プルダウンの履歴としては引き続き使う）
+function nameFromSig(sig) {
+  if (!SETTINGS.autoName || !sig || !NAMES.vecs.length) return null;
+  let best = null, second = 0;
   for (const t of NAMES.vecs) {
-    const s = V.nccWh(vec, t.v);
-    if (!best || s > best.s) best = { name: t.name, s };
+    if (!t.s) continue;
+    const s = V.nameSigScore(sig, t.s);
+    if (!best || s > best.s) {
+      if (best && best.name !== t.name) second = Math.max(second, best.s);
+      best = { name: t.name, s };
+    } else if (t.name !== best.name && s > second) second = s;
   }
-  return best && best.s >= 0.90 ? best : null;
+  if (!best || best.s < 0.90) return null;
+  // 異なる名前と僅差なら決められない → 自動入力しない（似た名前の取り違え防止・
+  // キャラ/コート照合と同じ「異ラベル2位が僅差なら採らない」規則に揃えた）
+  if (best.s - second < 0.05) return null;
+  return best;
 }
 
 // CSV保存時に確定した名前を収穫: 履歴(案A)と名前画像テンプレ(案B)へ追記。
@@ -340,8 +350,10 @@ function harvestNames() {
       if (h) { h.count++; h.lastUsed = Date.now(); }
       else NAMES.history.push({ name, count: 1, lastUsed: Date.now() });
       const vec = m._nameVecs && m._nameVecs[key];
-      if (vec && !(m.autoName && m.autoName[key])) {
-        NAMES.vecs.push({ name, v: vec });
+      const sig = m._nameSigs && m._nameSigs[key];
+      if ((vec || sig) && !(m.autoName && m.autoName[key])) {
+        const r3 = a => Array.from(a, x => Math.round(x * 1000) / 1000); // 保存サイズを抑える
+        NAMES.vecs.push({ name, v: vec, s: sig ? { v: r3(sig.v), ar: +sig.ar.toFixed(4) } : null });
         const mine = NAMES.vecs.filter(t => t.name === name);
         if (mine.length > 3) NAMES.vecs.splice(NAMES.vecs.indexOf(mine[0]), 1); // 同名は直近3つまで
       }
@@ -733,9 +745,10 @@ async function analyze() {
       // フィールドカード用: キャラゾーンのズーム(青カード=自分/オレンジ=相手の背景色も確認できる)
       m.crops.myiconZ = regionJpeg({ x: 668, y: 850, w: 154, h: 140 }, 150);
       m.crops.oppiconZ = regionJpeg({ x: 1116, y: 850, w: 154, h: 140 }, 150);
-      const nv = V.textVec(V.cropRegion(video, R.oppname), 32, 8);
-      m._nameVecs = { oppName: Array.from(nv) };
-      const hit = nameFromVec(nv);
+      const ncrop = V.cropRegion(video, R.oppname);
+      m._nameVecs = { oppName: Array.from(V.textVec(ncrop, 32, 8)) }; // 旧形式(互換のため保存は継続)
+      m._nameSigs = { oppName: V.nameSig(ncrop) };
+      const hit = nameFromSig(m._nameSigs.oppName);
       if (hit) { m.oppName = hit.name; (m.autoName ??= {}).oppName = true; }
     } else {
       // ダブルス: 4アイコン照合 + 「ガメス」の名前画像で自分の行を特定
@@ -774,12 +787,13 @@ async function analyze() {
         m.crops.oppiconZ = zi(R.dIconR1);
         m.crops.opp2iconZ = zi(R.dIconR2);
       }
-      m._nameVecs = {};
+      m._nameVecs = {}; m._nameSigs = {};
       for (const [key, reg] of [['partnerName', myRow === 1 ? R.dNameL2 : R.dNameL1],
                                 ['oppName', R.dNameR1], ['opp2Name', R.dNameR2]]) {
-        const nv = V.textVec(V.cropRegion(video, reg), 32, 8);
-        m._nameVecs[key] = Array.from(nv);
-        const hit = nameFromVec(nv);
+        const ncrop = V.cropRegion(video, reg);
+        m._nameVecs[key] = Array.from(V.textVec(ncrop, 32, 8)); // 旧形式(互換のため保存は継続)
+        m._nameSigs[key] = V.nameSig(ncrop);
+        const hit = nameFromSig(m._nameSigs[key]);
         if (hit) { m[key] = hit.name; (m.autoName ??= {})[key] = true; }
       }
     }
@@ -1107,21 +1121,22 @@ function field(m, key, label, value, opts = {}) {
   return `<div class="field${cls}"><label>${label}${auto}</label>${img}<input id="${id}" data-n="${m.n}" data-key="${key}" value="${value ?? ''}" placeholder="${opts.ph ?? ''}"${combo}></div>`;
 }
 
-// 入力された名前を、名前画像が一致する（nccWh>=0.90）他試合の未入力/自動入力欄へ転記する。
-// 手で入力済みの欄には触らない。転記先が画面に出ていれば表示も更新する
+// 入力された名前を、名前画像が一致する（nameSigScore>=0.90）他試合の未入力/自動入力欄へ転記する。
+// 手で入力済みの欄には触らない。転記先が画面に出ていれば表示も更新する。
+// インク枠の正規化により、ダブルスの左列(右寄せ)⇔右列(左寄せ)をまたいでも一致する
 function propagateName(src, key) {
-  const vec = src._nameVecs && src._nameVecs[key];
+  const vec = src._nameSigs && src._nameSigs[key];
   const name = String(src[key] ?? '').trim();
   if (!vec || !name) return;
   for (const m of matches) {
     for (const k of ['oppName', 'partnerName', 'opp2Name']) {
       if (m === src && k === key) continue;
-      const v2 = m._nameVecs && m._nameVecs[k];
+      const v2 = m._nameSigs && m._nameSigs[k];
       if (!v2) continue;
       const cur = String(m[k] ?? '').trim();
       if (cur === name) continue;
       if (cur && !(m.autoName && m.autoName[k])) continue; // 手入力済みは尊重
-      if (V.nccWh(vec, v2) < 0.90) continue;
+      if (V.nameSigScore(vec, v2) < 0.90) continue;
       m[k] = name;
       (m.autoName ??= {})[k] = true;
       const inp = document.getElementById(`f_${m.n}_${k}`);

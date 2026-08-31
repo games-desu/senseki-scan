@@ -475,6 +475,89 @@ window.Vision = (() => {
     return v;
   }
 
+  // ---- 名前プレートの照合シグネチャ（2026-08-31 刷新） ----
+  // 旧方式は名前欄(410x85)全体を32x8マスにして白塗り量を比べていた。2〜3文字の名前だと
+  // 32列のうち10列ほどしか文字が無く、残りの「空白」が一致するため、文字の形ではなく
+  // 「文字数と配置」を見ている状態になる。同一動画23プレートの実測で
+  // 同一人物 0.656〜0.670 / 別人 最大0.835 と逆転しており、ユーザー辞書でも
+  // 別人の2文字名が0.97に達していた（ぱぱ↔りな=0.969・かみ↔りな=0.961）。
+  // → 白文字のインク枠を切り出して正規化してから比べる。ダブルスは左列が右寄せ・
+  // 右列が左寄せで欄サイズも違うため、枠正規化は同一人物の一致率にも効く。
+  // 刷新後の同素材実測: 同一人物 0.984〜0.986 / 別人 最大0.325（完全分離）
+  const NAME_SIG = { W: 48, H: 12, AR_TOL: 1.12 };
+  function nameSig(img) {
+    const { data, width: w, height: h } = img;
+    const m = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
+      if (lum(r, g, b) > 210 && Math.max(r, g, b) - Math.min(r, g, b) < 45) m[i] = 1;
+    }
+    // 行プロファイル: ベタ塗りの明るい帯(コート/UIの横線)は文字ではないので捨てる
+    const rows = new Int32Array(h);
+    let rmax = 0;
+    for (let y = 0; y < h; y++) {
+      let c = 0, run = 0, maxRun = 0;
+      for (let x = 0; x < w; x++) { if (m[y * w + x]) { c++; run++; if (run > maxRun) maxRun = run; } else run = 0; }
+      rows[y] = (c / w > 0.8 || maxRun > w * 0.35) ? 0 : c;
+      if (rows[y] > rmax) rmax = rows[y];
+    }
+    if (rmax < 3) return null;
+    // 文字帯 = インク行の連続塊のうち最も背の高いもの
+    // （上端〜下端で取ると、下の明るい帯まで枠に含まれる。ワルイージピンボールで枠が
+    //   118px→388pxに伸びた実例）
+    const bands = [];
+    for (let y = 0; y < h; y++) {
+      if (rows[y] < rmax * 0.12) continue;
+      const last = bands[bands.length - 1];
+      if (last && y - last[1] <= 2) last[1] = y; else bands.push([y, y]);
+    }
+    if (!bands.length) return null;
+    let bd = bands[0];
+    for (const b2 of bands) if (b2[1] - b2[0] > bd[1] - bd[0]) bd = b2;
+    const y0 = bd[0], y1 = bd[1];
+    if (y1 - y0 < 4 || y1 - y0 + 1 > h * 0.6) return null;
+    // 列プロファイル: 文字列の塊のうち最も幅の広いものを採る（プレート右端の細い光を除く）
+    const cols = new Int32Array(w);
+    let cmax = 0;
+    for (let x = 0; x < w; x++) {
+      let c = 0;
+      for (let y = y0; y <= y1; y++) if (m[y * w + x]) c++;
+      cols[x] = c; if (c > cmax) cmax = c;
+    }
+    if (cmax < 2) return null;
+    const thr = Math.max(1, cmax * 0.10), gapTol = Math.max(6, Math.round((y1 - y0 + 1) * 0.9));
+    const gs = [];
+    for (let x = 0; x < w; x++) {
+      if (cols[x] < thr) continue;
+      const last = gs[gs.length - 1];
+      if (last && x - last[1] <= gapTol) last[1] = x; else gs.push([x, x]);
+    }
+    if (!gs.length) return null;
+    let g0 = gs[0];
+    for (const gg of gs) if (gg[1] - gg[0] > g0[1] - g0[0]) g0 = gg;
+    const x0 = g0[0], x1 = g0[1];
+    if (x1 - x0 < 4) return null;
+    // 枠を W x H に面積平均でリサンプル（位置・欄サイズ・寄せ方向に不変になる）
+    const { W, H } = NAME_SIG;
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+    const v = new Float32Array(W * H);
+    for (let ty = 0; ty < H; ty++) for (let tx = 0; tx < W; tx++) {
+      const sx0 = x0 + Math.floor(tx / W * bw), sx1 = Math.max(sx0 + 1, x0 + Math.floor((tx + 1) / W * bw));
+      const sy0 = y0 + Math.floor(ty / H * bh), sy1 = Math.max(sy0 + 1, y0 + Math.floor((ty + 1) / H * bh));
+      let c = 0, n = 0;
+      for (let sy = sy0; sy < sy1; sy++) for (let sx = sx0; sx < sx1; sx++) { c += m[sy * w + sx]; n++; }
+      v[ty * W + tx] = c / n;
+    }
+    return { v, ar: bw / bh, w: bw, h: bh };
+  }
+  // シグネチャ同士のスコア。文字列の縦横比が違えば別人（同一人物は実測で比1.00）
+  function nameSigScore(a, b) {
+    if (!a || !b || !a.v || !b.v || a.v.length !== b.v.length) return 0;
+    const r = a.ar > b.ar ? a.ar / b.ar : b.ar / a.ar;
+    if (!(r <= NAME_SIG.AR_TOL)) return 0;
+    return ncc(a.v, b.v);
+  }
+
   function matchIcon(v, lib) {
     let best = null;
     for (const t of lib) {
@@ -959,7 +1042,7 @@ window.Vision = (() => {
     return matches.filter(m => m.rating); // レートパネルまで揃った試合のみ
   }
 
-  return { REGIONS, NUM_SEG, LOOSE, lum, makeSeeker, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
+  return { REGIONS, NUM_SEG, LOOSE, NAME_SIG, nameSig, nameSigScore, lum, makeSeeker, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
            matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
            bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection,
            gaugeFill, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
