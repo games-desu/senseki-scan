@@ -1,5 +1,5 @@
 // SENSEKI SCAN 共有ビジョンライブラリ（ブラウザ用・依存なし）
-// 座標はすべて 1920x1080 基準。cropRegion が videoWidth に応じて自動スケール。
+// 座標はすべて 1920x1080 基準。cropRegion が「ゲーム画面の矩形」(setSourceRect・既定は全画面)に合わせて自動スケール。
 window.Vision = (() => {
   const lum = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
 
@@ -92,20 +92,41 @@ window.Vision = (() => {
     };
   }
 
+  // ---- ゲーム画面の位置（配信レイアウト対応・2026-09-01） ----
+  // 配信録画ではゲームが画面いっぱいとは限らない（枠・カメラ・チャットが同居する）。
+  // 「フレームのどこがゲーム画面か」を割合(0〜1)で持ち、切り出しは全部ここを通す。
+  // 割合で持つ理由: 同じOBSレイアウトなら1080p録画でも1440p録画でも同じ値が使える。
+  // null = 全画面（既定・従来どおり）
+  let SRC = null;
+  function setSourceRect(r) {
+    SRC = (r && r.rw > 0 && r.rh > 0 && (r.rx !== 0 || r.ry !== 0 || r.rw !== 1 || r.rh !== 1))
+      ? { rx: r.rx, ry: r.ry, rw: r.rw, rh: r.rh } : null;
+  }
+  function getSourceRect() { return SRC; }
+  // 実ピクセルのゲーム画面矩形
+  function srcRect(video) {
+    const W = video.videoWidth, H = video.videoHeight;
+    if (!SRC) return { x: 0, y: 0, w: W, h: H };
+    return { x: Math.round(SRC.rx * W), y: Math.round(SRC.ry * H), w: Math.round(SRC.rw * W), h: Math.round(SRC.rh * H) };
+  }
+
   function frameToData(video, w, h) {
+    const s = srcRect(video);
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const ctx = c.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(video, 0, 0, w, h);
+    ctx.drawImage(video, s.x, s.y, s.w, s.h, 0, 0, w, h);
     return ctx.getImageData(0, 0, w, h);
   }
 
   function cropRegion(video, r) {
-    const k = video.videoWidth / 1920;
+    const s = srcRect(video);
+    // 縦横は別係数（ゲーム画面が16:9ぴったりでない指定でも破綻させない）
+    const kx = s.w / 1920, ky = s.h / 1080;
     const c = document.createElement('canvas');
     c.width = r.w; c.height = r.h;
     const ctx = c.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(video, r.x * k, r.y * k, r.w * k, r.h * k, 0, 0, r.w, r.h);
+    ctx.drawImage(video, s.x + r.x * kx, s.y + r.y * ky, r.w * kx, r.h * ky, 0, 0, r.w, r.h);
     return ctx.getImageData(0, 0, r.w, r.h);
   }
 
@@ -1143,7 +1164,7 @@ window.Vision = (() => {
     return matches.filter(m => m.rating); // レートパネルまで揃った試合のみ
   }
 
-  return { REGIONS, NUM_SEG, LOOSE, NAME_SIG, GLYPH, nameSig, nameSigScore, nameBand, sigFromBand, nameStrokes, glyphVec, nameGlyphs, readName, lum, makeSeeker, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
+  return { REGIONS, NUM_SEG, LOOSE, NAME_SIG, GLYPH, nameSig, nameSigScore, nameBand, sigFromBand, nameStrokes, glyphVec, nameGlyphs, readName, lum, makeSeeker, setSourceRect, getSourceRect, srcRect, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
            matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
            bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection,
            gaugeFill, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };

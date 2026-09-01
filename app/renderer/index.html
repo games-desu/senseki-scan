@@ -115,6 +115,13 @@
   .onb-step p { color:var(--sub); font-size:12px; line-height:1.6; }
   .onb-foot { display:flex; align-items:center; gap:12px; margin-top:16px; }
   .onb-foot .note { color:var(--sub); font-size:11px; }
+  /* ゲーム画面の位置指定 */
+  .rect-stage { position:relative; display:inline-block; line-height:0; border:1px solid var(--border); border-radius:6px; overflow:hidden; }
+  .rect-stage canvas { display:block; max-width:100%; cursor:crosshair; }
+  .rect-sel { position:absolute; border:2px solid var(--accent); box-shadow:0 0 0 9999px rgba(0,0,0,.55); pointer-events:none; }
+  .rect-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:10px; font-size:12px; color:var(--sub); }
+  .rect-row input[type=range] { flex:1; min-width:160px; }
+  .rect-prev { border:1px solid var(--border); border-radius:6px; max-width:100%; display:block; }
 </style>
 </head>
 <body>
@@ -127,6 +134,12 @@
     <input type="checkbox" id="setAutoName" checked>
     相手名の自動入力（過去にCSV保存で確定した名前の画像と照合して補完する）
   </label>
+</div>
+<div class="panel" style="padding:8px 12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+  <span class="sub" style="margin:0">ゲーム画面の位置</span>
+  <b id="gameRectLabel" style="font-size:12px">全画面（既定）</b>
+  <button id="gameRectBtn" style="font-size:12px; padding:4px 10px">変更…</button>
+  <span id="gameRectWarn" class="sub" style="margin:0; display:none; color:var(--warn)"></span>
 </div>
 <div class="panel" id="queuePanel" style="display:none">
   <div id="queue" class="sub"></div>
@@ -171,6 +184,46 @@
   </div>
 </div>
 
+<div id="rectmodal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:30; align-items:center; justify-content:center">
+  <div class="onb-card" style="max-width:1040px">
+    <h2><span class="rule"></span>ゲーム画面の位置</h2>
+    <p class="lead">配信レイアウトなどでゲームが画面いっぱいに映っていない録画のために、フレームの中で<b>ゲーム画面が占める範囲</b>を指定します。プレビュー上をドラッグしてください。設定は全ファイル共通で保存されます。</p>
+    <div id="rectPick" class="sub" style="margin-bottom:10px">見本にする録画ファイルを選んでください：<input type="file" id="rectFile" accept="video/*" style="font-size:12px"></div>
+    <div id="rectBody" style="display:none">
+      <div style="display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap">
+        <div class="rect-stage" id="rectStage"><canvas id="rectCanvas"></canvas><div class="rect-sel" id="rectSel" style="display:none"></div></div>
+        <div style="flex:1; min-width:220px">
+          <div class="sub" style="margin:0 0 4px">切り出し結果（この絵が解析にかかります）</div>
+          <canvas id="rectPreview" class="rect-prev" width="320" height="180"></canvas>
+          <div class="sub" id="rectInfo" style="margin-top:8px; line-height:1.7"></div>
+        </div>
+      </div>
+      <div class="rect-row">
+        <span>フレーム</span><input type="range" id="rectSeek" min="0" max="1000" value="300">
+        <label style="cursor:pointer; display:inline-flex; align-items:center; gap:5px"><input type="checkbox" id="rectSnap" checked>16:9に合わせる</label>
+      </div>
+      <div class="rect-row">
+        <span>数値で指定(px)</span>
+        <label>X<input type="number" id="rectX" style="width:74px; margin-left:4px"></label>
+        <label>Y<input type="number" id="rectY" style="width:74px; margin-left:4px"></label>
+        <label>幅<input type="number" id="rectW" style="width:84px; margin-left:4px"></label>
+        <label>高<input type="number" id="rectH" style="width:84px; margin-left:4px"></label>
+        <button id="rectApplyNum" style="font-size:12px; padding:4px 10px">反映</button>
+        <span>OBSのゲームソースの位置・サイズをそのまま入れられます（一番正確）</span>
+      </div>
+      <div class="rect-row">
+        <button id="rectAuto" style="font-size:12px; padding:4px 10px">自動検出</button>
+        <button id="rectFull" style="font-size:12px; padding:4px 10px">全画面に戻す</button>
+        <span id="rectAutoMsg"></span>
+      </div>
+    </div>
+    <div class="onb-foot">
+      <button class="primary" id="rectOk">この範囲で保存</button>
+      <button id="rectCancel">キャンセル</button>
+      <span class="note">切り出すぶん解像度は下がります。ゲーム画面が横1280px相当を切ると認識精度が落ちます。</span>
+    </div>
+  </div>
+</div>
 <div id="bugmodal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:30; align-items:center; justify-content:center">
   <div class="onb-card">
     <h2><span class="rule"></span>バグ報告</h2>
@@ -199,6 +252,7 @@
     <div class="onb-step"><span class="n">1</span><div>
       <b>録画ファイル（MP4）をドラッグ&ドロップ</b>
       <p>OBS等の元録画をそのまま使ってください（編集ソフトで再エンコードした動画は精度が落ちます）。推奨: 1080p以上・30fps以上・ビットレート6〜12Mbps（高すぎると解析に時間がかかります）。複数ファイルまとめてOK。</p>
+      <p>配信レイアウトなどで<b>ゲームが画面いっぱいに映っていない</b>録画は、先に「ゲーム画面の位置」でゲーム画面の範囲を指定してください（自動検出あり）。指定しないと何も検出できません。</p>
     </div></div>
     <div class="onb-step"><span class="n">2</span><div>
       <b>解析を待つ</b>
@@ -294,6 +348,7 @@ async function loadTemplates() {
 let SETTINGS = { autoName: true };
 let NAMES = { history: [], vecs: [] }; // history: {name,count,lastUsed} / vecs: {name, v:[旧形式], s:{v,ar}}
 let CHARS = { glyphs: [] };            // 文字辞書 {c, v:[16x16]}（入力された名前から自動で育つ）
+let LAST_FILE = null;            // 「ゲーム画面の位置」の見本に使う直近のファイル
 let MYSIG = { sigs: [] };              // 自分の名前のシグネチャ（シングルスVS画面から自動で貯まる）
 async function loadUserData() {
   SETTINGS = { autoName: true, ...(await window.api.loadUserData('settings') || {}) };
@@ -301,6 +356,7 @@ async function loadUserData() {
   CHARS = { glyphs: [], ...(await window.api.loadUserData('chars-user') || {}) };
   MYSIG = { sigs: [], ...(await window.api.loadUserData('myname-user') || {}) };
   $('setAutoName').checked = !!SETTINGS.autoName;
+  applyGameRect();
 }
 const userDataReady = loadUserData().catch(() => {});
 
@@ -316,6 +372,182 @@ $('setAutoName').addEventListener('change', () => {
   SETTINGS.autoName = $('setAutoName').checked;
   window.api.saveUserData('settings', SETTINGS);
 });
+
+// ---- ゲーム画面の位置（配信レイアウト対応・2026-09-01） ----
+// 配信録画はゲームが画面いっぱいとは限らない。フレーム内のゲーム画面を割合(0〜1)で覚えておき、
+// vision 側の切り出しを全部そこ基準にする。割合なので同じレイアウトなら解像度が違っても使い回せる。
+const RM = { video: null, url: null, sel: null, drag: null, dispW: 0, dispH: 0 };
+const fmtRect = r => `左${(r.rx * 100).toFixed(1)}% / 上${(r.ry * 100).toFixed(1)}% / 幅${(r.rw * 100).toFixed(1)}% / 高${(r.rh * 100).toFixed(1)}%`;
+function applyGameRect() {
+  V.setSourceRect(SETTINGS.gameRect || null);
+  const r = V.getSourceRect();
+  $('gameRectLabel').textContent = r ? fmtRect(r) : '全画面（既定）';
+  $('gameRectWarn').style.display = 'none';
+}
+function rmSeek(t) {
+  return new Promise(res => {
+    RM.video.addEventListener('seeked', () => res(), { once: true });
+    RM.video.currentTime = Math.max(0.05, Math.min(RM.video.duration - 0.05, t));
+  });
+}
+function rmDrawFrame() {
+  const v = RM.video, cv = $('rectCanvas');
+  const dw = Math.min(660, v.videoWidth);
+  RM.dispW = dw; RM.dispH = Math.round(dw * v.videoHeight / v.videoWidth);
+  cv.width = RM.dispW; cv.height = RM.dispH;
+  cv.getContext('2d').drawImage(v, 0, 0, RM.dispW, RM.dispH);
+  rmRenderSel();
+}
+function rmSnap169(s) {
+  if (!$('rectSnap').checked) return s;
+  // ドラッグ矩形に収まる最大の16:9（左上を固定）
+  const arW = 16, arH = 9;
+  let pw = s.rw * RM.video.videoWidth, ph = s.rh * RM.video.videoHeight;
+  if (pw / ph > arW / arH) pw = ph * arW / arH; else ph = pw * arH / arW;
+  return { rx: s.rx, ry: s.ry, rw: pw / RM.video.videoWidth, rh: ph / RM.video.videoHeight };
+}
+function rmRenderSel() {
+  const s = RM.sel, el = $('rectSel');
+  if (!s) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.style.left = (s.rx * RM.dispW) + 'px';
+  el.style.top = (s.ry * RM.dispH) + 'px';
+  el.style.width = (s.rw * RM.dispW) + 'px';
+  el.style.height = (s.rh * RM.dispH) + 'px';
+  // 切り出しプレビュー（解析はこの絵を1920x1080に伸ばして見る）
+  const v = RM.video, p = $('rectPreview');
+  p.getContext('2d').drawImage(v, s.rx * v.videoWidth, s.ry * v.videoHeight,
+    s.rw * v.videoWidth, s.rh * v.videoHeight, 0, 0, p.width, p.height);
+  const pw = Math.round(s.rw * v.videoWidth), ph = Math.round(s.rh * v.videoHeight);
+  $('rectX').value = Math.round(s.rx * v.videoWidth);
+  $('rectY').value = Math.round(s.ry * v.videoHeight);
+  $('rectW').value = pw; $('rectH').value = ph;
+  const ar = (pw / ph).toFixed(3);
+  const warn = pw < 1280 ? `<br><span style="color:var(--warn)">ゲーム画面が横${pw}px＝1280px未満です。文字が小さくなるぶん認識精度が落ちます</span>` : '';
+  const arWarn = Math.abs(pw / ph - 16 / 9) > 0.02 ? '<br><span style="color:var(--warn)">16:9から外れています（ゲーム画面は必ず16:9です）</span>' : '';
+  $('rectInfo').innerHTML = `${fmtRect(s)}<br>実ピクセル ${pw} x ${ph}（縦横比 ${ar} / 16:9=1.778）${arWarn}${warn}`;
+}
+function rmSetSel(s) { RM.sel = s; rmRenderSel(); }
+async function rmLoadFile(file) {
+  if (RM.url) { try { URL.revokeObjectURL(RM.url); } catch {} }
+  if (!RM.video) { RM.video = document.createElement('video'); RM.video.muted = true; RM.video.preload = 'auto'; }
+  RM.url = URL.createObjectURL(file);
+  RM.video.src = RM.url;
+  await new Promise((res, rej) => {
+    RM.video.addEventListener('loadeddata', res, { once: true });
+    RM.video.addEventListener('error', () => rej(new Error('読み込めませんでした')), { once: true });
+  });
+  $('rectBody').style.display = 'block';
+  await rmSeek(RM.video.duration * 0.3);
+  rmDrawFrame();
+  rmSetSel(RM.sel || SETTINGS.gameRect || { rx: 0, ry: 0, rw: 1, rh: 1 });
+}
+// 自動検出: 時間方向に動いている画素の範囲＝ゲーム画面とみなす（静止した枠・ロゴは動かない）。
+// **等倍で見る**のが肝: 検証で「4pxずれるだけでコート0.988→0.835・キャラ0.993→0.776」と
+// 一気に落ちた（解像度が下がること自体の影響はほぼ無い）。境界は1px単位で当てる必要がある。
+async function rmAutoDetect() {
+  const v = RM.video, W = v.videoWidth, H = v.videoHeight, N = 8;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  const mn = new Uint8Array(W * H).fill(255), mx = new Uint8Array(W * H);
+  const t0 = v.currentTime;
+  for (let i = 0; i < N; i++) {
+    await rmSeek(v.duration * (0.06 + 0.88 * i / (N - 1)));
+    cx.drawImage(v, 0, 0, W, H);
+    const d = cx.getImageData(0, 0, W, H).data;
+    for (let p = 0; p < W * H; p++) {
+      const L = (0.299 * d[p * 4] + 0.587 * d[p * 4 + 1] + 0.114 * d[p * 4 + 2]) | 0;
+      if (L < mn[p]) mn[p] = L;
+      if (L > mx[p]) mx[p] = L;
+    }
+  }
+  const col = new Int32Array(W), row = new Int32Array(H);
+  for (let y = 0; y < H; y++) {
+    const o = y * W;
+    for (let x = 0; x < W; x++) if (mx[o + x] - mn[o + x] > 40) { col[x]++; row[y]++; }
+  }
+  // 中央値の30%を境界のしきい値に（最大値基準だと1本の派手な列に引っ張られる）
+  const spanOf = (a, n) => {
+    const pos = Array.from(a).filter(x => x > 0).sort((p, q) => p - q);
+    if (!pos.length) return null;
+    const th = pos[Math.floor(pos.length / 2)] * 0.3;
+    let bs = -1, be = -1, s = -1;
+    for (let i = 0; i <= n; i++) {
+      const on = i < n && a[i] >= th;
+      if (on) { if (s < 0) s = i; }
+      else if (s >= 0) { if (be - bs < i - 1 - s) { bs = s; be = i - 1; } s = -1; }
+    }
+    return bs < 0 ? null : [bs, be];
+  };
+  const X = spanOf(col, W), Y = spanOf(row, H);
+  await rmSeek(t0); rmDrawFrame();
+  if (!X || !Y) { $('rectAutoMsg').textContent = '検出できませんでした。手動で範囲を指定してください'; return; }
+  const px = { x: X[0], y: Y[0], w: X[1] - X[0] + 1, h: Y[1] - Y[0] + 1 };
+  rmSetSel({ rx: px.x / W, ry: px.y / H, rw: px.w / W, rh: px.h / H });
+  const off = Math.abs(px.w / px.h - 16 / 9) / (16 / 9);
+  $('rectAutoMsg').textContent = `検出: ${px.x},${px.y} ${px.w}x${px.h}` +
+    (off > 0.01 ? '（16:9から外れています。数値欄で直してください）' : '');
+}
+$('gameRectBtn').addEventListener('click', async () => {
+  $('rectmodal').style.display = 'flex';
+  $('rectAutoMsg').textContent = '';
+  RM.sel = SETTINGS.gameRect ? { ...SETTINGS.gameRect } : { rx: 0, ry: 0, rw: 1, rh: 1 };
+  if (LAST_FILE) { try { await rmLoadFile(LAST_FILE); } catch (e) { log('位置指定: ' + e.message); } }
+});
+$('rectFile').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (f) { try { await rmLoadFile(f); } catch (err) { alert('この動画を読み込めませんでした'); } }
+});
+$('rectSeek').addEventListener('input', async () => {
+  if (!RM.video) return;
+  await rmSeek(RM.video.duration * (+$('rectSeek').value / 1000));
+  rmDrawFrame();
+});
+$('rectSnap').addEventListener('change', () => { if (RM.sel) rmSetSel(rmSnap169(RM.sel)); });
+$('rectAuto').addEventListener('click', async () => {
+  if (!RM.video) return;
+  $('rectAutoMsg').textContent = '検出中…';
+  try { await rmAutoDetect(); } catch (e) { $('rectAutoMsg').textContent = '検出に失敗しました'; }
+});
+$('rectFull').addEventListener('click', () => rmSetSel({ rx: 0, ry: 0, rw: 1, rh: 1 }));
+const rmApplyNum = () => {
+  if (!RM.video) return;
+  const W = RM.video.videoWidth, H = RM.video.videoHeight;
+  const x = Math.max(0, Math.min(W - 16, +$('rectX').value || 0));
+  const y = Math.max(0, Math.min(H - 9, +$('rectY').value || 0));
+  const w = Math.max(16, Math.min(W - x, +$('rectW').value || W));
+  const h = Math.max(9, Math.min(H - y, +$('rectH').value || H));
+  rmSetSel({ rx: x / W, ry: y / H, rw: w / W, rh: h / H });
+};
+$('rectApplyNum').addEventListener('click', rmApplyNum);
+for (const id of ['rectX', 'rectY', 'rectW', 'rectH']) {
+  $(id).addEventListener('keydown', e => { if (e.key === 'Enter') rmApplyNum(); });
+}
+$('rectCancel').addEventListener('click', () => { $('rectmodal').style.display = 'none'; });
+$('rectOk').addEventListener('click', () => {
+  const s = RM.sel;
+  SETTINGS.gameRect = (s && (s.rx || s.ry || s.rw !== 1 || s.rh !== 1)) ? s : null;
+  window.api.saveUserData('settings', SETTINGS);
+  applyGameRect();
+  $('rectmodal').style.display = 'none';
+  log('ゲーム画面の位置: ' + (V.getSourceRect() ? fmtRect(V.getSourceRect()) : '全画面') + '（次に読み込むファイルから反映されます）');
+});
+// ドラッグで範囲選択
+$('rectCanvas').addEventListener('pointerdown', e => {
+  if (!RM.video) return;
+  const b = $('rectCanvas').getBoundingClientRect();
+  RM.drag = { x: (e.clientX - b.left) / b.width, y: (e.clientY - b.top) / b.height };
+  $('rectCanvas').setPointerCapture(e.pointerId);
+});
+$('rectCanvas').addEventListener('pointermove', e => {
+  if (!RM.drag) return;
+  const b = $('rectCanvas').getBoundingClientRect();
+  const x = Math.max(0, Math.min(1, (e.clientX - b.left) / b.width));
+  const y = Math.max(0, Math.min(1, (e.clientY - b.top) / b.height));
+  const raw = { rx: Math.min(RM.drag.x, x), ry: Math.min(RM.drag.y, y), rw: Math.abs(x - RM.drag.x), rh: Math.abs(y - RM.drag.y) };
+  if (raw.rw > 0.02 && raw.rh > 0.02) rmSetSel(rmSnap169(raw));
+});
+$('rectCanvas').addEventListener('pointerup', () => { RM.drag = null; });
 
 // 名前クロップのシグネチャ（インク枠を正規化・V.nameSig）を、過去に確定した名前と照合する。
 // 同一名は同一フォント描画なので一致時は0.98台に乗る（実測: 同一人物0.984〜0.986/別人0.33以下）。
@@ -470,27 +702,29 @@ const fmtDT = d => {
 
 const seekTo = t => V.makeSeeker(video)(t);
 
+// 切り出しはすべて V.srcRect（ゲーム画面の矩形。既定は全画面）基準
 function cropDataUrl(r) {
-  const k = video.videoWidth / 1920;
+  const s = V.srcRect(video), kx = s.w / 1920, ky = s.h / 1080;
   const c = document.createElement('canvas');
   c.width = r.w; c.height = r.h;
-  c.getContext('2d').drawImage(video, r.x * k, r.y * k, r.w * k, r.h * k, 0, 0, r.w, r.h);
+  c.getContext('2d').drawImage(video, s.x + r.x * kx, s.y + r.y * ky, r.w * kx, r.h * ky, 0, 0, r.w, r.h);
   return c.toDataURL('image/png');
 }
 
 // 証拠画像用: フレーム全体 / 指定領域をJPEGで（確認画面に載せるためサイズ控えめ）
 function frameJpeg(width = 640) {
+  const s = V.srcRect(video);
   const c = document.createElement('canvas');
-  c.width = width; c.height = Math.round(width * video.videoHeight / video.videoWidth);
-  c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+  c.width = width; c.height = Math.round(width * s.h / s.w);
+  c.getContext('2d').drawImage(video, s.x, s.y, s.w, s.h, 0, 0, c.width, c.height);
   return c.toDataURL('image/jpeg', 0.72);
 }
 function regionJpeg(r, outW) {
-  const k = video.videoWidth / 1920;
+  const s = V.srcRect(video), kx = s.w / 1920, ky = s.h / 1080;
   const w = outW ?? r.w, h = Math.round(r.h * w / r.w);
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  c.getContext('2d').drawImage(video, r.x * k, r.y * k, r.w * k, r.h * k, 0, 0, w, h);
+  c.getContext('2d').drawImage(video, s.x + r.x * kx, s.y + r.y * ky, r.w * kx, r.h * ky, 0, 0, w, h);
   return c.toDataURL('image/jpeg', 0.75);
 }
 
@@ -567,6 +801,12 @@ async function analyze() {
   const events = await V.scan(video, { albumTpl: TPL.albumBar || [], onProgress: (t, dur) =>
     setProgress(`全編スキャン中… ${t.toFixed(0)}/${dur.toFixed(0)}秒`, t / dur * 0.7) });
   log(`scan ${((performance.now() - t0) / 1000).toFixed(1)}s: ` + events.map(e => `${e.type}@${e.t0.toFixed(0)}-${e.t1.toFixed(0)}`).join(' '));
+  // ゲームが画面いっぱいでない配信録画は、位置指定なしだと何も当たらない → 気づけるようにする
+  if (!events.some(e => e.type === 'vs')) {
+    log('[警告] VS画面を1件も検出できませんでした。配信レイアウトなどでゲームが画面いっぱいに映っていない録画は、'
+      + '「ゲーム画面の位置」で範囲を指定してから読み込み直してください'
+      + (V.getSourceRect() ? '（現在の指定: ' + fmtRect(V.getSourceRect()) + '。この指定が合っているかも確認してください）' : ''));
+  }
   const albumWins = events.filter(e => e.type === 'album');
   if (albumWins.length) {
     log('アルバム/ホーム画面の再生を検出し解析対象から除外: ' + albumWins.map(w => w.t0.toFixed(0) + '〜' + w.t1.toFixed(0) + '秒').join(' / '));
@@ -1765,6 +2005,7 @@ async function processQueue() {
 }
 
 async function analyzeFile(f) {
+  LAST_FILE = f;
   fileInfo = { name: f.name, lastModified: f.lastModified };
   drop.classList.add('loaded');
   drop.textContent = '解析中: ' + f.name + '（追加のファイルはここへドロップ）';
@@ -1777,6 +2018,12 @@ async function analyzeFile(f) {
     });
     if (!TPL) await loadTemplates();
     await userDataReady; // 設定と名前テンプレ（自動入力に使う）
+    const gr = V.getSourceRect();
+    if (gr) {
+      const s = V.srcRect(video);
+      log(`ゲーム画面の位置: ${fmtRect(gr)} → 実ピクセル ${s.w}x${s.h}` +
+          (s.w < 1280 ? '（横1280px未満のため認識精度が落ちる可能性があります）' : ''));
+    }
     await analyze();
   } finally {
     URL.revokeObjectURL(url);
