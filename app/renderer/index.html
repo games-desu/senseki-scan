@@ -136,6 +136,9 @@
   .hlmh .sub { margin:0; }
   .hlmh button { font-size:11px; padding:3px 9px; }
   .hlmh button:first-of-type { margin-left:auto; }
+  .hlmy { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--sub); margin-left:8px; }
+  .hlmy img { height:26px; border-radius:4px; background:#000; }
+  .hlmy select { background:#0c130f; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:3px 6px; font-size:12px; max-width:170px; }
   .hlrows { display:grid; grid-template-columns:repeat(auto-fill,minmax(470px,1fr)); gap:6px; }
   .hlp { display:flex; align-items:center; gap:10px; padding:6px 8px; border:1px solid var(--border); border-radius:8px; opacity:.55; }
   .hlp.on { opacity:1; border-color:#3a5546; }
@@ -239,6 +242,10 @@
         <button id="hlOpenDir" style="display:none; font-size:11px; padding:3px 10px">フォルダを開く</button>
         <label><input type="checkbox" id="hlGuard" checked>名前が映る区間を自動で除外（推奨）</label>
         <label><input type="checkbox" id="hlScale" checked>1440p以上は1080pに縮小</label>
+        <label><input type="checkbox" id="hlBadge" checked>自分のキャラを表示
+          <select id="hlBadgeMode" style="background:#0c130f; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:3px 6px; font-size:12px">
+            <option value="3">最初の3秒</option><option value="5">最初の5秒</option><option value="always">ずっと</option>
+          </select></label>
       </div>
       <div class="sub" id="hlNameHint" style="margin:0"></div>
     </div>
@@ -454,6 +461,7 @@ if (!window.api) {
     hlFfmpegAvailable: async () => false,
     hlPickDir: async () => null,
     hlOpenPath: async () => ({ ok: true }),
+    hlSavePng: async () => null,
   };
 }
 const V = window.Vision;

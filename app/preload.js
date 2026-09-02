@@ -21,5 +21,6 @@ contextBridge.exposeInMainWorld('api', {
   hlRemove: (files) => ipcRenderer.invoke('hl-remove', files),
   hlExists: (p) => ipcRenderer.invoke('hl-exists', p),
   hlOpenPath: (p) => ipcRenderer.invoke('hl-open-path', p),
+  hlSavePng: (name, dataUrl) => ipcRenderer.invoke('hl-save-png', name, dataUrl),
   onHlProgress: (cb) => ipcRenderer.on('hl-progress', (ev, info) => cb(info)),
 });

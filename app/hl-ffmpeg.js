@@ -64,16 +64,25 @@ function probe(file) {
 
 // 1本切り抜く: {jobId, input, start, duration, out, crop:{x,y,w,h}|null, maxH}
 // -ss を -i の前に置き再エンコードするので、キーフレーム位置に関係なくフレーム単位で正確に切れる
+// badge: {path, seconds|null} … 透過PNG（renderer が canvas で描いた「自分：キャラ名」）を上中央に重ねる。
+// seconds を指定すると最初の seconds 秒だけ表示し、末尾0.5秒でフェードアウト（null=ずっと）。
+// PNG は -loop 1 で連続フレームにする（1枚絵のままだと fade が効かない）。-t は出力側の長さ制限
 function cut(job, onProgress) {
   const vf = [];
   if (job.crop) vf.push(`crop=${job.crop.w}:${job.crop.h}:${job.crop.x}:${job.crop.y}`);
   if (job.maxH) vf.push(`scale=-2:'min(ih,${job.maxH})'`);
-  const args = [
-    '-ss', String(job.start), '-i', job.input, '-t', String(job.duration),
-    '-map', '0:v:0', '-map', '0:a:0?',
-    ...(vf.length ? ['-vf', vf.join(',')] : []),
-    ...ENC, '-avoid_negative_ts', 'make_zero', '-y', job.out,
-  ];
+  let args = ['-ss', String(job.start), '-i', job.input];
+  if (job.badge && job.badge.path) {
+    const S = job.badge.seconds;
+    const main = `[0:v]${vf.length ? vf.join(',') : 'null'}[v0]`;
+    const b = S ? `[1:v]format=rgba,fade=t=out:st=${Math.max(0, S - 0.5).toFixed(2)}:d=0.5:alpha=1[b]` : '[1:v]format=rgba[b]';
+    const ov = `[v0][b]overlay=x=(W-w)/2:y=H*0.025:shortest=1${S ? `:enable='lte(t,${S})'` : ''}[v]`;
+    args.push('-framerate', '30', '-loop', '1', '-i', job.badge.path,
+              '-t', String(job.duration), '-filter_complex', `${main};${b};${ov}`, '-map', '[v]', '-map', '0:a:0?');
+  } else {
+    args.push('-t', String(job.duration), '-map', '0:v:0', '-map', '0:a:0?', ...(vf.length ? ['-vf', vf.join(',')] : []));
+  }
+  args.push(...ENC, '-avoid_negative_ts', 'make_zero', '-y', job.out);
   return run(job.jobId, args, onProgress);
 }
 

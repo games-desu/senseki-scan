@@ -195,6 +195,16 @@ ipcMain.handle('hl-concat', async (ev, job) => {
 });
 
 ipcMain.handle('hl-cancel', (ev, jobId) => ({ ok: HLF.cancel(jobId) }));
+// バッジ画像（data URL の PNG）を一時フォルダへ保存してパスを返す
+ipcMain.handle('hl-save-png', (ev, name, dataUrl) => {
+  const m = /^data:image\/png;base64,(.+)$/.exec(String(dataUrl || ''));
+  if (!m || !/^[a-z0-9_-]+$/i.test(String(name))) return null;
+  const d = path.join(app.getPath('temp'), 'senseki-scan-highlight');
+  fs.mkdirSync(d, { recursive: true });
+  const p = path.join(d, name + '.png');
+  fs.writeFileSync(p, Buffer.from(m[1], 'base64'));
+  return p;
+});
 
 // 一時クリップ置き場（ダイジェストだけ欲しいときの中間ファイル）
 ipcMain.handle('hl-temp-dir', () => {
