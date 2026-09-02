@@ -21,6 +21,7 @@ npm start
 - `preload.js` — IPCブリッジ（loadTemplates / saveCsv / appendUserTemplates / appVersion）
 - `renderer/` — 画面＋認識エンジン（`tools/analyzer.html`由来。**window.api が無いブラウザではdevフォールバックで動く**ので、`http://localhost:4760/app/renderer/index.html` でそのまま開発・検証できる）
 - `assets/templates.json` — 同梱辞書（tools/harvest.htmlで育てたスナップショット）
+- `renderer/rally.js` / `renderer/highlight.js` / `renderer/hl-ui.js` — ハイライト生成（得点シーンの切り抜き・docs/highlight.md）。切り抜きは `ffmpeg-static`（同梱・GPL・asarUnpack）を main.js が子プロセスで呼ぶ。`npm install` 後に exe が無ければ `node node_modules/ffmpeg-static/install.js`
 
 ## 辞書の更新フロー
 

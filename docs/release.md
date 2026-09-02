@@ -12,6 +12,19 @@
 2. Personal Access Token を作る（Settings → Developer settings → Tokens (classic) → `repo` スコープ）。
    ビルド時の `GH_TOKEN` に使う。アプリには埋め込まれない（アップロード専用）。
 
+### ffmpeg の同梱（v0.4.0〜）
+
+ハイライト生成は npm の `ffmpeg-static`（約80MB・GPL）を同梱する。npm 12 は依存パッケージの install script を
+既定でブロックするため、`npm install` だけでは exe がダウンロードされない。`npm run dist` の `predist` が
+存在確認して止まるので、そのときは:
+
+```powershell
+cd C:Users<user>Documentssenseki-captureapp
+node node_modules/ffmpeg-static/install.js
+```
+
+インストーラーは約30MB増える。
+
 ## 毎回のリリース手順（実ターミナルで）
 
 ```powershell

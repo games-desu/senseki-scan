@@ -122,6 +122,48 @@
   .rect-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:10px; font-size:12px; color:var(--sub); }
   .rect-row input[type=range] { flex:1; min-width:160px; }
   .rect-prev { border:1px solid var(--border); border-radius:6px; max-width:100%; display:block; }
+  /* ハイライト生成 */
+  #hlPanel.over { border-color:var(--accent); background:#1a2b22; }
+  #hlBar { height:6px; background:#101a15; border-radius:3px; overflow:hidden; margin-top:6px; }
+  #hlBar div { height:100%; width:0%; background:var(--accent-dark); transition:width .3s; }
+  #hlLog { font:11px Consolas,monospace; color:var(--sub); white-space:pre-wrap; max-height:120px; overflow-y:auto; margin-top:8px; display:none; }
+  .hlopts { display:flex; gap:14px; align-items:center; flex-wrap:wrap; font-size:12px; color:var(--sub); margin:10px 0 }
+  .hlopts label { display:inline-flex; align-items:center; gap:5px; cursor:pointer; }
+  .hlopts input[type=number] { width:56px; background:#0c130f; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:3px 6px; font-size:12px; }
+  .hlm { background:#101a15; border:1px solid var(--border); border-radius:8px; padding:8px 10px; margin-bottom:10px; }
+  .hlmh { display:flex; align-items:center; gap:10px; margin-bottom:6px; font-size:13px; }
+  .hlmh b { color:var(--accent); }
+  .hlmh .sub { margin:0; }
+  .hlmh button { font-size:11px; padding:3px 9px; }
+  .hlmh button:first-of-type { margin-left:auto; }
+  .hlrows { display:grid; grid-template-columns:repeat(auto-fill,minmax(470px,1fr)); gap:6px; }
+  .hlp { display:flex; align-items:center; gap:10px; padding:6px 8px; border:1px solid var(--border); border-radius:8px; opacity:.55; }
+  .hlp.on { opacity:1; border-color:#3a5546; }
+  .hlp img { width:128px; height:72px; object-fit:cover; border-radius:4px; background:#000; cursor:pointer; flex:none; }
+  .hlp .hlpinfo { flex:1; min-width:0; font-size:12px; line-height:1.5; }
+  .hlp .hlpinfo .sub { margin:0; font-size:11px; }
+  .hlp button { font-size:11px; padding:4px 9px; flex:none; }
+  .hlchk input { width:16px; height:16px; cursor:pointer; }
+  .hlme { color:var(--accent); font-weight:bold; }
+  .hlopp { color:#f2a65a; font-weight:bold; }
+  .hlfin { color:#f2c230; font-size:11px; border:1px solid #6a5a1a; border-radius:10px; padding:0 7px; }
+  .hledited { color:#3ba7db; font-size:10px; }
+  #hlStage { position:relative; width:100%; overflow:hidden; background:#000; border-radius:8px; border:1px solid var(--border); }
+  #hlVideo { position:absolute; left:0; top:0; display:block; max-width:none; }
+  #hlTl { position:relative; height:38px; background:#0c130f; border:1px solid var(--border); border-radius:6px; margin:10px 0 4px; cursor:pointer; user-select:none; touch-action:none; }
+  #hlTl .zone { position:absolute; top:0; bottom:0; }
+  #hlTlOn { background:rgba(46,204,113,.18); }
+  #hlTlDanger { background:rgba(231,76,60,.28); }
+  #hlTlSel { background:rgba(59,167,219,.35); border-top:2px solid #3ba7db; border-bottom:2px solid #3ba7db; }
+  .hlh { position:absolute; top:-4px; bottom:-4px; width:12px; margin-left:-6px; background:#3ba7db; border-radius:3px; cursor:ew-resize; z-index:2; }
+  .hlh::after { content:''; position:absolute; left:5px; top:6px; bottom:6px; width:2px; background:#0c130f; }
+  #hlPlayhead { position:absolute; top:-2px; bottom:-2px; width:2px; margin-left:-1px; background:#fff; z-index:3; pointer-events:none; }
+  .hltlab { display:flex; justify-content:space-between; font-size:10px; color:var(--sub); }
+  .hlctl { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:8px; font-size:12px; color:var(--sub); }
+  .hlctl button { font-size:12px; padding:5px 10px; }
+  .hlctl input[type=number] { width:74px; background:#0c130f; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:4px 6px; font-size:12px; }
+  .hlctl label { display:inline-flex; align-items:center; gap:4px; cursor:pointer; }
+  #hlEdWarn { display:none; color:#ff8d80; font-size:11px; margin-top:6px; }
 </style>
 </head>
 <body>
@@ -140,6 +182,46 @@
   <b id="gameRectLabel" style="font-size:12px">全画面（既定）</b>
   <button id="gameRectBtn" style="font-size:12px; padding:4px 10px">変更…</button>
   <span id="gameRectWarn" class="sub" style="margin:0; display:none; color:var(--warn)"></span>
+</div>
+<div class="panel" id="hlPanel">
+  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
+    <b style="font-size:13px">ハイライト生成</b>
+    <span class="sub" style="margin:0">録画から得点シーンを自動で切り抜いてMP4に保存します。ポイント間のスコアバナー（プレイヤー名が載る）は映しません</span>
+    <button id="hlPick" style="margin-left:auto">録画を選ぶ…</button>
+    <button id="hlUseLast" style="display:none"></button>
+    <input type="file" id="hlFile" accept="video/*" hidden>
+  </div>
+  <div id="hlBody" style="display:none; margin-top:10px">
+    <div class="sub" style="margin:0 0 6px"><b id="hlFileName" style="color:var(--text)"></b> <span id="hlSummary"></span></div>
+    <div id="hlProgWrap" style="display:none">
+      <div style="display:flex; align-items:center; gap:10px"><div id="hlProg" class="sub" style="margin:0; flex:1"></div><button id="hlCancel" style="display:none; font-size:11px; padding:3px 10px">中止</button></div>
+      <div id="hlBar"><div></div></div>
+    </div>
+    <div class="hlopts">
+      <label><input type="checkbox" id="hlOnlyMe" checked>自分の得点だけを選ぶ</label>
+      <label>得点前の秒数 <input type="number" id="hlSec" value="5" min="2" max="20" step="1"> 秒</label>
+      <span>サムネイルか「区間を調整」で1ポイントずつ始点・終点を直せます</span>
+    </div>
+    <div id="hlList"></div>
+    <div id="hlExportBox" style="display:none; border-top:1px solid var(--border); padding-top:10px">
+      <div class="hlopts" style="margin-top:0">
+        <span>保存先: <b id="hlOutDir" style="color:var(--text)">未設定（最初の保存時に選びます）</b></span>
+        <button id="hlOutPick" style="font-size:11px; padding:3px 10px">変更…</button>
+        <button id="hlOpenDir" style="display:none; font-size:11px; padding:3px 10px">フォルダを開く</button>
+      </div>
+      <div class="hlopts" style="margin-top:0">
+        <label><input type="checkbox" id="hlGuard" checked>名前が映る区間を自動で除外（推奨）</label>
+        <label><input type="checkbox" id="hlScale" checked>1440p以上は1080pに縮小</label>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+        <button class="primary" id="hlExportShort">得点前の数秒を保存（選択したポイント）</button>
+        <button class="primary" id="hlExportDigest">ダイジェストを保存（試合ごとに連結）</button>
+        <button id="hlExportFull">ラリー全体を保存（選択したポイント）</button>
+        <span class="sub" style="margin:0">ファイル名: 録画名_試合n_Pk_スコア_自分/相手.mp4 ／ 録画名_試合n_ダイジェスト.mp4</span>
+      </div>
+    </div>
+    <div id="hlLog"></div>
+  </div>
 </div>
 <div class="panel" id="queuePanel" style="display:none">
   <div id="queue" class="sub"></div>
@@ -224,6 +306,33 @@
     </div>
   </div>
 </div>
+<div id="hlmodal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:30; align-items:center; justify-content:center">
+  <div class="onb-card" style="max-width:960px; width:94vw">
+    <h2><span class="rule"></span>区間の調整 <span id="hlEdTitle" class="sub" style="margin:0 0 0 8px; font-weight:normal"></span></h2>
+    <p class="lead" style="margin-bottom:10px">緑＝HUDが出ている区間（ラリー）・赤＝得点確定後（スコアバナーにプレイヤー名が映る）。青いハンドルをドラッグするか、再生しながら「開始をここに／終了をここに」で決めます。</p>
+    <div id="hlStage"><video id="hlVideo" preload="auto"></video></div>
+    <div id="hlTl">
+      <div class="zone" id="hlTlOn"></div><div class="zone" id="hlTlDanger"></div><div class="zone" id="hlTlSel"></div>
+      <div class="hlh" id="hlHS" title="開始"></div><div class="hlh" id="hlHE" title="終了"></div>
+      <div id="hlPlayhead"></div>
+    </div>
+    <div class="hltlab"><span id="hlTlT0"></span><span>現在 <b id="hlCur"></b></span><span id="hlTlT1"></span></div>
+    <div class="hlctl">
+      <label><input type="radio" name="hlWhich" id="hlWhichShort" checked>得点前の数秒</label>
+      <label><input type="radio" name="hlWhich" id="hlWhichFull">ラリー全体</label>
+      <span style="margin-left:8px">開始 <input type="number" id="hlS" step="0.1"> 終了 <input type="number" id="hlE" step="0.1"> 秒（長さ <b id="hlLen"></b>）</span>
+    </div>
+    <div class="hlctl">
+      <button id="hlM1" title="1秒戻す (Shift+←)">-1s</button><button id="hlM01" title="0.1秒戻す (←)">-0.1s</button>
+      <button id="hlPlayRange" class="primary" title="区間を再生 (Space)">区間を再生 / 停止</button>
+      <button id="hlP01" title="0.1秒進める (→)">+0.1s</button><button id="hlP1" title="1秒進める (Shift+→)">+1s</button>
+      <button id="hlSetS" style="margin-left:10px">開始をここに</button><button id="hlSetE">終了をここに</button>
+      <button id="hlAuto" style="margin-left:10px">自動に戻す</button>
+    </div>
+    <div id="hlEdWarn"></div>
+    <div class="onb-foot"><button class="primary" id="hlEdOk">この区間で決定</button><button id="hlEdCancel">キャンセル (Esc)</button></div>
+  </div>
+</div>
 <div id="bugmodal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:30; align-items:center; justify-content:center">
   <div class="onb-card">
     <h2><span class="rule"></span>バグ報告</h2>
@@ -274,6 +383,8 @@
 </div>
 
 <script src="vision.js"></script>
+<script src="rally.js"></script>
+<script src="highlight.js"></script>
 <script src="characters.js"></script>
 <script>
 // 開発用フォールバック: Electron外（ブラウザ）で開いたときはHTTP辞書＋ブラウザDLで動く
@@ -310,6 +421,10 @@ if (!window.api) {
       return { ok: true, path: '(ブラウザダウンロード) ' + name };
     },
     appVersion: async () => 'dev',
+    pathForFile: () => null,
+    hlFfmpegAvailable: async () => false,
+    hlPickDir: async () => null,
+    hlOpenPath: async () => ({ ok: true }),
   };
 }
 const V = window.Vision;
@@ -319,6 +434,7 @@ let TPL = null;           // templates.json（Float32Array復元済み）
 let fileInfo = null;      // {name, lastModified}
 let matches = [];         // 解析結果
 let RATE_CHAIN = {};      // modeごとの直近確定レート（変動前の連鎖補完用）
+const SCENE_CACHE = new Map(); // ファイルキー → シーン走査結果（ハイライト生成で再利用）
 window.A = { phase: 'idle', log: [] };
 
 function log(m) { window.A.log.push(m); $('log').textContent = window.A.log.join('\n'); $('log').scrollTop = 1e9; }
@@ -791,6 +907,29 @@ function validateWinnerScores(s1, s2, winnerRow) {
 }
 
 // ---- メイン解析 ----
+// レートパネル検証ゲート: 明るく低彩度なコート（砂等）の試合中フレームが classify='rating' に
+// 誤検出され、vs直後の偽rating窓が試合を破壊する実例（2026-08-28・アカデミー サンド720p）。
+// 本物のレートパネルには必ず部門ボード（シングルス/ダブルス）が載っている → mode1照合0.85未満の窓を棄却
+// （実測: 本物=1.00 / 砂の誤検出=0.60〜0.70。mode2は砂で0.85が出るためmode1のみで判定）
+// ハイライト生成（hl-ui.js）からも同じゲートを使う
+async function gateRatings(video, events, log) {
+  const seekToV = V.makeSeeker(video);
+  const rejectedRatings = [];
+  for (const e of events.filter(e => e.type === 'rating')) {
+    let okR = false;
+    for (const tt of [ (e.t0 + e.t1) / 2, Math.max(e.t0, e.t1 - 0.5), e.t0 + 0.3 ]) {
+      await seekToV(tt);
+      const md = V.matchIcon(V.iconVec(V.cropRegion(video, V.REGIONS.mode1), 24, 8), TPL.mode1);
+      if (md.score >= 0.85) { okR = true; break; }
+    }
+    if (!okR) { e.type = 'rating_rejected'; rejectedRatings.push(e.t0); }
+  }
+  if (rejectedRatings.length) {
+    const head = rejectedRatings.slice(0, 8).map(t => t.toFixed(0)).join('/');
+    log(`[警告] 部門ボード照合が低いレート窓を${rejectedRatings.length}件棄却しました(${head}${rejectedRatings.length > 8 ? '…' : ''}秒)。メニュー/試合中の誤検出なら正常ですが、未対応の新パネル様式の場合は試合が消えます。直後の試合が欠けていたら録画を添えて報告してください`);
+  }
+}
+
 async function analyze() {
   window.A.phase = 'scan';
   $('progPanel').style.display = 'block';
@@ -801,6 +940,7 @@ async function analyze() {
   const events = await V.scan(video, { albumTpl: TPL.albumBar || [], onProgress: (t, dur) =>
     setProgress(`全編スキャン中… ${t.toFixed(0)}/${dur.toFixed(0)}秒`, t / dur * 0.7) });
   log(`scan ${((performance.now() - t0) / 1000).toFixed(1)}s: ` + events.map(e => `${e.type}@${e.t0.toFixed(0)}-${e.t1.toFixed(0)}`).join(' '));
+  if (LAST_FILE) SCENE_CACHE.set(LAST_FILE.name + '|' + LAST_FILE.size + '|' + LAST_FILE.lastModified, events.map(e => ({ ...e })));
   // ゲームが画面いっぱいでない配信録画は、位置指定なしだと何も当たらない → 気づけるようにする
   if (!events.some(e => e.type === 'vs')) {
     log('[警告] VS画面を1件も検出できませんでした。配信レイアウトなどでゲームが画面いっぱいに映っていない録画は、'
@@ -811,27 +951,7 @@ async function analyze() {
   if (albumWins.length) {
     log('アルバム/ホーム画面の再生を検出し解析対象から除外: ' + albumWins.map(w => w.t0.toFixed(0) + '〜' + w.t1.toFixed(0) + '秒').join(' / '));
   }
-  // レートパネル検証ゲート: 明るく低彩度なコート（砂等）の試合中フレームが classify='rating' に
-  // 誤検出され、vs直後の偽rating窓が試合を破壊する実例（2026-08-28・アカデミー サンド720p）。
-  // 本物のレートパネルには必ず部門ボード（シングルス/ダブルス）が載っている → mode1照合0.85未満の窓を棄却
-  // （実測: 本物=1.00 / 砂の誤検出=0.60〜0.70。mode2は砂で0.85が出るためmode1のみで判定）
-  {
-    const seekToV = V.makeSeeker(video);
-    const rejectedRatings = [];
-    for (const e of events.filter(e => e.type === 'rating')) {
-      let okR = false;
-      for (const tt of [ (e.t0 + e.t1) / 2, Math.max(e.t0, e.t1 - 0.5), e.t0 + 0.3 ]) {
-        await seekToV(tt);
-        const md = V.matchIcon(V.iconVec(V.cropRegion(video, V.REGIONS.mode1), 24, 8), TPL.mode1);
-        if (md.score >= 0.85) { okR = true; break; }
-      }
-      if (!okR) { e.type = 'rating_rejected'; rejectedRatings.push(e.t0); }
-    }
-    if (rejectedRatings.length) {
-      const head = rejectedRatings.slice(0, 8).map(t => t.toFixed(0)).join('/');
-      log(`[警告] 部門ボード照合が低いレート窓を${rejectedRatings.length}件棄却しました(${head}${rejectedRatings.length > 8 ? '…' : ''}秒)。メニュー/試合中の誤検出なら正常ですが、未対応の新パネル様式の場合は試合が消えます。直後の試合が欠けていたら録画を添えて報告してください`);
-    }
-  }
+  await gateRatings(video, events, log);
   let grouped = V.groupMatches(events);
   // レートパネルの色はランクで変わるため、未収穫ランクの試合は成立しない。取り逃しを可視化する
   const vsCount = events.filter(e => e.type === 'vs').length;
@@ -2077,5 +2197,6 @@ if (window.api.onUpdateDownloaded) {
   });
 }
 </script>
+<script src="hl-ui.js"></script>
 </body>
 </html>

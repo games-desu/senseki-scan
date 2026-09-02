@@ -26,6 +26,7 @@ window.Rally = (() => {
   const PIP_DUECE  = [90, 115]; // デュース時の2スロット中心（中央寄せ）
   const PIP_REL_CY = 20;
   const PIP_HW = 5, PIP_HH = 6;  // 判定窓の半幅・半高
+  const FILL_MIN = 0.25;         // ピル地色の最低占有率（これ未満はHUD非表示）
 
   // ---- 色述語（HUD専用。コート面用の Vision.isYellow 等とは別物にすること）----
   // 砂コートの地面は Vision.isYellow を通ってしまうが、ここではカプセル内しか見ないので実害はない。
@@ -107,7 +108,9 @@ window.Rally = (() => {
     if (n7 === 7) mode = 'normal';
     else if (n2 === 2 && n7 <= 4) mode = 'deuce';
 
-    if (!mode) return { present: false, mode: null, lit: 0, adv: false, fill, numW: 0, slots: s7 };
+    // ピル地（青/橙）の占有率も要求する。HUD消灯中でもコートが黄色い砂コートでは7スロットが全部 'Y' に読めて
+    // present=true に化ける（2026-09-02 ヘッドレス検証で 7-7 の偽HUDが多発）。実測: 通常0.43〜0.49 / 消灯<0.25
+    if (!mode || fill < FILL_MIN) return { present: false, mode: null, lit: 0, adv: false, fill, numW: 0, slots: s7 };
 
     const num = Vision.cropRegion(video, side === 'L' ? REGIONS.numL : REGIONS.numR);
     const numW = numberWidth(num, side);
