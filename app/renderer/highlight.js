@@ -217,15 +217,19 @@ window.Highlight = (() => {
 
   // 書き出し前の安全確認: 区間内にプレイヤー名が映るフレームがあれば区間を詰める。
   // 末尾は手前へ、先頭は後ろへ逃がし、内部に出た場合はそこで打ち切る。
-  async function guardRange(video, s, e, { step = 0.25, maxBack = 3.0 } = {}) {
+  // interior=false なら区間の内部は見ない（自動区間はHUD点灯区間の内側なので末尾/先頭の確認だけで足りる。
+  // 手修正で延ばした区間だけ内部も 0.5秒刻みで見る＝名前が映る画面はどれも1.5秒以上続くので取りこぼさない）
+  async function guardRange(video, s, e, { step = 0.5, maxBack = 3.0, interior = true } = {}) {
     const seek = Vn().makeSeeker(video);
     const risky = async t => { await seek(t); return nameRisk(readFrame(video)); };
     let e2 = e, s2 = s;
     // 末尾は1/30秒刻みで詰める（終端はバナー出現の直前3フレームまで攻めているので、粗く戻すと損する）
     for (let k = 0; k * 0.034 < maxBack && e2 - s2 > 0.5; k++) { if (!(await risky(e2))) break; e2 = +(e2 - 0.034).toFixed(3); }
     for (let k = 0; k * 0.1 < maxBack && e2 - s2 > 0.5; k++) { if (!(await risky(s2))) break; s2 = +(s2 + 0.1).toFixed(3); }
-    for (let t = s2 + step; t < e2 - 0.05; t += step) {
-      if (await risky(t)) { e2 = +(t - 0.1).toFixed(3); break; }
+    if (interior) {
+      for (let t = s2 + step; t < e2 - 0.05; t += step) {
+        if (await risky(t)) { e2 = +(t - 0.1).toFixed(3); break; }
+      }
     }
     return { s: s2, e: e2, changed: Math.abs(s2 - s) > 1e-6 || Math.abs(e2 - e) > 1e-6 };
   }

@@ -18,10 +18,16 @@
   const rangeKey = () => hlType() === 'short' ? 'short' : 'full';
   const shortSec = () => Math.max(2, Math.min(20, +$('hlSec').value || 5));
 
+  // 進捗は一覧の上と保存ボタンの横の2か所に出す（ポイントが多いと一覧が長く、上の進捗が見えない）
   function hlProg(msg, ratio) {
     $('hlProg').textContent = msg;
     $('hlProgWrap').style.display = msg ? 'block' : 'none';
+    $('hlProg2').textContent = msg;
+    $('hlProg2').style.display = msg ? 'inline' : 'none';
     if (ratio != null) $('hlBar').firstElementChild.style.width = (Math.max(0, Math.min(1, ratio)) * 100).toFixed(1) + '%';
+  }
+  function setBusy(b) {
+    for (const id of ['hlExportEach', 'hlExportJoined', 'hlPick', 'hlUseLast']) $(id).disabled = b;
   }
   function hlLog(m) { const el = $('hlLog'); el.textContent += (el.textContent ? '\n' : '') + m; el.style.display = 'block'; el.scrollTop = 1e9; if (typeof log === 'function') log('[ハイライト] ' + m); }
 
@@ -42,7 +48,7 @@
   async function hlLoad(file) {
     if (HL.busy) return;
     if (typeof processing !== 'undefined' && processing) { hlProg('戦績CSVの解析が終わってからハイライトを作ってください', null); return; }
-    HL.busy = true; HL.cancel = false;
+    HL.busy = true; HL.cancel = false; setBusy(true);
     $('hlCancel').style.display = 'inline-block';
     const t0 = performance.now();
     try {
@@ -110,7 +116,7 @@
       hlProg('', null);
       hlLog('ERROR: ' + (e && e.stack || e));
     } finally {
-      HL.busy = false; $('hlCancel').style.display = 'none';
+      HL.busy = false; setBusy(false); $('hlCancel').style.display = 'none';
     }
   }
 
@@ -210,7 +216,9 @@
       full: { ...r.full }, short: { ...r.short },
       T0: Math.max(0, p.hudOn - 3), T1: Math.min(Number.isFinite(hv.duration) ? hv.duration : Infinity, (p.gapEnd ?? p.hudOff + 3) + 0.5),
     };
-    $('hlEdTitle').textContent = `試合 ${p.match} P${p.k}（${p.scoreBefore} → ${p.scoreAfter}・${p.winner === 'me' ? '自分の得点' : '相手の得点'}）`;
+    $('hlEdTitle').textContent = `試合 ${p.match} P${p.k}（${p.scoreBefore} → ${p.scoreAfter}・${p.winner === 'me' ? '自分の得点' : '相手の得点'}）　${p.idx + 1} / ${HL.points.length}`;
+    $('hlEdPrev').disabled = p.idx <= 0; $('hlEdNext').disabled = p.idx >= HL.points.length - 1;
+    $('hlEdInc').checked = !!p.include;
     $('hlmodal').style.display = 'flex';
     hv.muted = false; hv.volume = 0.6;
     $('hlWhichShort').checked = which === 'short'; $('hlWhichFull').checked = which === 'full';
@@ -230,8 +238,8 @@
         if (same) delete p.edit[w]; else p.edit[w] = { s: +v.s.toFixed(3), e: +v.e.toFixed(3) };
       }
       if (!Object.keys(p.edit).length) p.edit = null;
-      hlRender();
     }
+    hlRender();   // 「この区間を保存する」の変更も一覧へ反映
     HL.edit = null;
     $('hlmodal').style.display = 'none';
   }
@@ -319,11 +327,25 @@
     E().short = { ...auto.short }; E().full = { ...auto.full }; tlUpdate(); hlSeek(cur().s);
   });
   $('hlEdOk').addEventListener('click', () => hlCloseEditor(true));
+  // 前後のポイントへ（いまの区間は決定扱いで保存してから移る）
+  function hlEdStep(d) {
+    if (!E()) return;
+    const next = HL.points[E().p.idx + d];
+    if (!next) return;
+    const which = E().which;
+    hlCloseEditor(true);
+    hlOpenEditor(next, which);
+  }
+  $('hlEdPrev').addEventListener('click', () => hlEdStep(-1));
+  $('hlEdNext').addEventListener('click', () => hlEdStep(1));
+  $('hlEdInc').addEventListener('change', () => { if (E()) { E().p.include = $('hlEdInc').checked; } });
   $('hlEdCancel').addEventListener('click', () => hlCloseEditor(false));
   document.addEventListener('keydown', e => {
     if (!E() || $('hlmodal').style.display === 'none') return;
     if (e.target.tagName === 'INPUT') return;
     if (e.key === 'Escape') hlCloseEditor(false);
+    else if (e.key === 'PageUp') { e.preventDefault(); hlEdStep(-1); }
+    else if (e.key === 'PageDown') { e.preventDefault(); hlEdStep(1); }
     else if (e.key === ' ') { e.preventDefault(); $('hlPlayRange').click(); }
     else if (e.key === 'ArrowLeft') hlSeek(hv.currentTime - (e.shiftKey ? 1 : 0.1));
     else if (e.key === 'ArrowRight') hlSeek(hv.currentTime + (e.shiftKey ? 1 : 0.1));
@@ -366,8 +388,9 @@
     const sel = HL.points.filter(p => p.include);
     if (!sel.length) { hlLog('区間が1つも選ばれていません'); return; }
     if (!(await ensureOutDir())) return;
-    HL.busy = true; HL.cancel = false; HL.jobDone = 0; HL.jobTotal = 0;
+    HL.busy = true; HL.cancel = false; HL.jobDone = 0; HL.jobTotal = 0; setBusy(true);
     $('hlCancel').style.display = 'inline-block';
+    hlProg(`区間を確認中… 0/${sel.length}`, 0);
     const type = hlType(), key = rangeKey();
     const guard = $('hlGuard').checked, maxH = $('hlScale').checked ? 1080 : null;
     const perMatch = type === 'match' ? (fmt === 'each') : $('hlPerMatch').checked;
@@ -385,7 +408,7 @@
         let { s, e } = ranges(p)[key];
         hlProg(`区間を確認中… ${i + 1}/${sel.length}`, null);
         if (guard) {
-          const g = await H.guardRange(hv, s, e);
+          const g = await H.guardRange(hv, s, e, { interior: !!(p.edit && p.edit[key]) });
           if (g.changed) { hlLog(`試合${p.match} P${p.k}: 名前が映るフレームを避けて ${fmtT(s)}〜${fmtT(e)} → ${fmtT(g.s)}〜${fmtT(g.e)} に詰めました`); s = g.s; e = g.e; }
         }
         if (e - s < 0.5) { hlLog(`試合${p.match} P${p.k}: 区間が短すぎるため飛ばしました`); continue; }
@@ -435,7 +458,7 @@
       hlProg('', null);
       hlLog('ERROR: ' + (e && e.stack || e));
     } finally {
-      HL.busy = false; HL.curJob = null; $('hlCancel').style.display = 'none';
+      HL.busy = false; HL.curJob = null; setBusy(false); $('hlCancel').style.display = 'none';
     }
   }
   $('hlExportEach').addEventListener('click', () => hlExport('each'));

@@ -219,6 +219,7 @@
         <button class="primary" id="hlExportEach">区間ごとに保存（1本ずつ）</button>
         <button class="primary" id="hlExportJoined">1本に繋げて保存</button>
         <label id="hlPerMatchWrap"><input type="checkbox" id="hlPerMatch" checked>繋げるときは試合ごとに分ける</label>
+        <span id="hlProg2" style="display:none; color:var(--accent)"></span>
       </div>
       <div class="hlopts" style="margin-top:0">
         <span>保存先: <b id="hlOutDir" style="color:var(--text)">未設定（最初の保存時に選びます）</b></span>
@@ -339,7 +340,14 @@
       <button id="hlAuto" style="margin-left:10px">自動に戻す</button>
     </div>
     <div id="hlEdWarn"></div>
-    <div class="onb-foot"><button class="primary" id="hlEdOk">この区間で決定</button><button id="hlEdCancel">キャンセル (Esc)</button></div>
+    <div class="onb-foot">
+      <button class="primary" id="hlEdOk">この区間で決定</button><button id="hlEdCancel">キャンセル (Esc)</button>
+      <label style="display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--sub); cursor:pointer; margin-left:6px"><input type="checkbox" id="hlEdInc">この区間を保存する</label>
+      <span style="margin-left:auto; display:flex; gap:6px; align-items:center">
+        <button id="hlEdPrev" title="前のポイント (PageUp)・いまの区間は決定して移ります">&lsaquo; 前のポイント</button>
+        <button id="hlEdNext" title="次のポイント (PageDown)・いまの区間は決定して移ります">次のポイント &rsaquo;</button>
+      </span>
+    </div>
   </div>
 </div>
 <div id="bugmodal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:30; align-items:center; justify-content:center">
