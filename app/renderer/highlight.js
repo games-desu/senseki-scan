@@ -142,13 +142,16 @@ window.Highlight = (() => {
   // ---- 切り抜き区間 ----
   // 終端 = HUD消灯 + tail。名前入りバナーは消灯の **+0.117秒（60fpsで7フレーム）** 後に出る
   // （2026-09-02 実測40か所: 砂/フィーバー/ダブルス・1080p/720p すべて 0.116〜0.117 で一定）。
-  // 消灯時刻は二分探索で 1/60秒精度（真の消灯〜+0.017）なので、tail=0.05 でも最悪 +0.067 ＝ バナーまで3フレーム残る。
+  // 消灯時刻は二分探索 → 後ろから手前へ1コマずつ読む確認パス（confirmOff）で決める。
+  // 実機（フィーバーダブルス・草）で tail=+0.05 にしたら終端に名前バナーが映った（2026-09-02）: 二分探索は
+  // シーク直後に前のフレームが残る（ステイル）と「まだ点灯」と誤読して遅れる側に外れる。確認パスで安全側に寄せた上で
+  // 終端は消灯の2コマ手前（tail=-0.033）にする ＝ バナーまで9コマの余裕。
   // 最終ポイントはバナーが出ず、勝敗パネル（名前入り）は消灯の +3.8秒（実測7件）。
   const BANNER_DELAY = 0.117;
   const WINNER_DELAY = 3.8;
   // そのポイントで「名前が映り始める」時刻（編集UIの赤い区間・警告の起点）
   const nameLimit = p => +(p.hudOff + (p.final ? WINNER_DELAY - 0.3 : BANNER_DELAY - 0.017)).toFixed(3);
-  function clipRanges(p, { shortSec = 5, tail = 0.05, lead = 0 } = {}) {
+  function clipRanges(p, { shortSec = 5, tail = -0.033, lead = 0 } = {}) {
     const e = +(p.hudOff + tail).toFixed(3);
     const s0 = +(p.hudOn + lead).toFixed(3);
     return {
@@ -168,6 +171,24 @@ window.Highlight = (() => {
     return +hi.toFixed(3);
   }
 
+  // 消灯時刻の確認: 後ろ（消灯側）から 1/60秒ずつ手前へ読み、最初に点灯が見えた次のコマを消灯とする。
+  // ステイルフレームが起きても「後の（消灯）フレームが残る」＝点灯を見落として手前に寄る ＝ 安全側にしか外れない。
+  // 推定より後ろでもまだ点灯していた（推定が早すぎた）場合だけ前へ進めて消灯を探し、見つけた所からもう一度手前確認する。
+  async function confirmOff(seek, video, est, { step = 1 / 60, maxSteps = 40, depth = 0 } = {}) {
+    const hudOn = () => Rl().readHud(video).hudOn;
+    let t = est + 2 * step;
+    await seek(t);
+    if (hudOn()) {
+      for (let k = 0; k < maxSteps; k++) { t += step; await seek(t); if (!hudOn()) break; }
+      return depth === 0 ? confirmOff(seek, video, t, { step, maxSteps, depth: 1 }) : +t.toFixed(3);
+    }
+    for (let k = 0; k < maxSteps; k++) {
+      t -= step; await seek(t);
+      if (hudOn()) return +(t + step).toFixed(3);
+    }
+    return +t.toFixed(3);   // maxSteps 戻っても点灯が見えない → その時刻を消灯扱い（安全側）
+  }
+
   async function scanWindow(video, w, { step = 0.5, onProgress } = {}) {
     const seek = Vn().makeSeeker(video);
     const samples = [];
@@ -182,6 +203,7 @@ window.Highlight = (() => {
     for (const p of points) {
       const hudOn = () => Rl().readHud(video).hudOn;
       if (p.hudOffNext != null) p.hudOff = await bisect(seek, p.hudOff, p.hudOffNext, () => !hudOn(), 0.017);
+      p.hudOff = await confirmOff(seek, video, p.hudOff);
       if (p.hudOnPrev != null) p.hudOn = await bisect(seek, p.hudOnPrev, p.hudOn, hudOn);
     }
     return { samples, points };
@@ -202,5 +224,5 @@ window.Highlight = (() => {
     return { s: s2, e: e2, changed: Math.abs(s2 - s) > 1e-6 || Math.abs(e2 - e) > 1e-6 };
   }
 
-  return { BANNER, BANNER_DELAY, WINNER_DELAY, nameLimit, readFrame, usable, nameRisk, total, finalWinner, matchWindows, buildPoints, clipRanges, scanWindow, guardRange, bisect, GAP_MERGE };
+  return { BANNER, BANNER_DELAY, WINNER_DELAY, nameLimit, readFrame, usable, nameRisk, total, finalWinner, matchWindows, buildPoints, clipRanges, scanWindow, guardRange, bisect, confirmOff, GAP_MERGE };
 })();
