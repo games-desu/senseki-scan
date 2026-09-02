@@ -125,6 +125,19 @@
     for (const p of HL.points) p.include = onlyMe ? p.winner === 'me' : true;
   }
 
+  // 得点の表示: 「得点後のスコア」だけを出し、動いた側の数字を太く色付き（自分=緑/相手=橙）。
+  // 旧スコア→新スコアの併記はぱっと見で混乱する（ユーザー指摘 2026-09-02）ので title 属性に退避
+  function scoreHtml(p) {
+    const cls = p.winner === 'me' ? 'hlme' : 'hlopp';
+    const m = /^(d+) - (d+)$/.exec(p.scoreAfter || '');
+    let body;
+    if (m) body = p.winner === 'me' ? `<b class="${cls} hlbig">${m[1]}</b> - ${m[2]}` : `${m[1]} - <b class="${cls} hlbig">${m[2]}</b>`;
+    else if (p.final) body = `<b class="${cls} hlbig">${p.winner === 'me' ? '勝ち' : '負け'}</b>（マッチ決定）`;
+    else body = `<b class="${cls} hlbig">${esc(p.scoreAfter)}</b>`;
+    return `<span class="hlscore" title="${esc(p.scoreBefore)} → ${esc(p.scoreAfter)}">${body}</span>`;
+  }
+  const whoHtml = p => `<span class="${p.winner === 'me' ? 'hlme' : 'hlopp'}">${p.winner === 'me' ? '自分の得点' : '相手の得点'}</span>`;
+
   // ---- 一覧 ----
   const TYPE_LABEL = { short: '得点前', full: 'ラリー全体', match: '試合ごと' };
   function hlRender() {
@@ -163,8 +176,7 @@
       <label class="hlchk"><input type="checkbox" data-act="inc" ${p.include ? 'checked' : ''}></label>
       <img src="${p.thumb || ''}" data-act="edit" title="クリックで区間を調整">
       <div class="hlpinfo">
-        <div><b>P${p.k}</b> <span class="${p.winner === 'me' ? 'hlme' : 'hlopp'}">${p.winner === 'me' ? '自分の得点' : '相手の得点'}</span>${p.final ? ' <span class="hlfin">マッチ決定</span>' : ''}
-          <span class="sub">${esc(p.scoreBefore)} → ${esc(p.scoreAfter)}</span></div>
+        <div><b>P${p.k}</b> ${whoHtml(p)} <span class="sub">→</span> ${scoreHtml(p)}</div>
         <div class="sub">ラリー ${(p.hudOff - p.hudOn).toFixed(1)}秒（${fmtT(p.hudOn)} 〜 ${fmtT(p.hudOff)}）</div>
         <div class="sub">${type === 'match' ? 'このラリー' : TYPE_LABEL[type]}: ${fmtT(r.s)} 〜 ${fmtT(r.e)}（${(r.e - r.s).toFixed(1)}秒）${edited}</div>
       </div>
@@ -216,7 +228,7 @@
       full: { ...r.full }, short: { ...r.short },
       T0: Math.max(0, p.hudOn - 3), T1: Math.min(Number.isFinite(hv.duration) ? hv.duration : Infinity, (p.gapEnd ?? p.hudOff + 3) + 0.5),
     };
-    $('hlEdTitle').textContent = `試合 ${p.match} P${p.k}（${p.scoreBefore} → ${p.scoreAfter}・${p.winner === 'me' ? '自分の得点' : '相手の得点'}）　${p.idx + 1} / ${HL.points.length}`;
+    $('hlEdTitle').innerHTML = `<span class="hledt">試合 ${p.match}・P${p.k}</span> ${whoHtml(p)} <span class="sub">→</span> ${scoreHtml(p)} <span class="sub" style="margin-left:14px">${p.idx + 1} / ${HL.points.length}</span>`;
     $('hlEdPrev').disabled = p.idx <= 0; $('hlEdNext').disabled = p.idx >= HL.points.length - 1;
     $('hlEdInc').checked = !!p.include;
     $('hlmodal').style.display = 'flex';
