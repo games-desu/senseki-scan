@@ -165,7 +165,7 @@
       $('hlExportEach').textContent = '区間ごとに保存（1本ずつ）';
       $('hlExportJoined').textContent = '1本に繋げて保存';
       $('hlPerMatchWrap').style.display = '';
-      $('hlNameHint').textContent = 'ファイル名: 録画名_試合n_Pk_スコア_自分/相手.mp4 ／ 繋げたもの: 録画名_試合n_ダイジェスト.mp4（試合ごと）または 録画名_ダイジェスト.mp4';
+      $('hlNameHint').textContent = 'ファイル名: 録画名_試合n_Pk_スコア_自分/相手.mp4 ／ 繋げたもの: 録画名_試合n_ダイジェスト.mp4（試合ごと）または 録画名_ダイジェスト.mp4。つなぎ目あり＝重ねるぶん各区間が少し短くなり、再エンコードで時間がかかります';
     }
   }
   function row(p) {
@@ -388,9 +388,19 @@
     window.api.onHlProgress(info => {
       if (!HL.busy || info.jobId !== HL.curJob || !HL.jobTotal) return;
       const r = Math.min(1, info.t / (info.duration || 1));
-      hlProg(`書き出し中… ${HL.jobDone + 1}/${HL.jobTotal}（${(r * 100).toFixed(0)}%）`, (HL.jobDone + r) / HL.jobTotal);
+      const label = HL.joining ? `繋げています… ${HL.joining}${info.note ? '（' + info.note + '本）' : '（' + (r * 100).toFixed(0) + '%）'}` : `書き出し中… ${HL.jobDone + 1}/${HL.jobTotal}（${(r * 100).toFixed(0)}%）`;
+      hlProg(label, (HL.jobDone + r) / HL.jobTotal);
     });
   }
+  // つなぎ目の設定（記憶する）
+  function transitionOpt() {
+    const type = $('hlTrans').value, duration = Math.max(0.2, Math.min(2, +$('hlTransSec').value || 0.5));
+    return type === 'none' ? null : { type, duration };
+  }
+  for (const id of ['hlTrans', 'hlTransSec']) $(id).addEventListener('change', () => {
+    SETTINGS.hlTrans = { type: $('hlTrans').value, duration: +$('hlTransSec').value || 0.5 };
+    window.api.saveUserData('settings', SETTINGS);
+  });
 
   // fmt: 'each'（区間ごとに1本ずつ）/ 'joined'（1本に繋げる）。区間の種類が 'match' のときは「区間＝試合」
   async function hlExport(fmt) {
@@ -456,8 +466,10 @@
         const files = g.cuts.filter(c => c.ok).map(c => c.out);
         if (!files.length) continue;
         HL.curJob = 'hl' + Date.now();
-        hlProg(`繋げています… ${g.out.split('\\').pop()}`, HL.jobDone / HL.jobTotal);
-        const r = await window.api.hlConcat({ jobId: HL.curJob, files, out: g.out });
+        HL.joining = g.out.split('\\').pop();
+        hlProg(`繋げています… ${HL.joining}`, HL.jobDone / HL.jobTotal);
+        const r = await window.api.hlConcat({ jobId: HL.curJob, files, out: g.out, transition: transitionOpt() });
+        HL.joining = null;
         HL.jobDone++;
         if (r.ok) outputs.push(g.out); else hlLog(`[警告] 連結に失敗: ${g.out}\n  ${r.error}`);
       }
@@ -489,7 +501,10 @@
     if (f) hlLoad(f);
   });
   setInterval(() => { $('hlUseLast').style.display = (LAST_FILE && !HL.busy) ? 'inline-block' : 'none'; if (LAST_FILE) $('hlUseLast').textContent = '直近の録画で作る（' + LAST_FILE.name + '）'; }, 1000);
-  userDataReady.then(() => { if (SETTINGS.hlOutDir) { HL.outDir = SETTINGS.hlOutDir; $('hlOutDir').textContent = SETTINGS.hlOutDir; } });
+  userDataReady.then(() => {
+    if (SETTINGS.hlOutDir) { HL.outDir = SETTINGS.hlOutDir; $('hlOutDir').textContent = SETTINGS.hlOutDir; }
+    if (SETTINGS.hlTrans) { $('hlTrans').value = SETTINGS.hlTrans.type || 'fade'; $('hlTransSec').value = SETTINGS.hlTrans.duration || 0.5; }
+  });
 
   window.HL = HL;
   HL._render = hlRender; HL._open = hlOpenEditor; // 表示確認用（ヘッドレスChromeでのスクショ）

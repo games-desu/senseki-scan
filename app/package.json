@@ -20,6 +20,7 @@
     "productName": "SENSEKI SCAN",
     "files": [
       "main.js",
+      "hl-ffmpeg.js",
       "preload.js",
       "renderer/**",
       "assets/**",

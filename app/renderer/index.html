@@ -224,6 +224,13 @@
         <button class="primary" id="hlExportEach">区間ごとに保存（1本ずつ）</button>
         <button class="primary" id="hlExportJoined">1本に繋げて保存</button>
         <label id="hlPerMatchWrap"><input type="checkbox" id="hlPerMatch" checked>繋げるときは試合ごとに分ける</label>
+        <label>つなぎ目: <select id="hlTrans" style="background:#0c130f; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:3px 6px; font-size:12px">
+          <option value="fade">ディゾルブ（重ねて溶かす）</option>
+          <option value="fadeblack">黒フェード</option>
+          <option value="wipeleft">ワイプ</option>
+          <option value="slideleft">スライド</option>
+          <option value="none">なし（カット）</option>
+        </select> <input type="number" id="hlTransSec" value="0.5" min="0.2" max="2" step="0.1"> 秒</label>
         <span id="hlProg2" style="display:none; color:var(--accent)"></span>
       </div>
       <div class="hlopts" style="margin-top:0">

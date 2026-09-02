@@ -3,7 +3,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 
 let win;
@@ -161,41 +160,12 @@ ipcMain.handle('save-text', async (ev, defaultName, content) => {
 
 ipcMain.handle('app-version', () => app.getVersion());
 
-// ---- ハイライト生成: 同梱ffmpeg（ffmpeg-static）で切り抜き・連結 ----
-// バイナリは asar に入れると exec できないため build.asarUnpack で外に出す（パスを app.asar.unpacked に読み替える）。
+// ---- ハイライト生成: 同梱ffmpeg（ffmpeg-static）で切り抜き・連結（実体は hl-ffmpeg.js）----
 // 入力の動画パスは renderer が webUtils.getPathForFile で得たもの。出力先はユーザーがダイアログで選んだフォルダ配下。
-function ffmpegPath() {
-  let p = null;
-  try { p = require('ffmpeg-static'); } catch (e) { return null; }
-  if (!p) return null;
-  p = p.replace('app.asar' + path.sep, 'app.asar.unpacked' + path.sep);
-  return fs.existsSync(p) ? p : null;
-}
-const ffJobs = new Map(); // jobId → ChildProcess
+const HLF = require('./hl-ffmpeg');
+const sendProgress = (jobId, t, duration, note) => { if (win && !win.isDestroyed()) win.webContents.send('hl-progress', { jobId, t, duration, note }); };
 
-function runFfmpeg(jobId, args, onProgress) {
-  return new Promise((resolve) => {
-    const bin = ffmpegPath();
-    if (!bin) { resolve({ ok: false, error: 'ffmpeg が見つかりません（同梱に失敗しています）' }); return; }
-    const p = spawn(bin, ['-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', ...args], { windowsHide: true });
-    ffJobs.set(jobId, p);
-    let err = '', outBuf = '';
-    p.stdout.on('data', d => {
-      outBuf += d.toString();
-      let i;
-      while ((i = outBuf.indexOf('\n')) >= 0) {
-        const line = outBuf.slice(0, i).trim(); outBuf = outBuf.slice(i + 1);
-        const m = /^out_time_us=(\d+)/.exec(line);
-        if (m && onProgress) onProgress(+m[1] / 1e6);
-      }
-    });
-    p.stderr.on('data', d => { err += d.toString(); if (err.length > 4000) err = err.slice(-4000); });
-    p.on('error', e => { ffJobs.delete(jobId); resolve({ ok: false, error: String(e && e.message || e) }); });
-    p.on('close', code => { ffJobs.delete(jobId); resolve({ ok: code === 0, code, error: code === 0 ? '' : (err.trim() || 'ffmpeg exit ' + code) }); });
-  });
-}
-
-ipcMain.handle('hl-ffmpeg-available', () => !!ffmpegPath());
+ipcMain.handle('hl-ffmpeg-available', () => !!HLF.ffmpegPath());
 
 ipcMain.handle('hl-pick-dir', async (ev, defaultPath) => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
@@ -207,40 +177,24 @@ ipcMain.handle('hl-pick-dir', async (ev, defaultPath) => {
   return filePaths[0];
 });
 
-// 1本切り抜く: {jobId, input, start, duration, out, crop:{x,y,w,h}|null, maxH, preset, crf}
-// -ss を -i の前に置き再エンコードするので、キーフレーム位置に関係なくフレーム単位で正確に切れる
+// 1本切り抜く: {jobId, input, start, duration, out, crop:{x,y,w,h}|null, maxH}
 ipcMain.handle('hl-cut', async (ev, job) => {
-  const vf = [];
-  if (job.crop) vf.push(`crop=${job.crop.w}:${job.crop.h}:${job.crop.x}:${job.crop.y}`);
-  if (job.maxH) vf.push(`scale=-2:'min(ih,${job.maxH})'`);
-  const args = [
-    '-ss', String(job.start), '-i', job.input, '-t', String(job.duration),
-    '-map', '0:v:0', '-map', '0:a:0?',
-    ...(vf.length ? ['-vf', vf.join(',')] : []),
-    '-c:v', 'libx264', '-preset', job.preset || 'veryfast', '-crf', String(job.crf ?? 18), '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac', '-b:a', '160k', '-ar', '48000',
-    '-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', '-y', job.out,
-  ];
-  const r = await runFfmpeg(job.jobId, args, t => { if (win && !win.isDestroyed()) win.webContents.send('hl-progress', { jobId: job.jobId, t, duration: job.duration }); });
+  const r = await HLF.cut(job, t => sendProgress(job.jobId, t, job.duration));
   return { ...r, path: job.out };
 });
 
-// 同一設定で切った複数クリップを再エンコードなしで連結: {jobId, files:[...], out}
+// 連結: {jobId, files:[...], out, transition:{type,duration}|null}
+// transition 無し → 同一設定で切ったクリップを再エンコードなしで連結（つなぎ目はカット）
+// transition 有り → xfade/acrossfade で重ねながら再エンコード
 ipcMain.handle('hl-concat', async (ev, job) => {
-  const listPath = path.join(app.getPath('temp'), `senseki-hl-${process.pid}-${Date.now()}.txt`);
-  const esc = f => "file '" + String(f).replace(/'/g, "'\''") + "'";
-  fs.writeFileSync(listPath, job.files.map(esc).join('\n') + '\n', 'utf8');
-  try {
-    const r = await runFfmpeg(job.jobId, ['-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', '-movflags', '+faststart', '-y', job.out]);
-    return { ...r, path: job.out };
-  } finally { try { fs.unlinkSync(listPath); } catch {} }
+  const tmp = app.getPath('temp');
+  const r = job.transition
+    ? await HLF.joinTransition(job.jobId, job.files, job.out, job.transition, (ratio, note) => sendProgress(job.jobId, ratio < 0 ? 0 : ratio, 1, note), tmp)
+    : await HLF.concatCopy(job.jobId, job.files, job.out, tmp);
+  return { ...r, path: job.out };
 });
 
-ipcMain.handle('hl-cancel', (ev, jobId) => {
-  const p = ffJobs.get(jobId);
-  if (p) { try { p.kill(); } catch {} }
-  return { ok: !!p };
-});
+ipcMain.handle('hl-cancel', (ev, jobId) => ({ ok: HLF.cancel(jobId) }));
 
 // 一時クリップ置き場（ダイジェストだけ欲しいときの中間ファイル）
 ipcMain.handle('hl-temp-dir', () => {
