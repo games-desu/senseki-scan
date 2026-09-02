@@ -202,7 +202,8 @@
   function tlStatic() {
     const p = E().p;
     $('hlTlOn').style.left = xOf(p.hudOn); $('hlTlOn').style.width = ((p.hudOff - p.hudOn) / (E().T1 - E().T0) * 100).toFixed(2) + '%';
-    $('hlTlDanger').style.left = xOf(p.hudOff); $('hlTlDanger').style.width = ((E().T1 - p.hudOff) / (E().T1 - E().T0) * 100).toFixed(2) + '%';
+    const lim = H.nameLimit(p);
+    $('hlTlDanger').style.left = xOf(lim); $('hlTlDanger').style.width = (Math.max(0, E().T1 - lim) / (E().T1 - E().T0) * 100).toFixed(2) + '%';
     $('hlTlT0').textContent = fmtT(E().T0); $('hlTlT1').textContent = fmtT(E().T1);
   }
   function cur() { return E()[E().which]; }
@@ -212,9 +213,9 @@
     $('hlHS').style.left = xOf(c.s); $('hlHE').style.left = xOf(c.e);
     $('hlS').value = c.s.toFixed(2); $('hlE').value = c.e.toFixed(2);
     $('hlLen').textContent = (c.e - c.s).toFixed(1) + '秒';
-    const late = c.e > E().p.hudOff - 0.05;
+    const late = c.e > H.nameLimit(E().p);
     $('hlEdWarn').style.display = late ? 'block' : 'none';
-    $('hlEdWarn').textContent = late ? '[警告] 終了が得点確定（HUD消灯）の後です。ポイント間のスコアバナーにプレイヤー名が映ります。「名前が映る区間を自動で除外」がONなら書き出し時に手前へ詰めます' : '';
+    $('hlEdWarn').textContent = late ? '[警告] 終了が赤い区間に入っています。' + (E().p.final ? '勝敗画面' : 'ポイント間のスコアバナー') + 'にプレイヤー名が映ります。「名前が映る区間を自動で除外」がONなら書き出し時に手前へ詰めます' : '';
   }
   function setRange(s, e) {
     const c = cur();

@@ -140,9 +140,16 @@ window.Highlight = (() => {
   }
 
   // ---- 切り抜き区間 ----
-  // margin: HUD消灯（＝バナー出現）に対する安全マージン。二分探索の精度(1/30秒)＋フェード分
-  function clipRanges(p, { shortSec = 5, margin = 0.15, lead = 0 } = {}) {
-    const e = +(p.hudOff - margin).toFixed(3);
+  // 終端 = HUD消灯 + tail。名前入りバナーは消灯の **+0.117秒（60fpsで7フレーム）** 後に出る
+  // （2026-09-02 実測40か所: 砂/フィーバー/ダブルス・1080p/720p すべて 0.116〜0.117 で一定）。
+  // 消灯時刻は二分探索で 1/60秒精度（真の消灯〜+0.017）なので、tail=0.05 でも最悪 +0.067 ＝ バナーまで3フレーム残る。
+  // 最終ポイントはバナーが出ず、勝敗パネル（名前入り）は消灯の +3.8秒（実測7件）。
+  const BANNER_DELAY = 0.117;
+  const WINNER_DELAY = 3.8;
+  // そのポイントで「名前が映り始める」時刻（編集UIの赤い区間・警告の起点）
+  const nameLimit = p => +(p.hudOff + (p.final ? WINNER_DELAY - 0.3 : BANNER_DELAY - 0.017)).toFixed(3);
+  function clipRanges(p, { shortSec = 5, tail = 0.05, lead = 0 } = {}) {
+    const e = +(p.hudOff + tail).toFixed(3);
     const s0 = +(p.hudOn + lead).toFixed(3);
     return {
       full:  { s: s0, e },
@@ -174,7 +181,7 @@ window.Highlight = (() => {
     // 境界の精密化（消灯開始＝バナー出現の直前。ここの精度が「名前を映さない」の要）
     for (const p of points) {
       const hudOn = () => Rl().readHud(video).hudOn;
-      if (p.hudOffNext != null) p.hudOff = await bisect(seek, p.hudOff, p.hudOffNext, () => !hudOn());
+      if (p.hudOffNext != null) p.hudOff = await bisect(seek, p.hudOff, p.hudOffNext, () => !hudOn(), 0.017);
       if (p.hudOnPrev != null) p.hudOn = await bisect(seek, p.hudOnPrev, p.hudOn, hudOn);
     }
     return { samples, points };
@@ -186,7 +193,8 @@ window.Highlight = (() => {
     const seek = Vn().makeSeeker(video);
     const risky = async t => { await seek(t); return nameRisk(readFrame(video)); };
     let e2 = e, s2 = s;
-    for (let k = 0; k * 0.1 < maxBack && e2 - s2 > 0.5; k++) { if (!(await risky(e2))) break; e2 = +(e2 - 0.1).toFixed(3); }
+    // 末尾は1/30秒刻みで詰める（終端はバナー出現の直前3フレームまで攻めているので、粗く戻すと損する）
+    for (let k = 0; k * 0.034 < maxBack && e2 - s2 > 0.5; k++) { if (!(await risky(e2))) break; e2 = +(e2 - 0.034).toFixed(3); }
     for (let k = 0; k * 0.1 < maxBack && e2 - s2 > 0.5; k++) { if (!(await risky(s2))) break; s2 = +(s2 + 0.1).toFixed(3); }
     for (let t = s2 + step; t < e2 - 0.05; t += step) {
       if (await risky(t)) { e2 = +(t - 0.1).toFixed(3); break; }
@@ -194,5 +202,5 @@ window.Highlight = (() => {
     return { s: s2, e: e2, changed: Math.abs(s2 - s) > 1e-6 || Math.abs(e2 - e) > 1e-6 };
   }
 
-  return { BANNER, readFrame, usable, nameRisk, total, finalWinner, matchWindows, buildPoints, clipRanges, scanWindow, guardRange, bisect, GAP_MERGE };
+  return { BANNER, BANNER_DELAY, WINNER_DELAY, nameLimit, readFrame, usable, nameRisk, total, finalWinner, matchWindows, buildPoints, clipRanges, scanWindow, guardRange, bisect, GAP_MERGE };
 })();
