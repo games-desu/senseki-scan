@@ -100,13 +100,15 @@ window.Highlight = (() => {
     // 「直前の読める得点(lastState)」と「次に読めた得点」を比べる。数字が描かれていない一瞬のセグメント
     // （フェードイン・演出）が間に挟まっても比較が途切れないように、読めないセグメントは飛ばす。
     const points = [];
-    let game = 1, start = null, lastState = null, lastSeg = null;
+    // fresh: そのポイントの始点が「得点直後のHUD復帰」ではなく、イントロ/長い演出のあとの復帰であることを示す。
+    // イントロ直後はVS画面（名前入り）がHUD復帰後も0.25〜0.5秒うっすら残る（実測3素材・intro_*.jpg）ので始点を遅らせる
+    let game = 1, start = null, fresh = true, lastState = null, lastSeg = null;
     const pushFinal = () => {
       const w = finalWinner(lastState);
       if (!w || !lastSeg) return;
       const st = start || lastSeg;
       points.push({
-        game, winner: w, final: true,
+        game, winner: w, final: true, fresh,
         scoreBefore: Rl().scoreLabel(lastState), scoreAfter: w === 'me' ? '勝ち' : '負け',
         hudOn: st.tOn, hudOnPrev: st.tOnPrev, hudOff: lastSeg.tOff, hudOffNext: lastSeg.tOffNext,
         gapEnd: lastSeg.tOffNext != null ? lastSeg.tOffNext + 2.5 : lastSeg.tOff + 2.5,
@@ -120,15 +122,15 @@ window.Highlight = (() => {
         const gapDur = sg.tOn - lastSeg.tOff;
         if (winner) {
           points.push({
-            game, winner, final: false, scoreBefore: sb, scoreAfter: sa,
+            game, winner, final: false, fresh, scoreBefore: sb, scoreAfter: sa,
             hudOn: start.tOn, hudOnPrev: start.tOnPrev, hudOff: lastSeg.tOff, hudOffNext: lastSeg.tOffNext, gapEnd: sg.tOn,
           });
-          start = sg;
+          start = sg; fresh = false;
         } else if (total(sg.first) < total(lastState)) {   // 6-4 → 0-0: 試合の切り替わり
           pushFinal();
-          game++; start = sg;
+          game++; start = sg; fresh = true;
         } else if (sb !== sa || gapDur > GAP_MERGE) {
-          start = sg;                                         // 読み違い/長い消灯（イントロ・演出）→ 仕切り直し
+          start = sg; fresh = true;                           // 読み違い/長い消灯（イントロ・演出）→ 仕切り直し
         }
         // 同じ得点で短い消灯（リプレイ等）は同じポイントの続き: start を維持
       }
@@ -151,9 +153,11 @@ window.Highlight = (() => {
   const WINNER_DELAY = 3.8;
   // そのポイントで「名前が映り始める」時刻（編集UIの赤い区間・警告の起点）
   const nameLimit = p => +(p.hudOff + (p.final ? WINNER_DELAY - 0.3 : BANNER_DELAY - 0.017)).toFixed(3);
-  function clipRanges(p, { shortSec = 5, tail = -0.033, lead = 0 } = {}) {
+  // introLead: イントロ直後（fresh）の始点をずらす秒数。VS画面の残像は復帰後 ≤0.5秒（実測）
+  const INTRO_LEAD = 1.0;
+  function clipRanges(p, { shortSec = 5, tail = -0.033, lead = 0, introLead = INTRO_LEAD } = {}) {
     const e = +(p.hudOff + tail).toFixed(3);
-    const s0 = +(p.hudOn + lead).toFixed(3);
+    const s0 = Math.min(+(p.hudOn + lead + (p.fresh ? introLead : 0)).toFixed(3), e - 0.5);
     return {
       full:  { s: s0, e },
       short: { s: Math.max(s0, +(e - shortSec).toFixed(3)), e },
@@ -189,7 +193,9 @@ window.Highlight = (() => {
     return +t.toFixed(3);   // maxSteps 戻っても点灯が見えない → その時刻を消灯扱い（安全側）
   }
 
-  async function scanWindow(video, w, { step = 0.5, onProgress } = {}) {
+  // step: HUD消灯は2.4秒以上・ポイントは2秒以上なので 1.0秒刻みで取りこぼさない（0.5→1.0で走査時間が半分）。
+  // 境界は二分探索＋確認パスで 1/60秒まで詰めるので粗さは精度に影響しない
+  async function scanWindow(video, w, { step = 1.0, onProgress } = {}) {
     const seek = Vn().makeSeeker(video);
     const samples = [];
     const t1 = Math.min(w.t1, video.duration - 0.1);
@@ -224,5 +230,5 @@ window.Highlight = (() => {
     return { s: s2, e: e2, changed: Math.abs(s2 - s) > 1e-6 || Math.abs(e2 - e) > 1e-6 };
   }
 
-  return { BANNER, BANNER_DELAY, WINNER_DELAY, nameLimit, readFrame, usable, nameRisk, total, finalWinner, matchWindows, buildPoints, clipRanges, scanWindow, guardRange, bisect, confirmOff, GAP_MERGE };
+  return { BANNER, BANNER_DELAY, WINNER_DELAY, INTRO_LEAD, nameLimit, readFrame, usable, nameRisk, total, finalWinner, matchWindows, buildPoints, clipRanges, scanWindow, guardRange, bisect, confirmOff, GAP_MERGE };
 })();

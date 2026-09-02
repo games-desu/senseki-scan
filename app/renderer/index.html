@@ -153,7 +153,7 @@
   #hlTl { position:relative; height:38px; background:#0c130f; border:1px solid var(--border); border-radius:6px; margin:10px 0 4px; cursor:pointer; user-select:none; touch-action:none; }
   #hlTl .zone { position:absolute; top:0; bottom:0; }
   #hlTlOn { background:rgba(46,204,113,.18); }
-  #hlTlDanger { background:rgba(231,76,60,.28); }
+  #hlTlDanger, #hlTlIntro { background:rgba(231,76,60,.28); }
   #hlTlSel { background:rgba(59,167,219,.35); border-top:2px solid #3ba7db; border-bottom:2px solid #3ba7db; }
   .hlh { position:absolute; top:-4px; bottom:-4px; width:12px; margin-left:-6px; background:#3ba7db; border-radius:3px; cursor:ew-resize; z-index:2; }
   .hlh::after { content:''; position:absolute; left:5px; top:6px; bottom:6px; width:2px; background:#0c130f; }
@@ -186,39 +186,48 @@
 <div class="panel" id="hlPanel">
   <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
     <b style="font-size:13px">ハイライト生成</b>
-    <span class="sub" style="margin:0">録画から得点シーンを自動で切り抜いてMP4に保存します。ポイント間のスコアバナー（プレイヤー名が載る）は映しません</span>
-    <button id="hlPick" style="margin-left:auto">録画を選ぶ…</button>
+    <span class="sub" style="margin:0">録画から得点シーンを自動で切り抜いてMP4に保存します。プレイヤー名が載る画面（ポイント間のスコアバナー・VS・勝敗）は映しません</span>
+  </div>
+  <div class="hlopts" style="margin-bottom:6px">
+    <span>1. 切り抜く区間:</span>
+    <label><input type="radio" name="hlType" value="short" checked>得点前 <input type="number" id="hlSec" value="5" min="2" max="20" step="1"> 秒</label>
+    <label><input type="radio" name="hlType" value="full">サーブから得点まで（ラリー全体）</label>
+    <label><input type="radio" name="hlType" value="match">試合ごと（全ラリーをつなぐ）</label>
+  </div>
+  <div class="hlopts" style="margin-top:0">
+    <span>2. 録画:</span>
+    <button id="hlPick">録画を選ぶ…</button>
     <button id="hlUseLast" style="display:none"></button>
+    <span>（このパネルへドロップでも可。区間の種類はあとから変えられます）</span>
     <input type="file" id="hlFile" accept="video/*" hidden>
   </div>
-  <div id="hlBody" style="display:none; margin-top:10px">
+  <div id="hlBody" style="display:none; margin-top:6px; border-top:1px solid var(--border); padding-top:8px">
     <div class="sub" style="margin:0 0 6px"><b id="hlFileName" style="color:var(--text)"></b> <span id="hlSummary"></span></div>
     <div id="hlProgWrap" style="display:none">
       <div style="display:flex; align-items:center; gap:10px"><div id="hlProg" class="sub" style="margin:0; flex:1"></div><button id="hlCancel" style="display:none; font-size:11px; padding:3px 10px">中止</button></div>
       <div id="hlBar"><div></div></div>
     </div>
-    <div class="hlopts">
+    <div class="hlopts" id="hlFilterRow" style="display:none">
+      <span>3. 保存する区間にチェック:</span>
       <label><input type="checkbox" id="hlOnlyMe" checked>自分の得点だけを選ぶ</label>
-      <label>得点前の秒数 <input type="number" id="hlSec" value="5" min="2" max="20" step="1"> 秒</label>
-      <span>サムネイルか「区間を調整」で1ポイントずつ始点・終点を直せます</span>
+      <span>サムネイルか「区間を調整」で1つずつ始点・終点を直せます</span>
     </div>
     <div id="hlList"></div>
     <div id="hlExportBox" style="display:none; border-top:1px solid var(--border); padding-top:10px">
       <div class="hlopts" style="margin-top:0">
+        <span>4. 保存形式:</span>
+        <button class="primary" id="hlExportEach">区間ごとに保存（1本ずつ）</button>
+        <button class="primary" id="hlExportJoined">1本に繋げて保存</button>
+        <label id="hlPerMatchWrap"><input type="checkbox" id="hlPerMatch" checked>繋げるときは試合ごとに分ける</label>
+      </div>
+      <div class="hlopts" style="margin-top:0">
         <span>保存先: <b id="hlOutDir" style="color:var(--text)">未設定（最初の保存時に選びます）</b></span>
         <button id="hlOutPick" style="font-size:11px; padding:3px 10px">変更…</button>
         <button id="hlOpenDir" style="display:none; font-size:11px; padding:3px 10px">フォルダを開く</button>
-      </div>
-      <div class="hlopts" style="margin-top:0">
         <label><input type="checkbox" id="hlGuard" checked>名前が映る区間を自動で除外（推奨）</label>
         <label><input type="checkbox" id="hlScale" checked>1440p以上は1080pに縮小</label>
       </div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
-        <button class="primary" id="hlExportShort">得点前の数秒を保存（選択したポイント）</button>
-        <button class="primary" id="hlExportDigest">ダイジェストを保存（試合ごとに連結）</button>
-        <button id="hlExportFull">ラリー全体を保存（選択したポイント）</button>
-        <span class="sub" style="margin:0">ファイル名: 録画名_試合n_Pk_スコア_自分/相手.mp4 ／ 録画名_試合n_ダイジェスト.mp4</span>
-      </div>
+      <div class="sub" id="hlNameHint" style="margin:0"></div>
     </div>
     <div id="hlLog"></div>
   </div>
@@ -309,10 +318,10 @@
 <div id="hlmodal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:30; align-items:center; justify-content:center">
   <div class="onb-card" style="max-width:960px; width:94vw">
     <h2><span class="rule"></span>区間の調整 <span id="hlEdTitle" class="sub" style="margin:0 0 0 8px; font-weight:normal"></span></h2>
-    <p class="lead" style="margin-bottom:10px">緑＝HUDが出ている区間（ラリー）・赤＝プレイヤー名が映る区間（ポイント間のスコアバナー／勝敗画面）。青いハンドルをドラッグするか、再生しながら「開始をここに／終了をここに」で決めます。</p>
+    <p class="lead" style="margin-bottom:10px">緑＝HUDが出ている区間（ラリー）・赤＝プレイヤー名が映る区間（ポイント間のスコアバナー／勝敗画面／試合開始直後のVS画面の残像）。青いハンドルをドラッグするか、再生しながら「開始をここに／終了をここに」で決めます。</p>
     <div id="hlStage"><video id="hlVideo" preload="auto"></video></div>
     <div id="hlTl">
-      <div class="zone" id="hlTlOn"></div><div class="zone" id="hlTlDanger"></div><div class="zone" id="hlTlSel"></div>
+      <div class="zone" id="hlTlOn"></div><div class="zone" id="hlTlDanger"></div><div class="zone" id="hlTlIntro"></div><div class="zone" id="hlTlSel"></div>
       <div class="hlh" id="hlHS" title="開始"></div><div class="hlh" id="hlHE" title="終了"></div>
       <div id="hlPlayhead"></div>
     </div>

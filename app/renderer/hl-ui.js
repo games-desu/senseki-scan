@@ -1,14 +1,22 @@
 // SENSEKI SCAN ハイライト生成 — UI
 // index.html のメインスクリプトの後に読み込む（$ / V / TPL / SETTINGS / loadTemplates / userDataReady /
 // SCENE_CACHE / gateRatings / LAST_FILE / processing を共有）。認識は highlight.js、切り抜きは main.js の ffmpeg。
+//
+// 流れ: 1. 切り抜く区間の種類（得点前N秒 / ラリー全体 / 試合ごと）→ 2. 録画 → 解析 →
+//       3. 保存する区間にチェック（既定＝自分の得点）→ 4. 保存形式（区間ごとに1本ずつ / 1本に繋げる）
 (() => {
   const H = window.Highlight;
   const hv = $('hlVideo');
-  const HL = { file: null, path: null, url: null, key: null, windows: [], points: [], busy: false, cancel: false, curJob: null, edit: null, lastOut: null };
+  const HL = { file: null, path: null, url: null, key: null, windows: [], points: [], busy: false, cancel: false, curJob: null, edit: null };
   const fmtT = t => { t = Math.max(0, t); const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + s.toFixed(1).padStart(4, '0'); };
   const fileKey = f => f.name + '|' + f.size + '|' + f.lastModified;
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const safeName = s => String(s).replace(/\s+/g, '').replace(/[\\/:*?"<>|]/g, '');
+
+  // 区間の種類: 'short'（得点前N秒）/ 'full'（ラリー全体）/ 'match'（試合ごと＝全ラリーをつなぐ）
+  const hlType = () => (document.querySelector('input[name=hlType]:checked') || {}).value || 'short';
+  const rangeKey = () => hlType() === 'short' ? 'short' : 'full';
+  const shortSec = () => Math.max(2, Math.min(20, +$('hlSec').value || 5));
 
   function hlProg(msg, ratio) {
     $('hlProg').textContent = msg;
@@ -19,7 +27,7 @@
 
   // 切り抜き区間（手修正があればそれを優先）
   function ranges(p) {
-    const auto = H.clipRanges(p, { shortSec: Math.max(2, Math.min(20, +$('hlSec').value || 5)) });
+    const auto = H.clipRanges(p, { shortSec: shortSec() });
     return { full: (p.edit && p.edit.full) || auto.full, short: (p.edit && p.edit.short) || auto.short };
   }
   function hlJpeg(width) {
@@ -36,6 +44,7 @@
     if (typeof processing !== 'undefined' && processing) { hlProg('戦績CSVの解析が終わってからハイライトを作ってください', null); return; }
     HL.busy = true; HL.cancel = false;
     $('hlCancel').style.display = 'inline-block';
+    const t0 = performance.now();
     try {
       HL.file = file; HL.key = fileKey(file);
       HL.path = window.api.pathForFile ? window.api.pathForFile(file) : null;
@@ -48,7 +57,8 @@
       });
       $('hlBody').style.display = 'block';
       $('hlFileName').textContent = file.name;
-      $('hlList').innerHTML = ''; $('hlSummary').textContent = ''; $('hlExportBox').style.display = 'none'; $('hlLog').textContent = ''; $('hlLog').style.display = 'none';
+      $('hlList').innerHTML = ''; $('hlSummary').textContent = ''; $('hlExportBox').style.display = 'none'; $('hlFilterRow').style.display = 'none';
+      $('hlLog').textContent = ''; $('hlLog').style.display = 'none';
       HL.points = []; HL.windows = [];
       if (!TPL) await loadTemplates();
       await userDataReady;
@@ -68,7 +78,7 @@
       let done = 0;
       for (let wi = 0; wi < wins.length; wi++) {
         const w = wins[wi];
-        const { points } = await H.scanWindow(hv, w, { step: 0.5, onProgress: t =>
+        const { points } = await H.scanWindow(hv, w, { onProgress: t =>
           hlProg(`得点シーンを探しています… 試合 ${wi + 1}/${wins.length}（${fmtT(t)}）`, 0.3 + 0.6 * (done + (t - w.t0)) / totalSpan) });
         done += Math.max(0, w.t1 - w.t0);
         for (const p of points) { p.win = wi; HL.points.push(p); }
@@ -92,8 +102,9 @@
       hlRender();
       hlProg('', null);
       const me = HL.points.filter(p => p.winner === 'me').length;
-      hlLog(`${mno}試合・${HL.points.length}ポイントを検出（自分の得点 ${me}・相手の得点 ${HL.points.length - me}）`);
+      hlLog(`${mno}試合・${HL.points.length}ポイントを検出（自分の得点 ${me}・相手の得点 ${HL.points.length - me}）… ${((performance.now() - t0) / 1000).toFixed(0)}秒`);
       if (!HL.points.length) hlLog('[警告] 得点シーンが見つかりませんでした。ゲーム画面が画面いっぱいに映っているか（配信レイアウトなら「ゲーム画面の位置」）を確認してください');
+      $('hlFilterRow').style.display = HL.points.length ? 'flex' : 'none';
       $('hlExportBox').style.display = HL.points.length ? 'block' : 'none';
     } catch (e) {
       hlProg('', null);
@@ -109,21 +120,39 @@
   }
 
   // ---- 一覧 ----
+  const TYPE_LABEL = { short: '得点前', full: 'ラリー全体', match: '試合ごと' };
   function hlRender() {
+    const type = hlType();
     const groups = new Map();
     for (const p of HL.points) { if (!groups.has(p.match)) groups.set(p.match, []); groups.get(p.match).push(p); }
     const sel = HL.points.filter(p => p.include).length;
     $('hlSummary').textContent = HL.points.length ? `${groups.size}試合・${HL.points.length}ポイント（選択中 ${sel}）` : '';
-    $('hlList').innerHTML = [...groups].map(([m, arr]) => `
+    $('hlList').innerHTML = [...groups].map(([m, arr]) => {
+      const n = arr.filter(p => p.include).length;
+      const secs = arr.filter(p => p.include).reduce((a, p) => { const r = ranges(p)[rangeKey()]; return a + (r.e - r.s); }, 0);
+      return `
       <div class="hlm">
-        <div class="hlmh"><b>試合 ${m}</b><span class="sub">${fmtT(arr[0].hudOn)} 〜 ${fmtT(arr[arr.length - 1].hudOff)} ・ ${arr.length}ポイント</span>
+        <div class="hlmh"><b>試合 ${m}</b><span class="sub">${fmtT(arr[0].hudOn)} 〜 ${fmtT(arr[arr.length - 1].hudOff)} ・ ${arr.length}ポイント${type === 'match' ? `（この試合のクリップ: ${n}ラリー・約${secs.toFixed(0)}秒）` : ''}</span>
           <button data-act="mall" data-m="${m}">この試合を全部選ぶ</button><button data-act="mnone" data-m="${m}">選択解除</button></div>
         <div class="hlrows">${arr.map(row).join('')}</div>
-      </div>`).join('');
+      </div>`; }).join('');
+    // 保存形式の文言（区間の種類で変わる）
+    if (type === 'match') {
+      $('hlExportEach').textContent = '試合ごとに保存（1試合1本）';
+      $('hlExportJoined').textContent = '全試合を1本に繋げて保存';
+      $('hlPerMatchWrap').style.display = 'none';
+      $('hlNameHint').textContent = 'チェックしたラリーをつなぎ、ポイント間のスコアバナーは抜きます。ファイル名: 録画名_試合n.mp4 ／ 録画名_全試合.mp4';
+    } else {
+      $('hlExportEach').textContent = '区間ごとに保存（1本ずつ）';
+      $('hlExportJoined').textContent = '1本に繋げて保存';
+      $('hlPerMatchWrap').style.display = '';
+      $('hlNameHint').textContent = 'ファイル名: 録画名_試合n_Pk_スコア_自分/相手.mp4 ／ 繋げたもの: 録画名_試合n_ダイジェスト.mp4（試合ごと）または 録画名_ダイジェスト.mp4';
+    }
   }
   function row(p) {
-    const r = ranges(p);
-    const ed = w => (p.edit && p.edit[w]) ? ' <span class="hledited">手修正</span>' : '';
+    const type = hlType();
+    const r = ranges(p)[rangeKey()];
+    const edited = (p.edit && p.edit[rangeKey()]) ? ' <span class="hledited">手修正</span>' : '';
     return `<div class="hlp${p.include ? ' on' : ''}" data-i="${p.idx}">
       <label class="hlchk"><input type="checkbox" data-act="inc" ${p.include ? 'checked' : ''}></label>
       <img src="${p.thumb || ''}" data-act="edit" title="クリックで区間を調整">
@@ -131,7 +160,7 @@
         <div><b>P${p.k}</b> <span class="${p.winner === 'me' ? 'hlme' : 'hlopp'}">${p.winner === 'me' ? '自分の得点' : '相手の得点'}</span>${p.final ? ' <span class="hlfin">マッチ決定</span>' : ''}
           <span class="sub">${esc(p.scoreBefore)} → ${esc(p.scoreAfter)}</span></div>
         <div class="sub">ラリー ${(p.hudOff - p.hudOn).toFixed(1)}秒（${fmtT(p.hudOn)} 〜 ${fmtT(p.hudOff)}）</div>
-        <div class="sub">得点前: ${fmtT(r.short.s)} 〜 ${fmtT(r.short.e)}${ed('short')} ／ ラリー全体: ${fmtT(r.full.s)} 〜 ${fmtT(r.full.e)}${ed('full')}</div>
+        <div class="sub">${type === 'match' ? 'このラリー' : TYPE_LABEL[type]}: ${fmtT(r.s)} 〜 ${fmtT(r.e)}（${(r.e - r.s).toFixed(1)}秒）${edited}</div>
       </div>
       <button data-act="edit">区間を調整</button>
     </div>`;
@@ -146,10 +175,17 @@
     const rowEl = e.target.closest('.hlp'); if (!rowEl) return;
     const p = HL.points[+rowEl.dataset.i];
     if (act === 'inc') { p.include = b.checked; rowEl.classList.toggle('on', p.include); const sel = HL.points.filter(q => q.include).length; $('hlSummary').textContent = $('hlSummary').textContent.replace(/選択中 \d+/, '選択中 ' + sel); return; }
-    if (act === 'edit') hlOpenEditor(p, 'short');
+    if (act === 'edit') hlOpenEditor(p, rangeKey());
   });
   $('hlOnlyMe').addEventListener('change', () => { applyIncludeFilter(); hlRender(); });
   $('hlSec').addEventListener('change', () => hlRender());
+  for (const r of document.querySelectorAll('input[name=hlType]')) {
+    r.addEventListener('change', () => {
+      // 試合ごと＝両者のラリーをつなぐので、切り替え時は全ポイント選択に寄せる
+      if (hlType() === 'match' && $('hlOnlyMe').checked) { $('hlOnlyMe').checked = false; applyIncludeFilter(); }
+      hlRender();
+    });
+  }
 
   // ---- 区間の調整（モーダル）----
   const tl = $('hlTl');
@@ -186,7 +222,7 @@
   function hlCloseEditor(save) {
     hv.pause(); hv.muted = true;
     if (save && E()) {
-      const p = E().p, auto = H.clipRanges(p, { shortSec: Math.max(2, Math.min(20, +$('hlSec').value || 5)) });
+      const p = E().p, auto = H.clipRanges(p, { shortSec: shortSec() });
       p.edit = p.edit || {};
       for (const w of ['short', 'full']) {
         const v = E()[w];
@@ -204,6 +240,10 @@
     $('hlTlOn').style.left = xOf(p.hudOn); $('hlTlOn').style.width = ((p.hudOff - p.hudOn) / (E().T1 - E().T0) * 100).toFixed(2) + '%';
     const lim = H.nameLimit(p);
     $('hlTlDanger').style.left = xOf(lim); $('hlTlDanger').style.width = (Math.max(0, E().T1 - lim) / (E().T1 - E().T0) * 100).toFixed(2) + '%';
+    // イントロ直後はVS画面の残像（名前入り）が復帰後も残るので、そこも赤にする
+    const intro = $('hlTlIntro');
+    if (p.fresh) { intro.style.display = 'block'; intro.style.left = xOf(p.hudOn); intro.style.width = (Math.min(H.INTRO_LEAD, p.hudOff - p.hudOn) / (E().T1 - E().T0) * 100).toFixed(2) + '%'; }
+    else intro.style.display = 'none';
     $('hlTlT0').textContent = fmtT(E().T0); $('hlTlT1').textContent = fmtT(E().T1);
   }
   function cur() { return E()[E().which]; }
@@ -213,9 +253,13 @@
     $('hlHS').style.left = xOf(c.s); $('hlHE').style.left = xOf(c.e);
     $('hlS').value = c.s.toFixed(2); $('hlE').value = c.e.toFixed(2);
     $('hlLen').textContent = (c.e - c.s).toFixed(1) + '秒';
-    const late = c.e > H.nameLimit(E().p);
-    $('hlEdWarn').style.display = late ? 'block' : 'none';
-    $('hlEdWarn').textContent = late ? '[警告] 終了が赤い区間に入っています。' + (E().p.final ? '勝敗画面' : 'ポイント間のスコアバナー') + 'にプレイヤー名が映ります。「名前が映る区間を自動で除外」がONなら書き出し時に手前へ詰めます' : '';
+    const p = E().p;
+    const late = c.e > H.nameLimit(p);
+    const early = p.fresh && c.s < p.hudOn + H.INTRO_LEAD - 0.05;
+    $('hlEdWarn').style.display = (late || early) ? 'block' : 'none';
+    $('hlEdWarn').textContent = late
+      ? '[警告] 終了が赤い区間に入っています。' + (p.final ? '勝敗画面' : 'ポイント間のスコアバナー') + 'にプレイヤー名が映ります。「名前が映る区間を自動で除外」がONなら書き出し時に手前へ詰めます'
+      : (early ? '[警告] 開始が試合開始直後の赤い区間に入っています。VS画面の残像にプレイヤー名がうっすら映ることがあります' : '');
   }
   function setRange(s, e) {
     const c = cur();
@@ -226,7 +270,7 @@
   }
   function hlSeek(t) {
     hv.pause();
-    hv.currentTime = Math.max(0, Math.min(hv.duration - 0.05, t));
+    hv.currentTime = Math.max(0, Math.min((Number.isFinite(hv.duration) ? hv.duration : 1e9) - 0.05, t));
   }
   function updatePlayhead() {
     if (!E()) return;
@@ -239,7 +283,6 @@
   hv.addEventListener('seeked', updatePlayhead);
   hv.addEventListener('play', () => requestAnimationFrame(updatePlayhead));
 
-  // タイムライン操作: ハンドルのドラッグ / バーのクリックでシーク
   let drag = null;
   tl.addEventListener('pointerdown', e => {
     const h = e.target.closest('.hlh');
@@ -272,7 +315,7 @@
   $('hlSetS').addEventListener('click', () => setRange(hv.currentTime, cur().e));
   $('hlSetE').addEventListener('click', () => setRange(cur().s, hv.currentTime));
   $('hlAuto').addEventListener('click', () => {
-    const auto = H.clipRanges(E().p, { shortSec: Math.max(2, Math.min(20, +$('hlSec').value || 5)) });
+    const auto = H.clipRanges(E().p, { shortSec: shortSec() });
     E().short = { ...auto.short }; E().full = { ...auto.full }; tlUpdate(); hlSeek(cur().s);
   });
   $('hlEdOk').addEventListener('click', () => hlCloseEditor(true));
@@ -315,63 +358,75 @@
     });
   }
 
-  async function hlExport(kind) {  // 'short' | 'full' | 'digest'
+  // fmt: 'each'（区間ごとに1本ずつ）/ 'joined'（1本に繋げる）。区間の種類が 'match' のときは「区間＝試合」
+  async function hlExport(fmt) {
     if (HL.busy) return;
     if (!HL.path) { hlLog('[警告] 動画のファイルパスが取得できないため書き出せません'); return; }
-    const ok = await window.api.hlFfmpegAvailable();
-    if (!ok) { hlLog('[警告] 同梱の ffmpeg が見つかりません。アプリを再インストールしてください'); return; }
+    if (!(await window.api.hlFfmpegAvailable())) { hlLog('[警告] 同梱の ffmpeg が見つかりません。アプリを再インストールしてください'); return; }
     const sel = HL.points.filter(p => p.include);
-    if (!sel.length) { hlLog('ポイントが1つも選ばれていません'); return; }
+    if (!sel.length) { hlLog('区間が1つも選ばれていません'); return; }
     if (!(await ensureOutDir())) return;
     HL.busy = true; HL.cancel = false; HL.jobDone = 0; HL.jobTotal = 0;
     $('hlCancel').style.display = 'inline-block';
+    const type = hlType(), key = rangeKey();
     const guard = $('hlGuard').checked, maxH = $('hlScale').checked ? 1080 : null;
+    const perMatch = type === 'match' ? (fmt === 'each') : $('hlPerMatch').checked;
     const crop = cropParam();
     const base = HL.file.name.replace(/\.[^.]+$/, '');
-    const which = kind === 'full' ? 'full' : 'short';
-    const tmp = kind === 'digest' ? await window.api.hlTempDir() : null;
+    // 区間ごとにそのままファイルにするか（each かつ match 以外）、一時フォルダに切ってから繋げるか
+    const direct = fmt === 'each' && type !== 'match';
+    const tmp = direct ? null : await window.api.hlTempDir();
     const outputs = [];
     try {
       // 1) 区間確定（名前が映るフレームの除外）
-      const jobs = [];
+      const cuts = [];
       for (let i = 0; i < sel.length; i++) {
         const p = sel[i];
-        let { s, e } = ranges(p)[which];
+        let { s, e } = ranges(p)[key];
         hlProg(`区間を確認中… ${i + 1}/${sel.length}`, null);
         if (guard) {
           const g = await H.guardRange(hv, s, e);
           if (g.changed) { hlLog(`試合${p.match} P${p.k}: 名前が映るフレームを避けて ${fmtT(s)}〜${fmtT(e)} → ${fmtT(g.s)}〜${fmtT(g.e)} に詰めました`); s = g.s; e = g.e; }
         }
         if (e - s < 0.5) { hlLog(`試合${p.match} P${p.k}: 区間が短すぎるため飛ばしました`); continue; }
-        const name = `${base}_試合${p.match}_P${String(p.k).padStart(2, '0')}_${safeName(p.scoreAfter)}_${p.winner === 'me' ? '自分' : '相手'}${which === 'full' ? '_ラリー全体' : ''}.mp4`;
-        jobs.push({ p, s, e, out: (tmp || HL.outDir) + '\\' + name });
+        const name = `${base}_試合${p.match}_P${String(p.k).padStart(2, '0')}_${safeName(p.scoreAfter)}_${p.winner === 'me' ? '自分' : '相手'}${type === 'full' ? '_ラリー全体' : ''}.mp4`;
+        cuts.push({ p, s, e, out: (tmp || HL.outDir) + '\\' + name });
         if (HL.cancel) break;
       }
-      // 2) 切り抜き（再エンコード・フレーム単位で正確）
-      HL.jobTotal = jobs.length + (kind === 'digest' ? 1 : 0);
-      for (const j of jobs) {
+      // 2) まとめ方
+      const groups = [];   // {out, cuts}
+      if (!direct) {
+        if (perMatch) {
+          const by = new Map();
+          for (const c of cuts) { if (!by.has(c.p.match)) by.set(c.p.match, []); by.get(c.p.match).push(c); }
+          for (const [m, arr] of by) groups.push({ out: `${HL.outDir}\\${base}_試合${m}${type === 'match' ? '' : '_ダイジェスト'}.mp4`, cuts: arr });
+        } else {
+          groups.push({ out: `${HL.outDir}\\${base}_${type === 'match' ? '全試合' : 'ダイジェスト'}.mp4`, cuts });
+        }
+      }
+      // 3) 切り抜き（再エンコード・フレーム単位で正確）
+      HL.jobTotal = cuts.length + groups.length;
+      for (const c of cuts) {
         if (HL.cancel) break;
         HL.curJob = 'hl' + Date.now() + Math.random().toString(36).slice(2, 6);
         hlProg(`書き出し中… ${HL.jobDone + 1}/${HL.jobTotal}`, HL.jobDone / HL.jobTotal);
-        const r = await window.api.hlCut({ jobId: HL.curJob, input: HL.path, start: j.s, duration: +(j.e - j.s).toFixed(3), out: j.out, crop, maxH });
+        const r = await window.api.hlCut({ jobId: HL.curJob, input: HL.path, start: c.s, duration: +(c.e - c.s).toFixed(3), out: c.out, crop, maxH });
         HL.jobDone++;
-        if (r.ok) { j.ok = true; if (!tmp) outputs.push(j.out); }
-        else hlLog(`[警告] 書き出しに失敗: ${j.out}\n  ${r.error}`);
+        if (r.ok) { c.ok = true; if (direct) outputs.push(c.out); }
+        else hlLog(`[警告] 書き出しに失敗: ${c.out}\n  ${r.error}`);
       }
-      // 3) ダイジェスト: 試合ごとに連結（再エンコードなし）
-      if (kind === 'digest' && !HL.cancel) {
-        const byMatch = new Map();
-        for (const j of jobs) if (j.ok) { if (!byMatch.has(j.p.match)) byMatch.set(j.p.match, []); byMatch.get(j.p.match).push(j.out); }
-        for (const [m, files] of byMatch) {
-          if (HL.cancel) break;
-          HL.curJob = 'hl' + Date.now();
-          hlProg(`ダイジェストを連結中… 試合 ${m}`, (HL.jobTotal - 1) / HL.jobTotal);
-          const out = `${HL.outDir}\\${base}_試合${m}_ダイジェスト.mp4`;
-          const r = await window.api.hlConcat({ jobId: HL.curJob, files, out });
-          if (r.ok) outputs.push(out); else hlLog(`[警告] 連結に失敗: ${out}\n  ${r.error}`);
-        }
-        await window.api.hlRemove(jobs.filter(j => j.ok).map(j => j.out));
+      // 4) 連結（再エンコードなし）
+      for (const g of groups) {
+        if (HL.cancel) break;
+        const files = g.cuts.filter(c => c.ok).map(c => c.out);
+        if (!files.length) continue;
+        HL.curJob = 'hl' + Date.now();
+        hlProg(`繋げています… ${g.out.split('\\').pop()}`, HL.jobDone / HL.jobTotal);
+        const r = await window.api.hlConcat({ jobId: HL.curJob, files, out: g.out });
+        HL.jobDone++;
+        if (r.ok) outputs.push(g.out); else hlLog(`[警告] 連結に失敗: ${g.out}\n  ${r.error}`);
       }
+      if (tmp) await window.api.hlRemove(cuts.filter(c => c.ok).map(c => c.out));
       hlProg('', null);
       if (HL.cancel) hlLog('書き出しを中止しました');
       hlLog(outputs.length ? `保存しました（${outputs.length}本）:\n  ` + outputs.join('\n  ') : '保存されたファイルはありません');
@@ -383,9 +438,8 @@
       HL.busy = false; HL.curJob = null; $('hlCancel').style.display = 'none';
     }
   }
-  $('hlExportShort').addEventListener('click', () => hlExport('short'));
-  $('hlExportFull').addEventListener('click', () => hlExport('full'));
-  $('hlExportDigest').addEventListener('click', () => hlExport('digest'));
+  $('hlExportEach').addEventListener('click', () => hlExport('each'));
+  $('hlExportJoined').addEventListener('click', () => hlExport('joined'));
 
   // ---- ファイル選択（ボタン / ドロップ / 直近の解析ファイル）----
   $('hlPick').addEventListener('click', () => $('hlFile').click());
@@ -399,7 +453,6 @@
     const f = [...e.dataTransfer.files].find(x => /\.(mp4|mov|mkv|webm)$/i.test(x.name));
     if (f) hlLoad(f);
   });
-  // 戦績CSV側で読み込んだファイルをそのまま使えるように
   setInterval(() => { $('hlUseLast').style.display = (LAST_FILE && !HL.busy) ? 'inline-block' : 'none'; if (LAST_FILE) $('hlUseLast').textContent = '直近の録画で作る（' + LAST_FILE.name + '）'; }, 1000);
   userDataReady.then(() => { if (SETTINGS.hlOutDir) { HL.outDir = SETTINGS.hlOutDir; $('hlOutDir').textContent = SETTINGS.hlOutDir; } });
 
