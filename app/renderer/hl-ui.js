@@ -52,8 +52,11 @@
     c.getContext('2d').drawImage(hv, s.x + r.x * kx, s.y + r.y * ky, r.w * kx, r.h * ky, 0, 0, c.width, c.height);
     return c;
   }
+  // 自分のキャラ画像（VS画面の自分側カードの切り抜き）。名前は照合しない（バッジは画像だけ・ユーザー指定 2026-09-02）。
+  // ダブルスは左列2行のどちらが自分かを、シングルスのVS画面から自動学習した自分の名前で判定（index.html の myRowFromSigs）。
+  // 判定できなければ上の行を仮に選び、ヘッダで選び直してもらう
   async function detectMyChar(w) {
-    w.my = { name: '', conf: 0, icon: null, isDoubles: false, row: 1, partner: null };
+    w.my = { icon: null, icons: null, isDoubles: false, row: 1, sure: true, show: true };
     if (!w.vs) return;
     const R = V.REGIONS, seek = V.makeSeeker(hv);
     await seek((w.vs.t0 + w.vs.t1) / 2);
@@ -62,46 +65,39 @@
     const orgR = V.frac(r1img, 0, 0, R.dIconR1.w, 30, (r, g, b) => r > 160 && b < 100 && g > 40 && g < 170);
     const darkM = V.frac(midimg, 0, 0, 320, 30, (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b < 60);
     w.my.isDoubles = blueL > 0.2 && orgR > 0.15 && darkM > 0.5;
-    const canon = n => (window.Characters ? Characters.canon(n) : n);
     if (!w.my.isDoubles) {
-      const mc = V.matchIcon(V.iconVec(V.cropRegion(hv, R.myicon), 16, 16), TPL.vsIcons || []);
-      w.my.name = mc.score >= 0.8 ? canon(mc.name) : ''; w.my.conf = mc.score;
-      w.my.icon = hlCropCanvas(R.myicon, 96).toDataURL('image/png');
+      w.my.icon = hlCropCanvas(R.myicon, 120).toDataURL('image/png');
     } else {
-      const ic = k => V.matchIcon(V.iconVec(V.cropRegion(hv, R[k]), 16, 12), TPL.dblIcons || []);
-      const l1 = ic('dIconL1'), l2 = ic('dIconL2');
-      // 自分の行: シングルスのVS画面から自動学習した自分の名前シグネチャ（index.html の myRowFromSigs）
+      // ダブルスのアイコン枠(118x64)は右寄りにキャラが入る → 正方形に寄せて切り抜く
+      const sq = r => ({ x: r.x + r.w - r.h - 4, y: r.y, w: r.h + 4, h: r.h });
+      w.my.icons = [hlCropCanvas(sq(R.dIconL1), 120).toDataURL('image/png'), hlCropCanvas(sq(R.dIconL2), 120).toDataURL('image/png')];
       const mr = (typeof myRowFromSigs === 'function') ? myRowFromSigs(V.nameSig(V.cropRegion(hv, R.dNameL1)), V.nameSig(V.cropRegion(hv, R.dNameL2))) : null;
-      w.my.row = mr ? mr.row : 0;   // 0 = 判定できず（両方を出す）
-      const pick = w.my.row === 2 ? l2 : l1;
-      w.my.name = pick.score >= 0.8 ? canon(pick.name) : ''; w.my.conf = pick.score;
-      w.my.icon = hlCropCanvas(w.my.row === 2 ? R.dIconL2 : R.dIconL1, 96).toDataURL('image/png');
-      if (!w.my.row) w.my.partner = { name: l2.score >= 0.8 ? canon(l2.name) : '', icon: hlCropCanvas(R.dIconL2, 96).toDataURL('image/png') };
+      w.my.row = mr ? mr.row : 1; w.my.sure = !!mr;
+      w.my.icon = w.my.icons[w.my.row - 1];
     }
   }
   const loadImg = src => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
-  // バッジ（透過PNG）: [アイコン] 自分：キャラ名。outH（出力の高さ）に合わせた大きさで描く
+  // バッジ（透過PNG）: 「自分：」＋キャラ画像。outH（出力の高さ）に合わせた大きさで描く
   async function makeBadge(my, outH) {
-    if (!my || (!my.name && !my.icon)) return null;
-    const k = outH / 1080, h = Math.round(74 * k), pad = Math.round(18 * k), iconH = Math.round(54 * k);
+    if (!my || !my.icon) return null;
+    const im = await loadImg(my.icon); if (!im) return null;
+    const k = outH / 1080, h = Math.round(84 * k), pad = Math.round(16 * k), iconH = Math.round(66 * k);
+    const iconW = Math.round(iconH * im.width / im.height);
     const c = document.createElement('canvas'); let ctx = c.getContext('2d');
-    const font = `bold ${Math.round(32 * k)}px "Yu Gothic UI","Meiryo","Segoe UI",sans-serif`;
+    const font = `bold ${Math.round(34 * k)}px "Yu Gothic UI","Meiryo","Segoe UI",sans-serif`;
     ctx.font = font;
-    const both = my.row === 0 && my.partner;
-    const parts = both ? [my, my.partner] : [my];
-    const label = both ? '自分たち：' + parts.map(p => p.name || '？').join('／') : '自分：' + (my.name || '？');
-    const icons = []; for (const p of parts) if (p.icon) icons.push(await loadImg(p.icon));
-    const iconWs = icons.map(im => im ? Math.round(iconH * im.width / im.height) : 0);
+    const label = '自分：';
     const tw = ctx.measureText(label).width;
-    c.width = Math.round(pad * 2 + iconWs.reduce((a, b) => a + b + (b ? pad * 0.5 : 0), 0) + tw); c.height = h;
+    c.width = Math.round(pad * 2 + tw + iconW); c.height = h;
     ctx = c.getContext('2d'); ctx.font = font; ctx.textBaseline = 'middle';
     const rr = (x, y, w, hh, r) => { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + hh, r); ctx.arcTo(x + w, y + hh, x, y + hh, r); ctx.arcTo(x, y + hh, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); };
     rr(1, 1, c.width - 2, h - 2, Math.round(h / 2)); ctx.fillStyle = 'rgba(0,0,0,.62)'; ctx.fill();
     ctx.lineWidth = Math.max(1, 2 * k); ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.stroke();
-    let x = pad;
-    icons.forEach((im, i) => { if (!im) return; const w = iconWs[i]; ctx.save(); rr(x, (h - iconH) / 2, w, iconH, Math.round(8 * k)); ctx.clip(); ctx.drawImage(im, x, (h - iconH) / 2, w, iconH); ctx.restore(); x += w + pad * 0.5; });
     ctx.lineWidth = Math.max(2, 5 * k); ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.lineJoin = 'round';
-    ctx.strokeText(label, x, h / 2 + 1); ctx.fillStyle = '#fff'; ctx.fillText(label, x, h / 2 + 1);
+    ctx.strokeText(label, pad, h / 2 + 1); ctx.fillStyle = '#fff'; ctx.fillText(label, pad, h / 2 + 1);
+    const x = pad + tw;
+    ctx.save(); rr(x, (h - iconH) / 2, iconW, iconH, Math.round(10 * k)); ctx.clip(); ctx.drawImage(im, x, (h - iconH) / 2, iconW, iconH); ctx.restore();
+    ctx.lineWidth = Math.max(1, 2 * k); ctx.strokeStyle = 'rgba(255,255,255,.7)'; rr(x, (h - iconH) / 2, iconW, iconH, Math.round(10 * k)); ctx.stroke();
     return c.toDataURL('image/png');
   }
 
@@ -234,9 +230,13 @@
   }
   function myCharHtml(p) {
     const w = HL.windows[p.win]; const my = w && w.my;
-    const opts = ['<option value="">（表示しない）</option>', ...((window.Characters ? Characters.ALL : []).map(n => `<option value="${esc(n)}"${my && my.name === n ? ' selected' : ''}>${esc(n)}</option>`))];
-    const note = my && my.isDoubles && my.row === 0 ? '<span style="color:#f2a65a">ダブルス: 自分の行を判定できず（両方表示・選ぶと1人に）</span>' : (my && !my.name ? '<span style="color:#f2a65a">未判定</span>' : '');
-    return `<span class="hlmy">自分のキャラ:${my && my.icon ? `<img src="${my.icon}">` : ''}${my && my.partner && my.partner.icon ? `<img src="${my.partner.icon}">` : ''}<select data-act="mychar" data-w="${p.win}">${opts.join('')}</select>${note}</span>`;
+    if (!my || !(my.icon || my.icons)) return '<span class="hlmy">自分のキャラ: <span style="color:#f2a65a">VS画面が見つからず未取得</span></span>';
+    let body;
+    if (my.isDoubles && my.icons) {
+      body = my.icons.map((ic, i) => `<label title="自分はこちら"><input type="radio" name="hlrow${p.win}" data-act="myrow" data-w="${p.win}" value="${i + 1}"${my.row === i + 1 ? ' checked' : ''}><img src="${ic}"></label>`).join('')
+           + (my.sure ? '' : '<span style="color:#f2a65a">ダブルス: 自分の行を判定できず。自分のキャラを選んでください</span>');
+    } else body = `<img src="${my.icon}">`;
+    return `<span class="hlmy">自分のキャラ:${body}<label><input type="checkbox" data-act="myshow" data-w="${p.win}"${my.show !== false ? ' checked' : ''}>表示</label></span>`;
   }
   function row(p) {
     const type = hlType();
@@ -254,17 +254,16 @@
     </div>`;
   }
   $('hlList').addEventListener('change', e => {
-    const sel = e.target.closest('select[data-act=mychar]'); if (!sel) return;
-    const w = HL.windows[+sel.dataset.w]; if (!w) return;
-    w.my = w.my || { icon: null };
-    w.my.name = sel.value; w.my.manual = true;
-    if (w.my.row === 0 && sel.value) { w.my.row = 1; w.my.partner = null; }  // 手で選んだら1人に確定
+    const el = e.target.closest('[data-act=myrow],[data-act=myshow]'); if (!el) return;
+    const w = HL.windows[+el.dataset.w]; if (!w || !w.my) return;
+    if (el.dataset.act === 'myrow') { w.my.row = +el.value; w.my.sure = true; w.my.icon = w.my.icons ? w.my.icons[w.my.row - 1] : w.my.icon; }
+    else w.my.show = el.checked;
     hlRender();
   });
   $('hlList').addEventListener('click', e => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act;
-    if (act === 'mychar') return;
+    if (act === 'myrow' || act === 'myshow') return;
     if (act === 'mall' || act === 'mnone') {
       for (const p of HL.points) if (p.match === +b.dataset.m) p.include = act === 'mall';
       hlRender(); return;
@@ -506,7 +505,7 @@
     if (badgeOn && window.api.hlSavePng) {
       for (let wi = 0; wi < HL.windows.length; wi++) {
         const my = HL.windows[wi].my;
-        if (!my || (!my.name && !my.icon)) continue;
+        if (!my || !my.icon || my.show === false) continue;
         try {
           const png = await makeBadge(my, outH);
           const p = png ? await window.api.hlSavePng(`badge-${Date.now()}-${wi}`, png) : null;
