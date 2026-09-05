@@ -1037,7 +1037,6 @@ async function analyze() {
   const events = await V.scan(video, { albumTpl: TPL.albumBar || [], onProgress: (t, dur) =>
     setProgress(`全編スキャン中… ${t.toFixed(0)}/${dur.toFixed(0)}秒`, t / dur * 0.7) });
   log(`scan ${((performance.now() - t0) / 1000).toFixed(1)}s: ` + events.map(e => `${e.type}@${e.t0.toFixed(0)}-${e.t1.toFixed(0)}`).join(' '));
-  if (LAST_FILE) SCENE_CACHE.set(LAST_FILE.name + '|' + LAST_FILE.size + '|' + LAST_FILE.lastModified, events.map(e => ({ ...e })));
   // ゲームが画面いっぱいでない配信録画は、位置指定なしだと何も当たらない → 気づけるようにする
   if (!events.some(e => e.type === 'vs')) {
     log('[警告] VS画面を1件も検出できませんでした。配信レイアウトなどでゲームが画面いっぱいに映っていない録画は、'
@@ -1049,6 +1048,9 @@ async function analyze() {
     log('アルバム/ホーム画面の再生を検出し解析対象から除外: ' + albumWins.map(w => w.t0.toFixed(0) + '〜' + w.t1.toFixed(0) + '秒').join(' / '));
   }
   await gateRatings(video, events, log);
+  // ハイライト生成の「直近の録画で作る」が再利用するシーン結果は、偽レート検出を除去した後のものを保存する
+  // （除去前を保存していると matchWindows が試合開始直後の偽レートで窓を閉じ、得点0件になる。2026-09-05 実例: 砂コート）
+  if (LAST_FILE) SCENE_CACHE.set(LAST_FILE.name + '|' + LAST_FILE.size + '|' + LAST_FILE.lastModified, events.map(e => ({ ...e })));
   let grouped = V.groupMatches(events);
   // レートパネルの色はランクで変わるため、未収穫ランクの試合は成立しない。取り逃しを可視化する
   const vsCount = events.filter(e => e.type === 'vs').length;
