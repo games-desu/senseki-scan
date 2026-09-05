@@ -660,13 +660,29 @@ window.Vision = (() => {
     return ncc(a.v, b.v);
   }
 
-  function matchIcon(v, lib) {
+  // len: 比較に使うベクトル先頭の要素数（省略時は全体）。
+  // シングルスVSのアイコン領域(myicon/oppicon 90x88)は下側約30%がカードの外＝コート背景なので、
+  // vsIcons は上11行(16x16x3の先頭 11*48=528 要素)だけで照合する(VS_ICON_LEN)。
+  // 辞書のベクトルは全体のまま保存しているので再収穫は不要。
+  // 実測(2026-09-05・辞書305本の総当たり): 自分自身を除いたtop1正解 248→278/298・別キャラ間の最大一致 0.873→0.849。
+  // 実フレーム160アイコン: 正解 149→155・score<0.8 のフラグ 1→0。外れは全部色違い同士(構造的に区別不能)
+  function matchIcon(v, lib, len) {
     let best = null;
     for (const t of lib) {
-      const s = ncc(v, t.v);
+      const s = len ? nccLen(v, t.v, len) : ncc(v, t.v);
       if (!best || s > best.score) best = { name: t.name, score: s };
     }
     return best;
+  }
+  const VS_ICON_LEN = 11 * 16 * 3;
+  function nccLen(a, b, n) {
+    n = Math.min(n, a.length, b.length);
+    let ma = 0, mb = 0;
+    for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+    ma /= n; mb /= n;
+    let s = 0, da = 0, db = 0;
+    for (let i = 0; i < n; i++) { const x = a[i] - ma, y = b[i] - mb; s += x * y; da += x * x; db += y * y; }
+    return da && db ? s / Math.sqrt(da * db) : 0;
   }
 
   // コート名照合用: textVec の白チャンネルだけでNCCを取る。
@@ -1208,7 +1224,7 @@ window.Vision = (() => {
   }
 
   return { REGIONS, NUM_SEG, LOOSE, NAME_SIG, GLYPH, nameSig, nameSigScore, nameBand, sigFromBand, nameStrokes, glyphVec, nameGlyphs, readName, lum, makeSeeker, setSourceRect, getSourceRect, srcRect, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
-           matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
+           matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, VS_ICON_LEN, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
            bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection,
            gaugeFill, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
 })();
