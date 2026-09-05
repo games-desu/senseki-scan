@@ -37,8 +37,14 @@ window.Vision = (() => {
     dIconR1: { x: 1125, y: 852, w: 118, h: 64 },
     dIconR2: { x: 1125, y: 926, w: 118, h: 64 },
     // フィーバー: FVゲージ（発動で空になる→撃った側の判定に使う）と発動バナーの探索帯
-    fvL: { x: 305,  y: 72, w: 160, h: 20 },
-    fvR: { x: 1540, y: 72, w: 160, h: 20 },
+    // FVゲージ: 「ストック枡（内側の小さな枡）＋充填バー」を左右対称に含める。
+    // 旧値 fvL 305-465 はバーだけで枡(216-310)が外、fvR 1540-1700 は枡(1605-1701)＋バーの端だった非対称。
+    // 発動はストック枡の消灯として出るため、旧値では自分の発動が読めなかった(2026-09-05 21-24-23 ワンダーコート: 自分の落差0.13〜0.21<0.22)
+    fvL: { x: 216,  y: 72, w: 250, h: 20 },
+    fvR: { x: 1453, y: 72, w: 249, h: 20 },
+    // ゲージ枡とバーの境目(常に黒い縦罫)。HUD可視ゲートに使う
+    fvBorderL: { x: 312, y: 72, w: 5, h: 20 },
+    fvBorderR: { x: 1600, y: 72, w: 5, h: 20 },
     bannerBand: { x: 0, y: 690, w: 1920, h: 320 },
     // 回線品質アイコン（4本バー・対戦全体で1つ）。クラシック=画面左上／フィーバー=左上HPバーの右
     // （2026-08-28実測: クラシックはFHD x43-80,y25-70・フィーバーは x373-415,y30-75・やや斜め）
@@ -879,6 +885,13 @@ window.Vision = (() => {
     return tLast;
   }
 
+  // HUD(FVゲージ)が映っているか: 枡とバーの境目の黒い縦罫が左右とも暗ければ可視。
+  // HUD非表示中はそこに背景が写り暗くならない(実測: 可視0.43〜0.67・非表示0・半透明フェード0〜0.25)
+  function gaugeFrameVisible(video) {
+    const dark = reg => frac(cropRegion(video, reg), 0, 0, reg.w, reg.h, (r, g, b) => lum(r, g, b) < 50);
+    return dark(REGIONS.fvBorderL) >= 0.4 && dark(REGIONS.fvBorderR) >= 0.4;
+  }
+
   // FVゲージの充填率（0=空〜1=満タン。バーの非黒ピクセル割合）
   function gaugeFill(video, region) {
     const img = cropRegion(video, region);
@@ -1116,7 +1129,10 @@ window.Vision = (() => {
 
   // フィーバー発動バナーを試合区間から収集し、FVゲージの減少で「どちらが撃ったか」を判定する
   // side: 'me'（左ゲージが減った）/ 'opp' / null（判定不能→要確認）
-  async function collectBanners(video, t0, t1, { step = 0.7, onProgress } = {}) {
+  // dropMin: エッジとみなすゲージの急落量。領域を「枡＋バー」左右対称に広げた(2026-09-05)ため、
+  // ストック1個の消費は 0.2〜0.38 の落差になる。0.22 だと取りこぼす(01-44-03 m2: 名前付き6件中1件しか帰属できず
+  // 自分ラケットが null)。0.18 で 21-24-23(自分トゲゾー/相手ビリキュー)・01-44-03(自分ファイアバー/相手マジック)とも全帰属正解
+  async function collectBanners(video, t0, t1, { step = 0.7, onProgress, dropMin = 0.18 } = {}) {
     const seekTo = makeSeeker(video);
     const events = [];
     let t = t0;
@@ -1126,8 +1142,11 @@ window.Vision = (() => {
     const gauges = []; // {t, L, R} 時系列(side帰属のエッジ検出に使う)
     // HUD可視性ゲート: フィーバーショット発動中はHUD全体が非表示になり、ゲージ領域には
     // 背景(ピンボールの市松床等)が写る。輝度率ベースの読みが汚染され偽エッジになるため、
-    // 回線アイコン(HUDと同時に消える)が成立するフレームのサンプルだけを時系列に採用する
-    const hudOk = () => connIconPresent(video);
+    // HUDが映っているフレームのサンプルだけを時系列に採用する。
+    // 判定は「ゲージの枡とバーの境目(常に黒い縦罫)が両側とも暗い」こと。旧方式の回線アイコンは
+    // 回線品質が低い(1〜2本)と点滅して半分近く落ち、発動直前のサンプルが欠けてエッジが立たなかった
+    // (2026-09-05 21-24-23: 141サンプル中 回線80 / 枡罫94・HUD非表示フレームの誤通過0)
+    const hudOk = () => gaugeFrameVisible(video);
     while (t < t1) {
       await seekTo(t);
       if (hudOk()) gauges.push({ t, L: gaugeFill(video, REGIONS.fvL), R: gaugeFill(video, REGIONS.fvR) });
@@ -1175,10 +1194,13 @@ window.Vision = (() => {
     const edges = { L: [], R: [] };
     gauges.sort((a, b) => a.t - b.t);
     for (const k of ['L', 'R']) {
-      for (let i = 2; i < gauges.length - 1; i++) {
+      for (let i = 2; i < gauges.length; i++) {
         const prevMin = Math.min(gauges[i - 2][k], gauges[i - 1][k]);
-        if (prevMin - gauges[i][k] >= 0.22 && gauges[i][k] <= 0.45 &&
-            gauges[i + 1][k] <= gauges[i][k] + 0.08) {
+        // 次点の確認は「次のサンプルがあれば」。窓の末尾で発動直後にHUDが消える(勝敗演出)と次点が無く、
+        // 最終ポイントの発動がエッジにならなかった(2026-09-05 21-24-23 t=153.4 相手ビリキュー)
+        const next = gauges[i + 1];
+        if (prevMin - gauges[i][k] >= dropMin && gauges[i][k] <= 0.45 &&
+            (!next || next[k] <= gauges[i][k] + 0.08)) {
           edges[k].push((gauges[i - 1].t + gauges[i].t) / 2);
         }
       }
@@ -1226,5 +1248,5 @@ window.Vision = (() => {
   return { REGIONS, NUM_SEG, LOOSE, NAME_SIG, GLYPH, nameSig, nameSigScore, nameBand, sigFromBand, nameStrokes, glyphVec, nameGlyphs, readName, lum, makeSeeker, setSourceRect, getSourceRect, srcRect, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
            matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, VS_ICON_LEN, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
            bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection,
-           gaugeFill, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
+           gaugeFill, gaugeFrameVisible, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
 })();

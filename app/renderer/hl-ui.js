@@ -475,11 +475,11 @@
   }
   // つなぎ目の設定（記憶する）
   function transitionOpt() {
-    const type = $('hlTrans').value, duration = Math.max(0.2, Math.min(2, +$('hlTransSec').value || 0.5));
+    const type = $('hlTrans').value, duration = Math.max(0.2, Math.min(2, +$('hlTransSec').value || 0.3));
     return type === 'none' ? null : { type, duration };
   }
   for (const id of ['hlTrans', 'hlTransSec', 'hlBadge', 'hlBadgeMode']) $(id).addEventListener('change', () => {
-    SETTINGS.hlTrans = { type: $('hlTrans').value, duration: +$('hlTransSec').value || 0.5 };
+    SETTINGS.hlTrans = { type: $('hlTrans').value, duration: +$('hlTransSec').value || 0.3 };
     SETTINGS.hlBadge = { on: $('hlBadge').checked, mode: $('hlBadgeMode').value };
     window.api.saveUserData('settings', SETTINGS);
   });
@@ -606,7 +606,7 @@
   }, 1000);
   userDataReady.then(() => {
     if (SETTINGS.hlOutDir) { HL.outDir = SETTINGS.hlOutDir; $('hlOutDir').textContent = SETTINGS.hlOutDir; }
-    if (SETTINGS.hlTrans) { $('hlTrans').value = SETTINGS.hlTrans.type || 'fade'; $('hlTransSec').value = SETTINGS.hlTrans.duration || 0.5; }
+    if (SETTINGS.hlTrans) { $('hlTrans').value = SETTINGS.hlTrans.type || 'fade'; $('hlTransSec').value = SETTINGS.hlTrans.duration || 0.3; }
     if (SETTINGS.hlBadge) { $('hlBadge').checked = SETTINGS.hlBadge.on !== false; $('hlBadgeMode').value = SETTINGS.hlBadge.mode || '3'; }
   });
 
