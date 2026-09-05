@@ -43,11 +43,11 @@
   試合中の偽レート窓（砂コート等で30件超出る）が残り、matchWindows が試合開始2秒後に窓を閉じて「0試合・0ポイント」になっていた。
   hlLoad 側の自前スキャン経路は gateRatings 後に保存しているので、ハイライト単独では起きない（＝ユーザーのダイジェスト作成は成功していた）。
   → SCENE_CACHE.set を gateRatings の後へ移動。検証: 10-44-35 で 解析→直近の録画で作る → 窓 25-198/279-464/488-694・3試合29ポイント（修正前は窓2秒・0件）
-- 開発用ページの注意: ページ本体の  要素は非表示ペインでステイルフレームを返すため、gateRatings をページ内で手動再実行しても棄却されない（実アプリでは問題なし）
+- 開発用ページの注意: ページ本体の video 要素は非表示ペインでステイルフレームを返すため、gateRatings をページ内で手動再実行しても棄却されない（実アプリでは問題なし）
 
 ### 公開告知の準備（2026-09-05）
 - リンクまとめサイト（games-desu.vercel.app）に SENSEKI SCAN を **SENSEKI FEVER の直下**に追加（GitHub Releases latest へ・JP/EN・icon-scan.png）。デプロイ済み
-- X用スライド4枚（1600x900）: samples/frames/slides/slides.html を headless Chrome で描画（ で1枚ずつ）。
+- X用スライド4枚（1600x900）: samples/frames/slides/slides.html を headless Chrome で描画（?only=sN で1枚ずつ）。
   実画面のスクショは同一オリジンの iframe ラッパー（shot-top.html）と、解析後DOMのスナップショットHTML（slides_review.html / slides_hl.html）を撮影。
   **相手プレイヤー名は blur で伏せる**（namecrop）。成果物は Documents/Claude/senseki-scan-x-1.0.0/（01〜04.png + post.txt）
 - README / docs/manual.md を v1.0.0 のトップ画面（1.戦績を抽出する／2.ハイライト生成）と「CSVをコピー→クリップボードから読み込む」導線に更新
