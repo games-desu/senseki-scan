@@ -1253,8 +1253,8 @@ async function analyze() {
     if (!m.isDoubles) {
       const myVec = V.iconVec(V.cropRegion(video, R.myicon), 16, 16);
       const opVec = V.iconVec(V.cropRegion(video, R.oppicon), 16, 16);
-      const myc = V.matchIcon(myVec, TPL.vsIcons, V.VS_ICON_LEN); // 上11行=カード内だけで照合(背景除外)
-      const opc = V.matchIcon(opVec, TPL.vsIcons, V.VS_ICON_LEN);
+      const myc = V.matchIconCard(myVec, TPL.vsIcons, { w: 16, rows: 11 }); // 上11行=カード内・カード背景色に非依存(輝度でキャラ→色つきで色違い)
+      const opc = V.matchIconCard(opVec, TPL.vsIcons, { w: 16, rows: 11 });
       m._iconVecs = { myChar: Array.from(myVec), oppChar: Array.from(opVec) };
       m.myChar = myc.name; m.myCharConf = myc.score;
       m.oppChar = opc.name; m.oppCharConf = opc.score;
@@ -1277,7 +1277,7 @@ async function analyze() {
       // ダブルス: 4アイコン照合 + 「ガメス」の名前画像で自分の行を特定
       const iv = k => V.iconVec(V.cropRegion(video, R[k]), 16, 12);
       const vL1 = iv('dIconL1'), vL2 = iv('dIconL2'), vR1 = iv('dIconR1'), vR2 = iv('dIconR2');
-      const ic = v => V.matchIcon(v, TPL.dblIcons || []);
+      const ic = v => V.matchIconCard(v, TPL.dblIcons || [], { w: 16, rows: 12 }); // 16x12・カード背景色に非依存
       const l1 = ic(vL1), l2 = ic(vL2), r1 = ic(vR1), r2 = ic(vR2);
       // 自分の行判定: まず自分の名前シグネチャ（シングルスから自動学習）で決める。
       // 旧方式（欄全体のtextVecを同梱mynameと照合）は、同じ文字数の味方名と僅差になる

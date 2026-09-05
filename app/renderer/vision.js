@@ -681,6 +681,50 @@ window.Vision = (() => {
     return best;
   }
   const VS_ICON_LEN = 11 * 16 * 3;
+
+  // カード背景色に左右されないキャラ照合（2026-09-06）。
+  // VS/ダブルスのアイコンは自分側=青・相手側=橙のカード上に描かれ、RGBのNCCは背景色に支配される。
+  // 辞書の64キャラ中47キャラは片側のカードの手札しか無く、反対側で出ると別キャラに化けた
+  // （実例: 自分側のガボン→ヨッシー:ピンク0.61・自分側のカロン→チコ:青）。
+  // 2段階: ①輝度だけのNCCでキャラ（ベース名）を決める（辞書の反対側照合: キャラ正解 99/101・別キャラ間max 0.71）
+  //        ②同ベースの色違いは「カード色（左端3列の平均）に近いセルを灰に潰した」色つきNCCで決める
+  //          （反対側照合 top1 94/101 vs 生RGB 87・全体 287/299 vs 279）。ダブルス辞書も 3/38→26/38（反対側）・31→41（全体）
+  // score は①の輝度NCC（要確認フラグの 0.8 判定に使う）。辞書ベクトルは従来どおり全体RGBのまま保存し、ここで都度変換（テンプレ側はキャッシュ）
+  function iconGray(v, w, rows) {
+    const n = w * rows, o = new Float32Array(n);
+    for (let p = 0; p < n; p++) o[p] = 0.299 * v[p * 3] + 0.587 * v[p * 3 + 1] + 0.114 * v[p * 3 + 2];
+    return o;
+  }
+  function iconCardMasked(v, w, rows) {
+    const n = w * rows;
+    let r = 0, g = 0, b = 0, k = 0;
+    for (let p = 0; p < n; p++) { if (p % w > 2) continue; r += v[p * 3]; g += v[p * 3 + 1]; b += v[p * 3 + 2]; k++; }
+    r /= k; g /= k; b /= k;
+    const o = new Float32Array(n * 3);
+    for (let p = 0; p < n; p++) {
+      const d = Math.abs(v[p * 3] - r) + Math.abs(v[p * 3 + 1] - g) + Math.abs(v[p * 3 + 2] - b);
+      if (d < 0.35) { o[p * 3] = o[p * 3 + 1] = o[p * 3 + 2] = 0.5; }
+      else { o[p * 3] = v[p * 3]; o[p * 3 + 1] = v[p * 3 + 1]; o[p * 3 + 2] = v[p * 3 + 2]; }
+    }
+    return o;
+  }
+  function matchIconCard(v, lib, { w = 16, rows = 11 } = {}) {
+    if (!lib || !lib.length) return { name: null, score: 0 };
+    const key = w + 'x' + rows;
+    const prep = t => { if (!t._card || t._card.key !== key) t._card = { key, g: iconGray(t.v, w, rows), m: iconCardMasked(t.v, w, rows) }; return t._card; };
+    const qg = iconGray(v, w, rows);
+    let best = null;
+    for (const t of lib) { const s = ncc(qg, prep(t).g); if (!best || s > best.score) best = { name: t.name, score: s }; }
+    const base = String(best.name).split(':')[0];
+    const cands = lib.filter(t => String(t.name).split(':')[0] === base);
+    if (new Set(cands.map(t => t.name)).size > 1) {
+      const qm = iconCardMasked(v, w, rows);
+      let cb = null;
+      for (const t of cands) { const s = ncc(qm, prep(t).m); if (!cb || s > cb.score) cb = { name: t.name, score: s }; }
+      return { name: cb.name, score: best.score, colorScore: cb.score, base };
+    }
+    return { name: best.name, score: best.score, base };
+  }
   function nccLen(a, b, n) {
     n = Math.min(n, a.length, b.length);
     let ma = 0, mb = 0;
@@ -1246,7 +1290,7 @@ window.Vision = (() => {
   }
 
   return { REGIONS, NUM_SEG, LOOSE, NAME_SIG, GLYPH, nameSig, nameSigScore, nameBand, sigFromBand, nameStrokes, glyphVec, nameGlyphs, readName, lum, makeSeeker, setSourceRect, getSourceRect, srcRect, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
-           matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, VS_ICON_LEN, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
+           matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, VS_ICON_LEN, matchIconCard, iconGray, iconCardMasked, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
            bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection,
            gaugeFill, gaugeFrameVisible, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
 })();
