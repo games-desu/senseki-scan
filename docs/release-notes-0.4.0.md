@@ -19,6 +19,6 @@ VS画面のキャラ照合でカード外の背景を除外し、取り違えと
 - 同梱: ffmpeg-static（約80MB・GPL）。インストーラーは約30MB増。`npm run dist` の predist が exe の存在を確認する
   → 無ければ `node node_modules/ffmpeg-static/install.js`
 - 辞書: vsIcons 307本／panelIcons 134本／dblIcons 99本（すべて64種）・racketBanners 99本／30種・courts 58本／16種
-- 未確認: ハイライトの書き出し（保存）の実機確認。ビルド前に1本書き出して確認するのが安全
+- 書き出し（保存）は2026-09-05にユーザーがダイジェストを実機で作成済み（バッジ位置の指摘あり→修正済み）
 - 手順: `cd C:\Users\<user>\Documents\senseki-capture\app; npm run dist`（ユーザー・実ターミナル）→ `node tools/verify-release.js --local`
   → `gh release create v0.4.0 <exe> <blockmap> latest.yml --title "v0.4.0" --notes-file ...`（Claude代行・docs/release.md）
