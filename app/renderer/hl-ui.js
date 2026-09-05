@@ -121,6 +121,7 @@
         hv.addEventListener('error', () => rej(new Error('動画を読み込めませんでした')), { once: true });
       });
       $('hlBody').style.display = 'block';
+      $('hlPanel').open = true; // 畳んだ見出しへのドロップで読み込んだときも中身が見えるように
       $('hlFileName').textContent = file.name;
       $('hlList').innerHTML = ''; $('hlSummary').textContent = ''; $('hlExportBox').style.display = 'none'; $('hlFilterRow').style.display = 'none';
       $('hlLog').textContent = ''; $('hlLog').style.display = 'none';
@@ -190,7 +191,7 @@
   // 旧スコア→新スコアの併記はぱっと見で混乱する（ユーザー指摘 2026-09-02）ので title 属性に退避
   function scoreHtml(p) {
     const cls = p.winner === 'me' ? 'hlme' : 'hlopp';
-    const m = /^(d+) - (d+)$/.exec(p.scoreAfter || '');
+    const m = /^(\d+) - (\d+)$/.exec(p.scoreAfter || '');
     let body;
     if (m) body = p.winner === 'me' ? `<b class="${cls} hlbig">${m[1]}</b> - ${m[2]}` : `${m[1]} - <b class="${cls} hlbig">${m[2]}</b>`;
     else if (p.final) body = `<b class="${cls} hlbig">${p.winner === 'me' ? '勝ち' : '負け'}</b>（マッチ決定）`;

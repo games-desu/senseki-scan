@@ -2072,6 +2072,8 @@ document.addEventListener('mousedown', e => {
 // ---- キーボード操作（候補ナビ＋1件ビューのEnter送り） ----
 document.addEventListener('keydown', e => {
   if (e.isComposing) return; // IME変換中は処理しない
+  // ハイライトの「区間の調整」モーダル中は ←→/Enter を1件ずつ確認の試合送りに使わない（hl-ui.js 側がシーク/決定に使う）
+  if ($('hlmodal') && $('hlmodal').style.display === 'flex') return;
   if (LB) { // 拡大表示中はライトボックスの操作を優先する
     if (e.key === 'Escape') { closeLightbox(); return; }
     if (e.key === 'ArrowRight') { e.preventDefault(); lbPlay(false); lbStep(1); return; }
@@ -2217,6 +2219,8 @@ async function processQueue() {
   processing = false;
   renderQueue();
   setProgress(`完了: 全${matches.length}試合を検出しました。内容を確認してCSVを保存してください`, 1);
+  // 完了後もドロップ枠が「解析中」のままにならないように（追加の録画は引き続き受け付ける）
+  $('dropMsg').textContent = `解析済み: ${matches.length}試合（追加の録画はここへドロップ・「クリア」で最初から）`;
   // 完了後はログ・バーを畳んで確認画面を広く使う（「ログ」ボタンで再表示）
   $('bar').style.display = 'none';
   $('logPanel').style.display = 'none';
