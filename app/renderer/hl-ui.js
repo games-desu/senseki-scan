@@ -66,7 +66,9 @@
     const darkM = V.frac(midimg, 0, 0, 320, 30, (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b < 60);
     w.my.isDoubles = blueL > 0.2 && orgR > 0.15 && darkM > 0.5;
     if (!w.my.isDoubles) {
-      w.my.icon = hlCropCanvas(R.myicon, 120).toDataURL('image/png');
+      // R.myicon(700,898,90x88) は認識用で、下側約30%がカードの外(コートや黄色いライン)。
+      // バッジは自分側カードの内側(実測 y888〜958・x690〜808)だけを使い、顔が中央に来るようにする(ユーザー指摘 2026-09-05)
+      w.my.icon = hlCropCanvas({ x: 698, y: 890, w: 96, h: 66 }, 120).toDataURL('image/png');
     } else {
       // ダブルスのアイコン枠(118x64)は右寄りにキャラが入る → 正方形に寄せて切り抜く
       const sq = r => ({ x: r.x + r.w - r.h - 4, y: r.y, w: r.h + 4, h: r.h });
@@ -595,7 +597,12 @@
     const f = [...e.dataTransfer.files].find(x => /\.(mp4|mov|mkv|webm)$/i.test(x.name));
     if (f) hlLoad(f);
   });
-  setInterval(() => { $('hlUseLast').style.display = (LAST_FILE && !HL.busy) ? 'inline-block' : 'none'; if (LAST_FILE) $('hlUseLast').textContent = '直近の録画で作る（' + LAST_FILE.name + '）'; }, 1000);
+  setInterval(() => {
+    $('hlUseLast').style.display = (LAST_FILE && !HL.busy) ? 'inline-block' : 'none';
+    if (LAST_FILE) $('hlUseLast').textContent = '直近の録画で作る（' + LAST_FILE.name + '）';
+    // 畳んだ見出しにも「直近の録画で作れる」ことを出す（パネルを開かないと hlUseLast が見えないため）
+    const hint = $('hlSumHint'); if (hint) hint.textContent = (LAST_FILE && !panel.open) ? '直近の録画（' + LAST_FILE.name + '）で作れます' : '';
+  }, 1000);
   userDataReady.then(() => {
     if (SETTINGS.hlOutDir) { HL.outDir = SETTINGS.hlOutDir; $('hlOutDir').textContent = SETTINGS.hlOutDir; }
     if (SETTINGS.hlTrans) { $('hlTrans').value = SETTINGS.hlTrans.type || 'fade'; $('hlTransSec').value = SETTINGS.hlTrans.duration || 0.5; }

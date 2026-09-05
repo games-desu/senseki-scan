@@ -11,9 +11,28 @@
   h1 .sub { margin-bottom:0; margin-left:7px; }
   .rule { width:3px; height:17px; background:var(--accent); border-radius:2px; margin-right:10px; flex:none; }
   .sub { color:var(--sub); font-size:12px; margin-bottom:12px; }
-  #drop { border:2px dashed var(--border); border-radius:10px; padding:26px; text-align:center; color:var(--sub); cursor:pointer; margin-bottom:12px; }
-  #drop.over { border-color:var(--accent); background:#1a2b22; }
-  #drop.loaded { padding:8px 12px; font-size:12px; text-align:left; }
+  /* トップ画面: 主役は「1. 戦績を抽出する」のドロップ領域。ハイライトは畳んだ2番目のセクション */
+  .panel.main { border-color:var(--accent-dark); }
+  .secttl { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .secttl b { font-size:14px; }
+  .secttl .sub { margin:0; }
+  .secnum { flex:none; width:24px; height:24px; border-radius:50%; background:var(--accent-dark); color:#fff; font-size:13px; font-weight:bold; display:flex; align-items:center; justify-content:center; }
+  #drop { border:2px dashed var(--accent-dark); border-radius:10px; padding:26px 20px; text-align:center; color:var(--sub); cursor:pointer; background:#121d17; }
+  #drop:hover, #drop.over { border-color:var(--accent); background:#1a2b22; }
+  #drop .dropttl { font-size:16px; font-weight:bold; color:var(--text); margin-bottom:4px; }
+  #drop .dropsub { font-size:12px; margin-bottom:12px; }
+  #drop #pickBtn { font-size:13px; padding:9px 22px; }
+  #drop.loaded { padding:10px 14px; font-size:12px; text-align:left; border-style:solid; }
+  #drop.loaded #dropIdle { display:none; }
+  #dropMsg:empty { display:none; }
+  .setrow { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12px; color:var(--sub); margin-top:10px; }
+  .setsep { width:1px; height:16px; background:var(--border); }
+  details.panel > summary { cursor:pointer; list-style:none; margin-bottom:0; }
+  details.panel > summary::-webkit-details-marker { display:none; }
+  details.panel[open] > summary { margin-bottom:10px; }
+  details.panel > summary .disc { margin-left:auto; width:9px; height:9px; border-right:2px solid var(--sub); border-bottom:2px solid var(--sub); transform:rotate(-45deg); transition:transform .15s; flex:none; }
+  details.panel[open] > summary .disc { transform:rotate(45deg); }
+  details.panel > summary .hlhint { color:var(--accent); }
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px; margin-bottom:12px; }
   #progress { font-size:13px; color:var(--sub); }
   #bar { height:6px; background:#101a15; border-radius:3px; overflow:hidden; margin-top:6px; }
@@ -108,6 +127,8 @@
   .onb-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:22px 26px; max-width:640px; width:92vw; max-height:90vh; overflow-y:auto; }
   .onb-card h2 { font-size:15px; color:var(--accent); display:flex; align-items:center; margin-bottom:4px; }
   .onb-card .lead { color:var(--sub); font-size:12px; margin-bottom:16px; }
+  .onb-sec { font-size:12px; font-weight:bold; color:var(--accent); letter-spacing:.5px; margin:14px 0 2px; padding-bottom:4px; border-bottom:1px solid var(--accent-dark); }
+  #onboard .onb-card { max-width:760px; }
   .onb-step { display:flex; gap:12px; padding:10px 0; border-bottom:1px solid var(--border); }
   .onb-step:last-of-type { border-bottom:none; }
   .onb-step .n { flex:none; width:26px; height:26px; border-radius:50%; border:1px solid var(--accent-dark); color:var(--accent); font-size:13px; font-weight:bold; display:flex; align-items:center; justify-content:center; }
@@ -177,26 +198,33 @@
 </head>
 <body>
 <h1><span class="rule"></span>SENSEKI SCAN <span id="ver" class="sub"></span><button id="helpBtn" style="margin-left:auto; font-size:12px; padding:5px 12px">使い方</button><button id="bugBtn" style="margin-left:8px; font-size:12px; padding:5px 12px">バグ報告</button></h1>
-<p class="sub">マリオテニスフィーバーの対戦録画 → SENSEKI FEVER「CSV一括登録」フォーマット。全部門自動識別・解析はすべてこのPC内で完結します。</p>
-<div id="drop">録画ファイル（MP4）をドラッグ&ドロップ、またはクリックして選択（複数まとめてOK）</div>
-<input type="file" id="file" accept="video/*" multiple hidden>
-<div class="panel" style="padding:8px 12px">
-  <label class="sub" style="margin-bottom:0; cursor:pointer; display:inline-flex; align-items:center; gap:6px">
-    <input type="checkbox" id="setAutoName" checked>
-    相手名の自動入力（過去にCSV保存で確定した名前の画像と照合して補完する）
-  </label>
-</div>
-<div class="panel" style="padding:8px 12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap">
-  <span class="sub" style="margin:0">ゲーム画面の位置</span>
-  <b id="gameRectLabel" style="font-size:12px">全画面（既定）</b>
-  <button id="gameRectBtn" style="font-size:12px; padding:4px 10px">変更…</button>
-  <span id="gameRectWarn" class="sub" style="margin:0; display:none; color:var(--warn)"></span>
-</div>
-<div class="panel" id="hlPanel">
-  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap">
-    <b style="font-size:13px">ハイライト生成</b>
-    <span class="sub" style="margin:0">録画から得点シーンを自動で切り抜いてMP4に保存します。プレイヤー名が載る画面（ポイント間のスコアバナー・VS・勝敗）は映しません</span>
+<p class="sub">マリオテニスフィーバーの対戦録画から戦績を読み取り、SENSEKI FEVER「CSV一括登録」に渡せるCSVを作ります。解析はすべてこのPC内で完結し、動画は送信されません。</p>
+<div class="panel main" id="scanPanel">
+  <div class="secttl"><span class="secnum">1</span><b>戦績を抽出する</b><span class="sub">録画を入れるだけ。解析が終わったら内容を確認してCSVを保存します（全部門を自動識別・複数ファイルまとめてOK）</span></div>
+  <div id="drop">
+    <div id="dropIdle">
+      <div class="dropttl">録画ファイル（MP4）をここにドラッグ&ドロップ</div>
+      <div class="dropsub">またはクリックしてファイルを選ぶ</div>
+      <button class="primary" id="pickBtn" type="button">録画ファイルを選ぶ…</button>
+    </div>
+    <div id="dropMsg"></div>
   </div>
+  <input type="file" id="file" accept="video/*" multiple hidden>
+  <div class="setrow">
+    <label style="cursor:pointer; display:inline-flex; align-items:center; gap:6px">
+      <input type="checkbox" id="setAutoName" checked>
+      相手名の自動入力<span class="sub" style="margin:0">（過去にCSV保存で確定した名前の画像と照合して補完する）</span>
+    </label>
+    <span class="setsep"></span>
+    <span>ゲーム画面の位置:</span>
+    <b id="gameRectLabel" style="font-size:12px; color:var(--text)">全画面（既定）</b>
+    <button id="gameRectBtn" style="font-size:11px; padding:3px 10px">変更…</button>
+    <span class="sub" style="margin:0">配信レイアウトなどでゲームが画面いっぱいでない録画のとき</span>
+    <span id="gameRectWarn" class="sub" style="margin:0; display:none; color:var(--warn)"></span>
+  </div>
+</div>
+<details class="panel" id="hlPanel">
+  <summary class="secttl"><span class="secnum">2</span><b>ハイライト生成</b><span class="sub">任意・得点シーンを自動で切り抜いてMP4に保存。プレイヤー名が載る画面（ポイント間のスコアバナー・VS・勝敗）は映しません</span><span id="hlSumHint" class="sub hlhint" style="margin:0"></span><span class="disc" aria-hidden="true"></span></summary>
   <div class="hlopts" style="margin-bottom:6px">
     <span>1. 切り抜く区間:</span>
     <label><input type="radio" name="hlType" value="short" checked>得点前 <input type="number" id="hlSec" value="5" min="2" max="20" step="1"> 秒</label>
@@ -252,7 +280,7 @@
     </div>
     <div id="hlLog"></div>
   </div>
-</div>
+</details>
 <div class="panel" id="queuePanel" style="display:none">
   <div id="queue" class="sub"></div>
 </div>
@@ -394,24 +422,55 @@
 <div id="onboard">
   <div class="onb-card">
     <h2><span class="rule"></span>SENSEKI SCAN の使い方</h2>
-    <p class="lead">対戦録画から戦績CSVを自動抽出します。解析はすべてこのPC内で完結し、動画がアップロードされることはありません。</p>
+    <p class="lead">対戦録画から戦績CSVを自動抽出します（メイン機能）。おまけで得点シーンのハイライト動画も作れます。解析はすべてこのPC内で完結し、動画がアップロードされることはありません。</p>
+
+    <div class="onb-sec">1. 戦績を抽出する（録画 → CSV → SENSEKI FEVER）</div>
     <div class="onb-step"><span class="n">1</span><div>
-      <b>録画ファイル（MP4）をドラッグ&ドロップ</b>
-      <p>OBS等の元録画をそのまま使ってください（編集ソフトで再エンコードした動画は精度が落ちます）。推奨: 1080p以上・30fps以上・ビットレート6〜12Mbps（高すぎると解析に時間がかかります）。複数ファイルまとめてOK。</p>
-      <p>配信レイアウトなどで<b>ゲームが画面いっぱいに映っていない</b>録画は、先に「ゲーム画面の位置」でゲーム画面の範囲を指定してください（自動検出あり）。指定しないと何も検出できません。</p>
+      <b>録画ファイル（MP4）を「1. 戦績を抽出する」の枠にドラッグ&ドロップ</b>
+      <p>OBS等の元録画をそのまま使ってください（編集ソフトで再エンコードした動画は精度が落ちます）。推奨: 1080p以上・30fps以上・ビットレート6〜12Mbps。複数ファイルまとめてOK。シングルス/ダブルス・クラシック/フィーバーは自動で見分けます。</p>
+      <p>配信レイアウトなどで<b>ゲームが画面いっぱいに映っていない</b>録画は、先に「ゲーム画面の位置」→「変更…」でゲーム画面の範囲を指定してください（自動検出あり）。指定しないと何も検出できません。</p>
     </div></div>
     <div class="onb-step"><span class="n">2</span><div>
       <b>解析を待つ</b>
-      <p>動画1本あたり数分かかります。録画時間や試合数によって前後します。</p>
+      <p>動画1本あたり数分かかります（録画時間や試合数で前後）。待っている間に次のファイルをドロップして追加できます。</p>
     </div></div>
     <div class="onb-step"><span class="n">3</span><div>
       <b>「1件ずつ確認」で内容をチェック</b>
-      <p>証拠画像と入力欄が並んで表示されます。赤枠＝要確認なので直してください。Enter または → で次の試合へ、← で前へ。修正した内容は次回から自動で学習されます。</p>
+      <p>証拠画像と入力欄が並んで表示されます。<b>赤枠＝要確認</b>なので画像を見て直してください。Enter または → で次の試合へ、← で前へ。相手名は過去にCSV保存した名前から自動で入ります（「相手名の自動入力」で切替可）。手で直したキャラ・コート・名前は次回から自動で学習されます。</p>
     </div></div>
     <div class="onb-step"><span class="n">4</span><div>
-      <b>CSVを保存 → SENSEKI FEVER へ</b>
-      <p>保存したCSVは SENSEKI FEVER の「CSV一括登録」にそのまま読み込めます。</p>
+      <b>「CSVをコピー」→ SENSEKI FEVER の一括登録ページで「クリップボードから読み込む」</b>
+      <p>ファイルを作らずに登録できる最短ルートです。「CSVを保存」でファイルにしてから「CSV一括登録」に読み込ませてもOK。</p>
     </div></div>
+
+    <div class="onb-sec">2. ハイライト生成（任意）</div>
+    <div class="onb-step"><span class="n">1</span><div>
+      <b>「2. ハイライト生成」を開いて区間の種類を選ぶ</b>
+      <p>「得点前N秒」「サーブから得点まで」「試合ごと（全ラリーをつなぐ）」の3種類。あとから変えられます。</p>
+    </div></div>
+    <div class="onb-step"><span class="n">2</span><div>
+      <b>録画を選ぶ</b>
+      <p>「録画を選ぶ…」かパネルへのドロップ。戦績を抽出したばかりの録画は「直近の録画で作る」ボタンで再利用できます。</p>
+    </div></div>
+    <div class="onb-step"><span class="n">3</span><div>
+      <b>保存する区間にチェック → 必要なら「区間を調整」</b>
+      <p>「自分の得点だけを選ぶ」が既定。サムネイルをクリックすると始点・終点をタイムラインで直せます（緑＝プレー中・赤＝プレイヤー名が映る区間）。</p>
+    </div></div>
+    <div class="onb-step"><span class="n">4</span><div>
+      <b>保存形式を選んで書き出し</b>
+      <p>「区間ごとに保存」か「1本に繋げて保存」（つなぎ目のトランジションを選べます）。プレイヤー名が映る画面は自動で除外し、自分のキャラのバッジを最初の数秒に重ねられます。保存先は最初の保存時に選びます。</p>
+    </div></div>
+
+    <div class="onb-sec">こまったとき</div>
+    <div class="onb-step"><span class="n">?</span><div>
+      <b>何も検出されない</b>
+      <p>ゲームが画面いっぱいに映っていない録画は「ゲーム画面の位置」を指定してください。再エンコードした動画や低ビットレートの録画も検出が落ちます。</p>
+    </div></div>
+    <div class="onb-step"><span class="n">?</span><div>
+      <b>読み取りが間違っている・落ちる</b>
+      <p>右上の「バグ報告」の手順でレポート（バージョンと解析ログ）を保存し、症状とあわせてGitHubか作者へ送ってください。レポートに動画や個人情報は含まれません。</p>
+    </div></div>
+
     <div class="onb-foot">
       <button class="primary" id="onbClose">はじめる</button>
       <span class="note">この画面は右上の「使い方」からいつでも開けます</span>
@@ -2112,7 +2171,7 @@ $('resetAll').addEventListener('click', () => {
   reviewIdx = 0;
   render();
   drop.classList.remove('loaded');
-  drop.textContent = '録画ファイル（MP4）をドラッグ&ドロップ、またはクリックして選択（複数まとめてOK）';
+  $('dropMsg').textContent = '';
   $('progPanel').style.display = 'none';
   $('queuePanel').style.display = 'none';
 });
@@ -2166,7 +2225,7 @@ async function analyzeFile(f) {
   LAST_FILE = f;
   fileInfo = { name: f.name, lastModified: f.lastModified };
   drop.classList.add('loaded');
-  drop.textContent = '解析中: ' + f.name + '（追加のファイルはここへドロップ）';
+  $('dropMsg').textContent = '解析中: ' + f.name + '（追加のファイルはここへドロップ）';
   const url = URL.createObjectURL(f);
   try {
     video.src = url;
