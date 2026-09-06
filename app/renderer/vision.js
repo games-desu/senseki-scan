@@ -32,6 +32,7 @@ window.Vision = (() => {
     dNameL2: { x: 277,  y: 926, w: 370, h: 64 },
     dNameR1: { x: 1268, y: 852, w: 370, h: 64 },
     dNameR2: { x: 1268, y: 926, w: 370, h: 64 },
+    dMidBand: { x: 300, y: 852, w: 320, h: 30 }, // ダブルスVSの中央黒帯（シングルスにはカードが無いy帯）
     dIconL1: { x: 690,  y: 852, w: 118, h: 64 },
     dIconL2: { x: 690,  y: 926, w: 118, h: 64 },
     dIconR1: { x: 1125, y: 852, w: 118, h: 64 },
@@ -358,12 +359,14 @@ window.Vision = (() => {
     return out;
   }
 
-  function ncc(a, b) {
+  // n: 比較に使う先頭要素数（省略時は全体）。vsIcons の上11行だけ比較する等に使う
+  function ncc(a, b, n) {
+    n = n ? Math.min(n, a.length, b.length) : Math.min(a.length, b.length);
     let ma = 0, mb = 0;
-    for (let i = 0; i < a.length; i++) { ma += a[i]; mb += b[i]; }
-    ma /= a.length; mb /= b.length;
+    for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+    ma /= n; mb /= n;
     let num = 0, da = 0, db = 0;
-    for (let i = 0; i < a.length; i++) {
+    for (let i = 0; i < n; i++) {
       const xa = a[i] - ma, xb = b[i] - mb;
       num += xa * xb; da += xa * xa; db += xb * xb;
     }
@@ -675,7 +678,7 @@ window.Vision = (() => {
   function matchIcon(v, lib, len) {
     let best = null;
     for (const t of lib) {
-      const s = len ? nccLen(v, t.v, len) : ncc(v, t.v);
+      const s = ncc(v, t.v, len);
       if (!best || s > best.score) best = { name: t.name, score: s };
     }
     return best;
@@ -724,15 +727,6 @@ window.Vision = (() => {
       return { name: cb.name, score: best.score, colorScore: cb.score, base };
     }
     return { name: best.name, score: best.score, base };
-  }
-  function nccLen(a, b, n) {
-    n = Math.min(n, a.length, b.length);
-    let ma = 0, mb = 0;
-    for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
-    ma /= n; mb /= n;
-    let s = 0, da = 0, db = 0;
-    for (let i = 0; i < n; i++) { const x = a[i] - ma, y = b[i] - mb; s += x * y; da += x * x; db += y * y; }
-    return da && db ? s / Math.sqrt(da * db) : 0;
   }
 
   // コート名照合用: textVec の白チャンネルだけでNCCを取る。
@@ -927,6 +921,16 @@ window.Vision = (() => {
       if (frac(img, 0, 0, winR.w, winR.h, isYellow) > 0.5) tLast = t; else break;
     }
     return tLast;
+  }
+
+  // ダブルスのVS画面か: シングルスではカードが無いy帯(852-882)に「左=青カード AND 右=オレンジカード AND 中央=黒帯」が同時に揃うか
+  // （単色チェックだと水面コートの青やクレイコートのオレンジなど背景に誤爆する）。index.html の解析と hl-ui.js の自分キャラ検出で共用
+  function detectDoublesVs(video) {
+    const l1 = cropRegion(video, REGIONS.dIconL1), r1 = cropRegion(video, REGIONS.dIconR1), mid = cropRegion(video, REGIONS.dMidBand);
+    const blueL = frac(l1, 0, 0, REGIONS.dIconL1.w, 30, (r, g, b) => b > r + 40 && b > 120);
+    const orgR = frac(r1, 0, 0, REGIONS.dIconR1.w, 30, (r, g, b) => r > 160 && b < 100 && g > 40 && g < 170);
+    const darkM = frac(mid, 0, 0, REGIONS.dMidBand.w, 30, (r, g, b) => lum(r, g, b) < 60);
+    return blueL > 0.2 && orgR > 0.15 && darkM > 0.5;
   }
 
   // HUD(FVゲージ)が映っているか: 枡とバーの境目の黒い縦罫が左右とも暗ければ可視。
@@ -1290,7 +1294,7 @@ window.Vision = (() => {
   }
 
   return { REGIONS, NUM_SEG, LOOSE, NAME_SIG, GLYPH, nameSig, nameSigScore, nameBand, sigFromBand, nameStrokes, glyphVec, nameGlyphs, readName, lum, makeSeeker, setSourceRect, getSourceRect, srcRect, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
-           matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, VS_ICON_LEN, matchIconCard, iconGray, iconCardMasked, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
+           matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, VS_ICON_LEN, matchIconCard, iconGray, iconCardMasked, detectDoublesVs, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
            bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection,
            gaugeFill, gaugeFrameVisible, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
 })();
