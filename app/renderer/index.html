@@ -780,12 +780,25 @@ $('rectCanvas').addEventListener('pointerup', () => { RM.drag = null; });
 // ダブルスで「どちらの行が自分か」を決めるのに使う。ユーザーが名前を入力する必要はない。
 // 実測: シングルスの自分名 vs ダブルス左列の自分 = 0.938〜0.949 / 味方 = 0.000〜0.231
 // （左列は右寄せ・シングルスは左寄せで欄サイズも違うが、インク枠の正規化で一致する）
+// 名前を変える人（配信者は「ネヤ」「ネヤTwitch」のように変える・2026-09-06）のために、別の名前を最大8つ保持する。
+// 同じ名前は同一人物で 0.984〜0.986 まで一致するので 0.97 以上は「同じ名前」とみなして末尾へ移す（＝直近順）。
+// 旧実装(0.995で重複判定・3枚)は同じ名前が毎試合積まれて、別名で数試合すると前の名前が押し出されていた
 function learnMySig(sig) {
   if (!sig) return;
-  if (MYSIG.sigs.some(t => V.nameSigScore(sig, t) >= 0.995)) return; // 酷似は増やさない
-  MYSIG.sigs.push({ v: Array.from(sig.v, x => Math.round(x * 1000) / 1000), ar: +sig.ar.toFixed(4) });
-  if (MYSIG.sigs.length > 3) MYSIG.sigs.shift();  // 直近3枚（名前を変えても入れ替わる）
+  const same = MYSIG.sigs.findIndex(t => V.nameSigScore(sig, t) >= 0.97);
+  if (same >= 0) { MYSIG.sigs.push(MYSIG.sigs.splice(same, 1)[0]); }
+  else {
+    MYSIG.sigs.push({ v: Array.from(sig.v, x => Math.round(x * 1000) / 1000), ar: +sig.ar.toFixed(4) });
+    if (MYSIG.sigs.length > 8) MYSIG.sigs.shift();
+  }
   window.api.saveUserData('myname-user', MYSIG);
+}
+// 「この名前は自分ではない」（ダブルスで選ばなかった行の名前）を学習済みから外す。誤って味方の行を選んだときの取り消し用
+function forgetMySig(sig) {
+  if (!sig) return;
+  const before = MYSIG.sigs.length;
+  MYSIG.sigs = MYSIG.sigs.filter(t => V.nameSigScore(sig, t) < 0.9);
+  if (MYSIG.sigs.length !== before) window.api.saveUserData('myname-user', MYSIG);
 }
 // 2行のシグネチャから自分の行を決める。決められなければ null
 function myRowFromSigs(sig1, sig2) {
@@ -821,6 +834,7 @@ function chooseMyRow(m, row) {
   applyMyRow(m, row); d.decided = true; m.flags.myRow = false;
   if (changed) { (m.edited ??= {}).myChar = true; m.edited.partnerChar = true; }
   learnMySig(d.sigs[row - 1]);
+  forgetMySig(d.sigs[2 - row]); // 選ばなかった行の名前は自分ではない
   let n = 0;
   for (const o of matches) {
     if (o === m || !o._dbl || o._dbl.decided) continue;
