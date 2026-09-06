@@ -3,5 +3,3 @@
 - ダブルスと勝敗パネルの不要な「要確認」を削減
 - 対戦日時はファイル名の日時を優先。合わないときは「録画の開始日時」で一括修正
 - 辞書追加（ロゼッタ・カロン・ゲッソー）
-
-詳しい説明: https://github.com/games-desu/senseki-scan/blob/main/docs/release-notes-1.0.2.md

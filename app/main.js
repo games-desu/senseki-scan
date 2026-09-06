@@ -47,13 +47,16 @@ app.whenReady().then(() => {
       .split('\n').map(s => s.trim()).join('\n')
       .replace(/\n{2,}/g, '\n')
       .trim();
+    // ダイアログは素のテキストでURLはクリックできない → URLだけの行は消し、「詳しい説明を見る」ボタンでブラウザに開く
+    notes = notes.split('\n').filter(l => !/https?:\/\/\S+\s*$/.test(l) || l.replace(/https?:\/\/\S+/, '').replace(/^[・\s]*詳しい説明[:：]?\s*$/, '').trim()).join('\n').trim();
     if (notes.length > 1200) notes = notes.slice(0, 1200) + '…';
+    const releaseUrl = 'https://github.com/games-desu/senseki-scan/releases/tag/v' + info.version;
     const { response } = await dialog.showMessageBox(win, {
       type: 'info',
       title: 'アップデート',
       message: `新しいバージョン v${info.version} があります（現在 v${app.getVersion()}）`,
       detail: notes ? '更新内容:\n' + notes : undefined,
-      buttons: ['今すぐ更新', 'あとで', 'このバージョンをスキップ'],
+      buttons: ['今すぐ更新', 'あとで', 'このバージョンをスキップ', '詳しい説明を見る'],
       defaultId: 0,
       cancelId: 1,
       noLink: true,
@@ -64,6 +67,8 @@ app.whenReady().then(() => {
       });
     } else if (response === 2) {
       fs.writeFileSync(updaterStatePath(), JSON.stringify({ skipVersion: info.version }));
+    } else if (response === 3) {
+      shell.openExternal(releaseUrl); // 「あとで」扱い（次回起動時にまた出る）
     }
   });
   autoUpdater.on('update-downloaded', async info => {
