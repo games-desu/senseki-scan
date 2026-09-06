@@ -166,10 +166,18 @@ window.Vision = (() => {
     // （720p クラシック実戦・docs/csv-accuracy-720p-classic.md）。
     // その救済として「左右の黒い名前帯」を補助条件にする。長い相手名は白文字で黒を薄めるため右帯の閾値は0.28。
     // 4動画（720p x2 / 1080p x2）で偽陽性ゼロを確認済み。
-    if (frac(img, 67, 91, 78, 98, isBlue) > 0.15 && frac(img, 90, 89, 103, 100, isWhite) > 0.25) {
+    // 自分側も同じ: 体が大きいキャラ（ブンブン・クッパ等）のアイコンが青カードを覆うと青が 0.00〜0.04 になり
+    // VS画面を丸ごと取り逃す（2026-09-06 利用者報告=自分ブンブン・青0.000／手持ち 15-18-15 の自分クッパ・青0.04）。
+    // 救済は「相手側オレンジ ≥0.10 ＋ 左右の黒い名前帯 ＋ 白VSロゴ」。手持ち9動画5,000フレームの1fps走査で偽陽性ゼロ・
+    // 取り逃し2件とも回復（tools/headless-analyze.js で再現可）。
+    if (frac(img, 90, 89, 103, 100, isWhite) > 0.25) {
+      const blue = frac(img, 67, 91, 78, 98, isBlue);
       const orange = frac(img, 111, 90, 124, 99, isOrange);
       const darkBand = (x0, x1) => frac(img, x0, 91, x1, 98, (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b < 60);
-      if (orange > 0.10 || (orange > 0.02 && darkBand(16, 60) > 0.45 && darkBand(132, 176) > 0.28)) return 'vs';
+      if (blue > 0.15 && orange > 0.10) return 'vs';
+      if ((blue > 0.15 && orange > 0.02) || (blue <= 0.15 && orange > 0.10)) {
+        if (darkBand(16, 60) > 0.45 && darkBand(132, 176) > 0.28) return 'vs';
+      }
     }
     // winner: 黄色ハイライト(勝者行は上下どちらもありうるので両行域) + パネル色。
     // シングルスのパネルはオリーブ系半透明、ダブルスは濃紺(実測 fdark 0.74〜0.82・olive 0.09〜0.2)なので

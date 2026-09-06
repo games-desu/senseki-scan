@@ -966,6 +966,8 @@ function parseStartTime(name, lastModified, duration) {
   if (m) return { date: D(m[1], m[2], m[3], m[4], m[5], m[6] || 0), source: 'name' };
   m = name.match(/(\d{4})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})/);                  // Switch本体 20260905212423xx / 20260905_212423
   if (m) return { date: D(m[1], m[2], m[3], m[4], m[5], m[6]), source: 'name' };
+  m = name.match(/(\d{4})年(\d{1,2})月(\d{1,2})日(\d{1,2})時(\d{1,2})分(?:(\d{1,2})秒)?/); // 和文 2026年09月04日11時59分（利用者の切り抜き動画・2026-09-06）
+  if (m) return { date: D(m[1], m[2], m[3], m[4], m[5], m[6] || 0), source: 'name' };
   m = name.match(/(\d{4})[-._](\d{2})[-._](\d{2})/);                                     // 日付だけ（時刻は不明→0時。要確認）
   if (m) return { date: D(m[1], m[2], m[3]), source: 'mtime' };
   if (lastModified) return { date: new Date(lastModified - duration * 1000), source: 'mtime' };

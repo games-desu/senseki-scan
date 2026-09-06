@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>headless-analyze</title>
+<!--
+  headless-analyze.js から headless Chrome で開く駆動ページ。
+  同一オリジンの iframe に app/renderer/index.html を読み込み、本番と同じ analyzeFile() を走らせて
+  解析ログ・試合結果・CSV を /__result へ POST する。ブラウザを見なくてもフル解析を再現できる。
+  query: name=<表示用ファイル名> lm=<lastModified ms> rect=<rx,ry,rw,rh 割合> (省略=全画面)
+-->
+<script>
+const q = new URLSearchParams(location.search);
+const post = body => fetch('/__result', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const progress = (stage, extra) => fetch("/__progress", { method: "POST", body: JSON.stringify({ stage, ...extra }) }).catch(() => {});
+window.addEventListener("error", e => progress("error", { msg: String(e.message) }));
+(async () => {
+  // 「ゲーム画面の位置」は設定(localStorage の sc_settings)経由で渡す。index.html の SETTINGS は let なので外から触れない
+  const settings = { autoName: true };
+  if (q.get('rect')) {
+    const [rx, ry, rw, rh] = q.get('rect').split(',').map(Number);
+    settings.gameRect = { rx, ry, rw, rh };
+  }
+  localStorage.setItem('sc_settings', JSON.stringify(settings));
+  const f = document.createElement('iframe');
+  f.style.cssText = 'width:1400px;height:900px;border:0';
+  f.src = '../app/renderer/index.html';
+  (document.body || document.documentElement).appendChild(f);
+  await new Promise(r => f.addEventListener('load', r, { once: true }));
+  const w = f.contentWindow;
+  progress("iframe loaded");
+  for (let i = 0; i < 100 && !(w.analyzeFile && w.Vision); i++) await sleep(100);
+  try {
+    progress("fetch video");
+    const r = await fetch('/__video');
+    const blob = await r.blob();
+    progress("video fetched", { size: blob.size });
+    const tick = setInterval(() => progress("analyzing", { prog: w.document.getElementById("progPanel")?.innerText?.replace(/\s+/g, " ").slice(0, 80), log: w.document.getElementById("logPanel")?.innerText?.length }), 5000);
+    const file = new File([blob], q.get('name') || 'video.mp4', { type: 'video/mp4', lastModified: +(q.get('lm') || Date.now()) });
+    const t0 = performance.now();
+    await w.analyzeFile(file);
+    clearInterval(tick);
+    await post({
+      ok: true, sec: +((performance.now() - t0) / 1000).toFixed(1),
+      log: w.document.getElementById('logPanel').innerText,
+      csv: w.buildCsvText(),
+      // matches は index.html の let 変数で外から見えないので CSV（buildCsvText）で受け取る
+      flags: [...w.document.querySelectorAll('.flag, .warn')].map(e => e.textContent.trim()).filter(Boolean).slice(0, 50),
+    });
+  } catch (e) {
+    await post({ ok: false, error: String(e && e.stack || e), log: w.document.getElementById('logPanel')?.innerText });
+  }
+})();
+</script>
