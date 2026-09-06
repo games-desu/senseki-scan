@@ -27,6 +27,9 @@
   #dropMsg:empty { display:none; }
   .setrow { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12px; color:var(--sub); margin-top:10px; }
   .setsep { width:1px; height:16px; background:var(--border); }
+  .startrow { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12px; padding:4px 0; }
+  .startrow input { background:#0c130f; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:4px 6px; font-size:12px; }
+  .startrow button { font-size:11px; padding:3px 10px; }
   details.panel > summary { cursor:pointer; list-style:none; margin-bottom:0; }
   details.panel > summary::-webkit-details-marker { display:none; }
   details.panel[open] > summary { margin-bottom:10px; }
@@ -297,6 +300,7 @@
   <button id="copyCsvTop" title="CSVをクリップボードにコピーします。SENSEKI FEVERの一括登録ページの「クリップボードから読み込む」でそのまま登録できます">CSVをコピー</button>
   <button id="resetAll" title="読み込んだ解析結果をすべて消します">クリア</button>
 </div>
+<div class="panel" id="startPanel" style="display:none"></div>
 <div id="review"></div>
 <div id="results"></div>
 <div class="panel" id="exportPanel" style="display:none">
@@ -435,6 +439,7 @@
     <div class="onb-step"><span class="n">3</span><div>
       <b>「1件ずつ確認」で内容をチェック</b>
       <p>証拠画像と入力欄が並んで表示されます。<b>赤枠＝要確認</b>なので画像を見て直してください。Enter または → で次の試合へ、← で前へ。相手名は過去にCSV保存した名前から自動で入ります（「相手名の自動入力」で切替可）。手で直したキャラ・コート・名前は次回から自動で学習されます。</p>
+      <p>試合の日時は<b>ファイル名の日時</b>（OBS標準の「2026-09-05 21-24-23.mp4」形式）から決めます。ファイル名に日時が無い動画（YouTubeからダウンロードしたアーカイブなど）は更新日時から推定するので合いません。結果の上の「録画の開始日時」に配信開始の日時を入れて「適用」すると、その動画の全試合の日時を作り直します。</p>
     </div></div>
     <div class="onb-step"><span class="n">4</span><div>
       <b>「CSVをコピー」→ SENSEKI FEVER の一括登録ページで「クリップボードから読み込む」</b>
@@ -897,15 +902,50 @@ async function harvestTemplates() {
   }
 }
 
-// ---- ファイル名から録画開始日時 ----
+// ---- 録画開始日時: ファイル名 → 無ければファイルの更新日時から推定 ----
+// 戻り値 {date, source}: source は 'name'(ファイル名の日時) / 'mtime'(更新日時−長さ。YouTube等からダウンロードした
+// アーカイブはDL時刻になるので合わない→要確認にして「録画の開始日時」で一括修正してもらう・2026-09-06) / null
 function parseStartTime(name, lastModified, duration) {
-  let m = name.match(/(\d{4})-(\d{2})-(\d{2})[ _](\d{2})-(\d{2})-(\d{2})/); // OBS形式
-  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-  m = name.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\d{2}/);        // Switch本体形式
-  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-  if (lastModified) return new Date(lastModified - duration * 1000);         // 最終更新-長さ
-  return null;
+  const D = (y, mo, d, h = 0, mi = 0, se = 0) => new Date(+y, +mo - 1, +d, +h, +mi, +se);
+  let m = name.match(/(\d{4})-(\d{2})-(\d{2})[ _T](\d{2})[-:](\d{2})(?:[-:](\d{2}))?/); // OBS形式 2026-09-05 21-24-23（_ や : 区切りも）
+  if (m) return { date: D(m[1], m[2], m[3], m[4], m[5], m[6] || 0), source: 'name' };
+  m = name.match(/(\d{4})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})/);                  // Switch本体 20260905212423xx / 20260905_212423
+  if (m) return { date: D(m[1], m[2], m[3], m[4], m[5], m[6]), source: 'name' };
+  m = name.match(/(\d{4})[-._](\d{2})[-._](\d{2})/);                                     // 日付だけ（時刻は不明→0時。要確認）
+  if (m) return { date: D(m[1], m[2], m[3]), source: 'mtime' };
+  if (lastModified) return { date: new Date(lastModified - duration * 1000), source: 'mtime' };
+  return { date: null, source: null };
 }
+// 動画ごとの開始日時（「録画の開始日時」パネルで表示・変更する）
+const VIDEO_START = {}; // name → {start: Date|null, source, duration}
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
+function renderStartPanel() {
+  const names = [...new Set(matches.map(m => m.video))].filter(n => VIDEO_START[n]);
+  const el = $('startPanel');
+  if (!names.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const srcLabel = { name: 'ファイル名の日時から', mtime: 'ファイルの更新日時から推定（ダウンロードした動画だと合いません）', manual: '手入力' };
+  const toLocal = d => d && !isNaN(d.getTime()) ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
+  el.style.display = 'block';
+  el.innerHTML = '<div class="sub" style="margin-bottom:6px">録画の開始日時（各試合の日時はここに試合開始位置を足したもの。違っていたら直して「適用」）</div>' + names.map(n => {
+    const v = VIDEO_START[n];
+    const warn = v.source === 'mtime' ? ' <span style="color:var(--warn)">要確認</span>' : '';
+    return `<div class="startrow" data-video="${esc(n)}"><b>${esc(n)}</b><input type="datetime-local" value="${toLocal(v.start)}" step="60"><button data-act="apply">適用</button><span class="sub" style="margin:0">${srcLabel[v.source] || '不明'}${warn}</span></div>`;
+  }).join('');
+}
+$('startPanel').addEventListener('click', e => {
+  const b = e.target.closest('button[data-act=apply]'); if (!b) return;
+  const row = b.closest('.startrow'), name = row.dataset.video, inp = row.querySelector('input');
+  const d = inp.value ? new Date(inp.value) : null;
+  if (!d || isNaN(d.getTime())) { alert('日時を入力してください'); return; }
+  VIDEO_START[name].start = d; VIDEO_START[name].source = 'manual';
+  for (const m of matches) {
+    if (m.video !== name || m._vsT0 == null) continue;
+    m.playedAt = fmtDT(new Date(d.getTime() + m._vsT0 * 1000));
+    m.flags.playedAt = false; (m.edited ??= {}).playedAt = true;
+  }
+  log(`${name}: 録画の開始日時を ${fmtDT(d)} に変更（この動画の全試合の日時を作り直しました）`);
+  render();
+});
 const fmtDT = d => {
   if (!d || isNaN(d.getTime())) return '';
   const p = n => String(n).padStart(2, '0');
@@ -1089,7 +1129,10 @@ async function analyze() {
 
   window.A.phase = 'extract';
   const R = V.REGIONS;
-  const startTime = parseStartTime(fileInfo.name, fileInfo.lastModified, video.duration);
+  const st = parseStartTime(fileInfo.name, fileInfo.lastModified, video.duration);
+  const startTime = st.date;
+  VIDEO_START[fileInfo.name] = { start: st.date, source: st.source, duration: video.duration };
+  if (st.source !== 'name') log(`[警告] 録画の開始日時をファイル名から読めず、${st.source === 'mtime' ? 'ファイルの更新日時から推定しました' : '決められませんでした'}。YouTube等からダウンロードした動画は合わないので、結果の上の「録画の開始日時」で直してください（試合の日時は要確認にしています）`);
   const videoMatches = []; // この動画ぶん（バッチではmatchesへ追記される）
   // 勝敗パネル処理。後段の再探索パスからも呼ぶため関数化(2026-08-29)
   const processWinner = async (m, g) => {
@@ -1328,7 +1371,8 @@ async function analyze() {
       }
     }
     m.playedAt = startTime ? fmtDT(new Date(startTime.getTime() + g.vs.t0 * 1000)) : '';
-    if (!m.playedAt) m.flags.playedAt = true;
+    m._vsT0 = g.vs.t0; // 「録画の開始日時」を直したときに日時を作り直すための試合開始位置
+    if (!m.playedAt || st.source !== 'name') m.flags.playedAt = true;
 
     await processWinner(m, g);
 
@@ -1874,6 +1918,7 @@ function render() {
   closeCombo();
   if (viewMode === 'single') renderReview(); else renderList();
   $('exportPanel').style.display = matches.length ? 'block' : 'none';
+  renderStartPanel();
 }
 
 function renderList() {
