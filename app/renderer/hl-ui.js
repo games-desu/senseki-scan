@@ -9,9 +9,9 @@
   const hv = $('hlVideo');
   const HL = { file: null, path: null, url: null, key: null, windows: [], points: [], busy: false, cancel: false, curJob: null, edit: null };
   const fmtT = t => { t = Math.max(0, t); const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + s.toFixed(1).padStart(4, '0'); };
-  const fileKey = f => f.name + '|' + f.size + '|' + f.lastModified;
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const safeName = s => String(s).replace(/\s+/g, '').replace(/[\\/:*?"<>|]/g, '');
+  const newJobId = () => 'hl' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); // 連結ジョブの子は main 側が jobId-… を付ける
 
   // 区間の種類: 'short'（得点前N秒）/ 'full'（ラリー全体）/ 'match'（試合ごと＝全ラリーをつなぐ）
   const hlType = () => (document.querySelector('input[name=hlType]:checked') || {}).value || 'short';
@@ -28,6 +28,14 @@
   }
   function setBusy(b) {
     for (const id of ['hlExportEach', 'hlExportJoined', 'hlPick', 'hlUseLast']) $(id).disabled = b;
+    refreshUseLast();
+  }
+  // 「直近の録画で作る」ボタンと、畳んだ見出しのヒント。LAST_FILE の更新(index.html の sc-lastfile)・busy切替・パネル開閉のときだけ更新
+  function refreshUseLast() {
+    const panel = $('hlPanel');
+    $('hlUseLast').style.display = (LAST_FILE && !HL.busy) ? 'inline-block' : 'none';
+    if (LAST_FILE) $('hlUseLast').textContent = '直近の録画で作る（' + LAST_FILE.name + '）';
+    const hint = $('hlSumHint'); if (hint) hint.textContent = (LAST_FILE && !panel.open) ? '直近の録画（' + LAST_FILE.name + '）で作れます' : '';
   }
   function hlLog(m) { const el = $('hlLog'); el.textContent += (el.textContent ? '\n' : '') + m; el.style.display = 'block'; el.scrollTop = 1e9; if (typeof log === 'function') log('[ハイライト] ' + m); }
 
@@ -60,11 +68,7 @@
     if (!w.vs) return;
     const R = V.REGIONS, seek = V.makeSeeker(hv);
     await seek((w.vs.t0 + w.vs.t1) / 2);
-    const l1img = V.cropRegion(hv, R.dIconL1), r1img = V.cropRegion(hv, R.dIconR1), midimg = V.cropRegion(hv, { x: 300, y: 852, w: 320, h: 30 });
-    const blueL = V.frac(l1img, 0, 0, R.dIconL1.w, 30, (r, g, b) => b > r + 40 && b > 120);
-    const orgR = V.frac(r1img, 0, 0, R.dIconR1.w, 30, (r, g, b) => r > 160 && b < 100 && g > 40 && g < 170);
-    const darkM = V.frac(midimg, 0, 0, 320, 30, (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b < 60);
-    w.my.isDoubles = blueL > 0.2 && orgR > 0.15 && darkM > 0.5;
+    w.my.isDoubles = V.detectDoublesVs(hv); // 戦績CSV解析と同じ判定（vision.js）
     if (!w.my.isDoubles) {
       // R.myicon(700,898,90x88) は認識用で、下側約30%がカードの外(コートや黄色いライン)。
       // バッジは自分側カードの内側(実測 y888〜958・x690〜808)だけを使い、顔が中央に来るようにする(ユーザー指摘 2026-09-05)
@@ -111,7 +115,7 @@
     $('hlCancel').style.display = 'inline-block';
     const t0 = performance.now();
     try {
-      HL.file = file; HL.key = fileKey(file);
+      HL.file = file; HL.key = sceneKey(file); // index.html と同じキー生成
       HL.path = window.api.pathForFile ? window.api.pathForFile(file) : null;
       if (HL.url) { try { URL.revokeObjectURL(HL.url); } catch {} }
       HL.url = URL.createObjectURL(file);
@@ -152,11 +156,11 @@
       }
       // 試合番号（窓 × 得点リセットで分かれたゲーム）と、試合内の通し番号・サムネ
       let mno = 0, lastKey = null, k = 0;
-      for (const p of HL.points) {
+      HL.points.forEach((p, idx) => {
         const key = p.win + ':' + p.game;
         if (key !== lastKey) { mno++; lastKey = key; k = 0; }
-        p.match = mno; p.k = ++k; p.idx = HL.points.indexOf(p); p.edit = null;
-      }
+        p.match = mno; p.k = ++k; p.idx = idx; p.edit = null;
+      });
       const seek = V.makeSeeker(hv);
       for (let i = 0; i < HL.points.length; i++) {
         const p = HL.points[i];
@@ -165,7 +169,7 @@
         p.thumb = hlJpeg(320);
       }
       hlProg('自分のキャラを確認中…', 0.99);
-      for (const w of wins) { try { await detectMyChar(w); } catch (e) { w.my = { name: '', icon: null }; } }
+      for (const w of wins) { try { await detectMyChar(w); } catch (e) { w.my = { icon: null }; } }
       applyIncludeFilter();
       hlRender();
       hlProg('', null);
@@ -551,7 +555,7 @@
       HL.jobTotal = cuts.length + groups.length;
       for (const c of cuts) {
         if (HL.cancel) break;
-        HL.curJob = 'hl' + Date.now() + Math.random().toString(36).slice(2, 6);
+        HL.curJob = newJobId();
         hlProg(`書き出し中… ${HL.jobDone + 1}/${HL.jobTotal}`, HL.jobDone / HL.jobTotal);
         const r = await window.api.hlCut({ jobId: HL.curJob, input: HL.path, start: c.s, duration: +(c.e - c.s).toFixed(3), out: c.out, crop, maxH, badge: badges.get(c.p.win) || null });
         HL.jobDone++;
@@ -563,7 +567,7 @@
         if (HL.cancel) break;
         const files = g.cuts.filter(c => c.ok).map(c => c.out);
         if (!files.length) continue;
-        HL.curJob = 'hl' + Date.now();
+        HL.curJob = newJobId();
         HL.joining = g.out.split('\\').pop();
         hlProg(`繋げています… ${HL.joining}`, HL.jobDone / HL.jobTotal);
         const r = await window.api.hlConcat({ jobId: HL.curJob, files, out: g.out, transition: transitionOpt() });
@@ -598,12 +602,9 @@
     const f = [...e.dataTransfer.files].find(x => /\.(mp4|mov|mkv|webm)$/i.test(x.name));
     if (f) hlLoad(f);
   });
-  setInterval(() => {
-    $('hlUseLast').style.display = (LAST_FILE && !HL.busy) ? 'inline-block' : 'none';
-    if (LAST_FILE) $('hlUseLast').textContent = '直近の録画で作る（' + LAST_FILE.name + '）';
-    // 畳んだ見出しにも「直近の録画で作れる」ことを出す（パネルを開かないと hlUseLast が見えないため）
-    const hint = $('hlSumHint'); if (hint) hint.textContent = (LAST_FILE && !panel.open) ? '直近の録画（' + LAST_FILE.name + '）で作れます' : '';
-  }, 1000);
+  document.addEventListener('sc-lastfile', refreshUseLast);
+  panel.addEventListener('toggle', refreshUseLast);
+  refreshUseLast();
   userDataReady.then(() => {
     if (SETTINGS.hlOutDir) { HL.outDir = SETTINGS.hlOutDir; $('hlOutDir').textContent = SETTINGS.hlOutDir; }
     if (SETTINGS.hlTrans) { $('hlTrans').value = SETTINGS.hlTrans.type || 'fade'; $('hlTransSec').value = SETTINGS.hlTrans.duration || 0.3; }

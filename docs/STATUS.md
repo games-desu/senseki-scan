@@ -39,6 +39,14 @@
     → `{x:698,y:890,w:96,h:66}`（実測カード y888〜958）。3キャラで顔が中央に来ることを確認
 
 ### v1.0.2候補（2026-09-06・package.json改番済み・未ビルド）: キャラ照合をカード背景色に非依存に（ガボン→ヨッシー:ピンク誤認の根本対策）
+- **同梱のコード整理（2026-09-06・レビュー指摘分・動作不変）**: samples/frames/cleanup-0906.js で一括適用（完全一致置換・26箇所）
+  - vision.js: nccLen を廃止し ncc(a,b,n) に比較長を統合／ダブルスVS判定 detectDoublesVs(video) と REGIONS.dMidBand を新設（index.html と hl-ui.js の重複3条件を一本化）
+  - index.html: SCENE_CACHE のキー生成を sceneKey(f) に一本化（hl-ui.js も同じ関数）／LAST_FILE 更新時に sc-lastfile イベントを発火／死んだCSS(.hlmy select・.hlfin)削除
+  - hl-ui.js: 1秒ポーリング(setInterval)を廃止し refreshUseLast() を sc-lastfile・パネルtoggle・busy切替で呼ぶ／p.idx の O(n²) indexOf を forEach の添字に／ジョブID生成を newJobId() に統一／my フォールバックの死んだ name フィールド削除
+  - highlight.js: readFrame(video,{hudOnly}) を追加し、得点走査 scanWindow は HUD だけ読む（classify と readSide×2 を毎サンプル計算しない。名前ガード guardRange は従来どおり全部読む）
+  - main.js: 一時フォルダ生成を hlTmpDir() に統合
+  - 検証: node --check 全ファイル／tools/highlight-node.js（readFrame 既定動作）8ポイント検出／開発ページで 21-24-23 を解析→全項目正解→直近の録画で作る→11ポイント(4-7と一致・24秒)→区間の調整/前後/キー無視/全部選ぶ/種類切替/一覧/1件ずつ/使い方/バグ報告/ゲーム画面の位置/クリア すべて実行時エラーなし
+  - 未着手（影響が大きい・別途）: hlRender の innerHTML 全再構築／サムネ生成の再シーク／xfade 連結の三重エンコード＋probe／findBanner の毎フレームマスク確保
 ユーザー報告: 自分側のガボンが「ヨッシー:ピンク」(0.61・要確認フラグ付き)になった。
 - 原因: VSアイコンのRGB NCCはカード背景色（自分=青／相手=橙）に支配される。ガボンの手札は相手側2枚のみで、自分側のガボンはどれとも合わず
   低スコア帯の最上位がヨッシー:ピンクだった（ガボン↔ヨッシー:ピンクの類似は0.39＝似ているわけではない）。

@@ -19,8 +19,10 @@ window.Highlight = (() => {
   };
 
   // 1フレーム読む: コーナーHUD + シーン + ポイント間バナー
-  function readFrame(video) {
+  // hudOnly=true なら HUD だけ（得点走査 scanWindow 用。cls/banner は名前ガード guardRange しか使わないので毎サンプル計算しない）
+  function readFrame(video, { hudOnly = false } = {}) {
     const hud = Rl().readHud(video);
+    if (hudOnly) return { hudOn: hud.hudOn, L: hud.L, R: hud.R, cls: null, banner: false };
     const cls = Vn().classify(Vn().frameToData(video, 192, 108));
     let banner = false;
     if (!hud.hudOn) {
@@ -201,7 +203,7 @@ window.Highlight = (() => {
     const t1 = Math.min(w.t1, video.duration - 0.1);
     for (let t = w.t0; t <= t1; t += step) {
       await seek(t);
-      samples.push({ t: +t.toFixed(3), ...readFrame(video) });
+      samples.push({ t: +t.toFixed(3), ...readFrame(video, { hudOnly: true }) });
       if (onProgress) onProgress(t, w);
     }
     const points = buildPoints(samples);
