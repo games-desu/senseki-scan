@@ -1243,17 +1243,21 @@ async function analyze() {
         // 自分の行 = VSで判定した自分キャラとアイコンが一致する行。
         // ミラー戦（同キャラ対戦）はアイコンで判別不能、ダブルスは行=チームでアイコンがペア
         // → どちらも後段でレート増減から勝敗を確定する
+        // 行の照合は色違いを同一視する（勝敗パネルのアイコンは色違いが 0.94 前後で入れ替わる実例:
+        // VSでヨッシー:オレンジ→パネルでヨッシー:ピンク → どの行も一致せずミラー扱い→結果が要確認になった・2026-09-06）
+        const base = x => String(x || '').split(':')[0];
+        const b1 = base(i1.name), b2 = base(i2.name), bm = base(m.myChar);
         let myRow = 1, mirror = false;
         if (m.isDoubles) mirror = true;
-        else if (i1.name === m.myChar && i2.name !== m.myChar) myRow = 1;
-        else if (i2.name === m.myChar && i1.name !== m.myChar) myRow = 2;
+        else if (b1 === bm && b2 !== bm) myRow = 1;
+        else if (b2 === bm && b1 !== bm) myRow = 2;
         // 両行が自キャラ名に照合されても、高信頼(>=0.9)が片行だけで他方が低信頼(<=0.8)なら
         // 低信頼側は未収穫アイコンの誤マッチとみなし、高信頼行を自分と確定する
         // (マリオ未収穫→次点ハナチャン@0.68で偽ミラー化しスコア空欄になった実例・2026-08-29。
         //  本物のミラー戦は両行とも高信頼で一致するためこの規則にはかからない)
-        else if (i1.name === m.myChar && i2.name === m.myChar && i1.score >= 0.9 && i2.score <= 0.8) myRow = 1;
-        else if (i1.name === m.myChar && i2.name === m.myChar && i2.score >= 0.9 && i1.score <= 0.8) myRow = 2;
-        else if (m.myChar === m.oppChar || i1.name === i2.name) mirror = true;
+        else if (b1 === bm && b2 === bm && i1.score >= 0.9 && i2.score <= 0.8) myRow = 1;
+        else if (b1 === bm && b2 === bm && i2.score >= 0.9 && i1.score <= 0.8) myRow = 2;
+        else if (bm === base(m.oppChar) || b1 === b2) mirror = true;
         // どちらの行も自キャラ名に一致しない = パネルアイコン辞書の未収穫キャラの可能性が高い。
         // 「スコアが低い方=自分でない」の当て推量は実戦で逆を引いた（キャサリンvsベビィワリオで
         // win/スコア反転の無警告誤り・2026-08-28）→ ミラー戦扱いにしてレート増減で確定（不能ならフラグ）
