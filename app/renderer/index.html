@@ -1353,22 +1353,21 @@ async function analyze() {
       // 自分の名前の位置は左上/左下で固定ではない（利用者の指摘 2026-09-06）ので、未学習のときは
       // 上の行を仮に置いて「自分の行」を要確認にし、カードの「上が自分/下が自分」で選んでもらう→選んだ行を学習。
       // 旧方式（同梱テンプレ=開発者の名前との照合）は他の利用者には効かないので廃止
-      const iv = k => V.iconVec(V.cropRegion(video, R[k]), 16, 12);
-      const ic = v => V.matchIconCard(v, TPL.dblIcons || [], { w: 16, rows: 12 }); // 16x12・カード背景色に非依存
+      // 16x12・カード背景色に非依存・行による約3pxのアイコン位置ずれを許容(±4/±2pxで最良を採用・vision.js参照)
+      const ic = k => V.matchIconCardAround(video, R[k], 16, 12, TPL.dblIcons || [], { w: 16, rows: 12 });
       const zi = r => regionJpeg({ x: r.x - 14, y: r.y - 10, w: r.w + 28, h: r.h + 20 }, 140); // フィールドカード用ズーム
       const nameParts = reg => { // 名前欄の材料（自動入力・転記・文字収穫に使う）
         const ncrop = V.cropRegion(video, reg), nband = V.nameBand(ncrop);
         return { vec: Array.from(V.textVec(ncrop, 32, 8)), sig: V.sigFromBand(nband), band: nband, crop: cropDataUrl(reg) };
       };
-      const vL1 = iv('dIconL1'), vL2 = iv('dIconL2'), vR1 = iv('dIconR1'), vR2 = iv('dIconR2');
-      const r1 = ic(vR1), r2 = ic(vR2);
+      const l1 = ic('dIconL1'), l2 = ic('dIconL2'), r1 = ic('dIconR1'), r2 = ic('dIconR2');
       const rows = [R.dNameL1, R.dNameL2].map(reg => V.nameSig(V.cropRegion(video, reg)));
       const mr = myRowFromSigs(rows[0], rows[1]);
       // 左列2行ぶんの材料。自分の行を選び直しても動画を読み直さずに割り当て直せる（applyMyRow）
       m._dbl = { row: mr ? mr.row : 1, decided: !!mr, sigs: rows,
-                 chars: [ic(vL1), ic(vL2)], vecs: [Array.from(vL1), Array.from(vL2)],
+                 chars: [l1, l2], vecs: [Array.from(l1.vec), Array.from(l2.vec)],
                  zooms: [zi(R.dIconL1), zi(R.dIconL2)], names: [nameParts(R.dNameL1), nameParts(R.dNameL2)] };
-      m._iconVecs = { oppChar: Array.from(vR1), opp2Char: Array.from(vR2) };
+      m._iconVecs = { oppChar: Array.from(r1.vec), opp2Char: Array.from(r2.vec) };
       m._nameVecs = {}; m._nameSigs = {}; m._nameBands = {};
       m.oppChar = r1.name; m.oppCharConf = r1.score;
       m.opp2Char = r2.name; m.opp2CharConf = r2.score;
