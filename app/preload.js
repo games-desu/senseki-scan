@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('api', {
   loadTemplates: () => ipcRenderer.invoke('load-templates'),
   appendUserTemplates: (sets) => ipcRenderer.invoke('append-user-templates', sets),
   saveCsv: (defaultName, content) => ipcRenderer.invoke('save-csv', defaultName, content),
+  copyText: (text) => ipcRenderer.invoke('copy-text', text),
   loadUserData: (key) => ipcRenderer.invoke('load-user-data', key),
   saveUserData: (key, data) => ipcRenderer.invoke('save-user-data', key, data),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),

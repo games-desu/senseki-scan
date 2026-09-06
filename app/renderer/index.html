@@ -43,6 +43,14 @@
   button { background:#223129; color:var(--text); border:1px solid var(--border); border-radius:7px; padding:8px 14px; font-size:13px; cursor:pointer; }
   button.primary { background:var(--accent-dark); border-color:var(--accent-dark); font-weight:bold; }
   button:disabled { opacity:.4; cursor:default; }
+  button.done { background:var(--accent-dark); border-color:var(--accent); color:#fff; font-weight:bold; }
+  #toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%) translateY(16px); opacity:0; pointer-events:none;
+           background:#0b2a17; color:#fff; border:1px solid var(--accent); border-left:5px solid var(--accent); border-radius:9px;
+           padding:12px 18px; font-size:14px; line-height:1.5; max-width:min(680px, 92vw); box-shadow:0 8px 24px rgba(0,0,0,.45);
+           transition:opacity .18s, transform .18s; z-index:1000; }
+  #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+  #toast.err { border-color:var(--warn); border-left-color:var(--warn); background:#2b1512; }
+  #toast b { display:block; font-size:15px; margin-bottom:2px; }
   .match { background:#101a15; border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:10px; }
   .match h3 { font-size:13px; color:var(--accent); margin-bottom:8px; }
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; }
@@ -314,6 +322,7 @@
   <button id="openFever" style="margin-left:6px">一括登録ページを開く</button>
   <span class="sub" style="margin-left:8px">「CSVをコピー」→一括登録ページの「クリップボードから読み込む」が最短です。赤枠＝要確認・青枠＝手修正済み</span>
 </div>
+<div id="toast" role="status" aria-live="polite"></div>
 <div class="panel" id="logPanel" style="display:none">
   <div class="sub" style="margin-bottom:4px">解析ログ</div>
   <div id="log"></div>
@@ -2229,20 +2238,52 @@ async function doExportCsv() {
   }
 }
 // クリップボード連携: SENSEKI FEVERの一括登録ページ「クリップボードから読み込む」に対応
-async function doCopyCsv() {
+// 画面下中央のトースト（押した結果が見えるように。progress行は画面上部で目に入らないという利用者の指摘・2026-09-07）
+let TOAST_TIMER = null;
+function showToast(html, { error = false, ms = 4000 } = {}) {
+  const el = $('toast');
+  el.innerHTML = html;
+  el.classList.toggle('err', !!error);
+  el.classList.add('show');
+  clearTimeout(TOAST_TIMER);
+  TOAST_TIMER = setTimeout(() => el.classList.remove('show'), ms);
+}
+// 押したボタンの文言を一時的に変える（「コピーしました」→2.5秒で元に戻す）
+function flashButton(btn, label, ms = 2500) {
+  if (!btn) return;
+  if (btn._flashTimer) { clearTimeout(btn._flashTimer); } else { btn._origLabel = btn.textContent; }
+  btn.textContent = label; btn.classList.add('done');
+  btn._flashTimer = setTimeout(() => { btn.textContent = btn._origLabel; btn.classList.remove('done'); btn._flashTimer = null; }, ms);
+}
+async function copyTextRobust(text) {
+  // Electron: メインプロセスの clipboard（ウィンドウのフォーカス状態に左右されない）→ 失敗時は navigator.clipboard → execCommand
+  if (window.api.copyText) {
+    try { const r = await window.api.copyText(text); if (r && r.ok) return; } catch {}
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try { await navigator.clipboard.writeText(text); return; } catch {}
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  let okc = false; try { okc = document.execCommand('copy'); } catch {}
+  ta.remove();
+  if (!okc) throw new Error('クリップボードに書き込めませんでした');
+}
+async function doCopyCsv(ev) {
+  const btn = ev && ev.currentTarget;
   const text = buildCsvText();
   try {
-    if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
-    else {
-      const ta = document.createElement('textarea');
-      ta.value = text; document.body.appendChild(ta); ta.select();
-      const okc = document.execCommand('copy'); ta.remove();
-      if (!okc) throw new Error('copy failed');
-    }
+    await copyTextRobust(text);
   } catch (e) {
-    setProgress('コピーに失敗しました: ' + (e && e.message || e), null);
+    const msg = 'コピーに失敗しました: ' + (e && e.message || e);
+    setProgress(msg, null);
+    showToast('<b>' + msg + '</b>代わりに「CSVを保存」でファイルにしてください', { error: true, ms: 6000 });
     return;
   }
+  const n = matches.length;
+  flashButton(btn, 'コピーしました');
+  showToast('<b>CSVをコピーしました（' + n + '試合）</b>SENSEKI FEVERの一括登録ページで「クリップボードから読み込む」を押してください');
   setProgress('CSVをコピーしました。SENSEKI FEVERの一括登録ページで「クリップボードから読み込む」を押してください', 1);
   harvestNames();
   await harvestTemplates();
