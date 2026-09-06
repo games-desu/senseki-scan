@@ -743,6 +743,18 @@ window.Vision = (() => {
     const d = Math.sqrt((saa - sa * sa / n) * (sbb - sb * sb / n));
     return d < 1e-9 ? 0 : (sab - sa * sb / n) / d;
   }
+  // 位置ずれ許容版: 領域を ±dx/±dy ずらして iconVec→matchIconCard し、最良を採用する。
+  // ダブルスVSカードは下の行のアイコンが上の行より約3px左・1px下にあり(実測2026-09-06)、辞書は片方の行で採取した
+  // ものが多いので、そのままだと反対の行で 0.54〜0.77 に落ちる。戻り値に採用した vec(教える用)と ox/oy を含む
+  function matchIconCardAround(video, region, iw, ih, lib, opt, { dx = 4, dy = 2 } = {}) {
+    let best = null;
+    for (let oy = -dy; oy <= dy; oy++) for (let ox = -dx; ox <= dx; ox++) {
+      const vec = iconVec(cropRegion(video, { x: region.x + ox, y: region.y + oy, w: region.w, h: region.h }), iw, ih);
+      const m = matchIconCard(vec, lib, opt);
+      if (!best || m.score > best.score) best = { ...m, ox, oy, vec };
+    }
+    return best;
+  }
   function matchIconWh(v, lib) {
     let best = null, second = 0;
     for (const t of lib) {
@@ -1294,7 +1306,7 @@ window.Vision = (() => {
   }
 
   return { REGIONS, NUM_SEG, LOOSE, NAME_SIG, GLYPH, nameSig, nameSigScore, nameBand, sigFromBand, nameStrokes, glyphVec, nameGlyphs, readName, lum, makeSeeker, setSourceRect, getSourceRect, srcRect, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
-           matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, VS_ICON_LEN, matchIconCard, iconGray, iconCardMasked, detectDoublesVs, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
+           matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, VS_ICON_LEN, matchIconCard, matchIconCardAround, iconGray, iconCardMasked, detectDoublesVs, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
            bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection,
            gaugeFill, gaugeFrameVisible, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
 })();
