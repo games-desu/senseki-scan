@@ -67,19 +67,40 @@ window.Court = (() => {
   // 横ラインは画面水平と分かっているので Hough は不要。行カウントの極大でよい。
   function rowProfile(mask) {
     const prof = new Float32Array(H);
+    const ext = new Int16Array(H * 2);            // 行ごとの白画素の x 範囲 [xmin, xmax]（960空間）
     for (let y = 0; y < H; y++) {
       const yF = y * SC;
+      ext[y * 2] = -1; ext[y * 2 + 1] = -1;
       if (yF < 130) continue;                       // 上部バナー帯
-      let n = 0;
+      // 白画素の「隙間 50px(960) まで許す最長ラン」を行の幅とする。行全体の min/max だと
+      // 左上の吹き出し・右上のジュゲム(雲)・観客席の白が混ざって幅が壊れる（2026-09-07 実測）
+      let n = 0, cur0 = -1, cur1 = -1, gap = 0, b0 = -1, b1 = -1;
       for (let x = 0; x < W; x++) {
-        if (!mask[y * W + x]) continue;
         const xF = x * SC;
-        if (yF > 860 && (xF < 250 || xF > 1670)) continue;  // 左右下のスコアUI
-        n++;
+        const on = mask[y * W + x]
+          && !(yF > 860 && (xF < 250 || xF > 1670))          // 左右下のスコアUI
+          && !(yF < 320 && (xF < 480 || xF > 1700));         // 左上の吹き出し／右上の審判・雲
+        if (on) { n++; if (cur0 < 0) cur0 = x; cur1 = x; gap = 0; }
+        else if (cur0 >= 0 && ++gap > 50) { if (cur1 - cur0 > b1 - b0) { b0 = cur0; b1 = cur1; } cur0 = -1; }
       }
-      prof[y] = n;
+      if (cur0 >= 0 && cur1 - cur0 > b1 - b0) { b0 = cur0; b1 = cur1; }
+      prof[y] = n; ext[y * 2] = b0; ext[y * 2 + 1] = b1;
     }
+    prof.ext = ext;
     return prof;
+  }
+
+  // 横ラインの見かけ幅（FHD px）。行の白画素の x 範囲を ±2 行で最大化して取る（ピークが縁に当たる対策）
+  function lineExtent(prof, y) {
+    const ext = prof.ext; if (!ext) return null;
+    let best = null;
+    for (let k = -2; k <= 2; k++) {
+      const yy = y + k; if (yy < 0 || yy >= H) continue;
+      const a = ext[yy * 2], b = ext[yy * 2 + 1];
+      if (a < 0) continue;
+      if (!best || b - a > best.xmax - best.xmin) best = { xmin: a, xmax: b };
+    }
+    return best ? { xmin: best.xmin * SC, xmax: best.xmax * SC } : null;
   }
 
   function peaksOf(prof, minVal, mergePx) {
@@ -98,8 +119,32 @@ window.Court = (() => {
   // ---- Step 2: 横ラインの同定 → c0, c1 ----
   // 「一番上のピーク＝ファーベースライン」と決め打ちしてはいけない（実測で外れる）。
   // 上位N本から2本を選ぶ総当たりで、残りのピークが実寸に当たる本数が最大の組を採る。
-  function solveZ(peaks) {
+  // ★横ライン同定の縮退（2026-09-07 実測・芝コート 15-18-15）:
+  //   「ファーベースライン＋ニア サービスライン」と「ファー サービスライン＋ニアベースライン」は
+  //   ΔZ が同じ 18.285m なので c1 が一致し、c0 だけが違う。Yc の交差検証では区別できない。
+  //   誤った側でも他のピークがネット帯(Z 2.3〜3.8)に収まって hits が勝ち、ネットが y=172 に来る推定が通っていた。
+  //   → ラインの**見かけの幅**で裏取りする。ベースライン 10.97m / サービスライン 8.23m は
+  //     同じ画面yでも幅が 33% 違うので、仮説ごとの予測幅と実測幅の比 [0.8, 1.12] でヒットを数える。
+  function solveZ(peaks, prof) {
     const top = peaks.slice(0, 8);
+    // 幅の一致度を 0〜1 で返す。ラインは遮蔽（選手・トレイル）で短くなることはあっても長くはならないので、
+    // 短い側は緩く（0.5点）・長い側は厳しく（0点）採点する
+    const widthScore = (p, Z, c0, c1) => {
+      if (!prof || !prof.ext) return 1;
+      const e = lineExtent(prof, p.y); if (!e) return 1;
+      const half = Math.abs(Z) > 9 ? X_DBL : X_SGL;
+      const u = 1 / (c0 + c1 * Z);
+      const px = (X) => XVP + X * u * c1 / K;             // Xc は未知なので幅だけ比べる（平行移動は無関係）
+      let pred = px(half) - px(-half);
+      // 画面外にはみ出す分は予測から差し引く（ニア側のラインは左右が切れる）
+      const meas = e.xmax - e.xmin;
+      if (pred > 1920) return 1;                          // 画面幅を超えるなら比較不能→通す
+      const r = meas / pred;
+      if (r > 1.2) return 0;
+      if (r >= 0.85) return 1;
+      if (r >= 0.5) return 0.5;
+      return 0.25;
+    };
     let best = null;
     for (let a = 0; a < top.length; a++) {
       for (let b = a + 1; b < top.length; b++) {
@@ -116,10 +161,10 @@ window.Court = (() => {
             let hits = 0, resid = 0;
             for (const p of peaks) {
               const Z = (1 / (p.y * SC - YVP) - c0) / c1;
-              if (Z > 2.3 && Z < 3.8) { hits++; continue; }        // ネットテープ（校正には使わない）
-              let bestD = 1e9;
-              for (const Zt of [Z_BASE, Z_SVC, 0, -Z_SVC, -Z_BASE]) bestD = Math.min(bestD, Math.abs(Z - Zt));
-              if (bestD <= 0.5) { hits++; resid += bestD; }
+              if (Z > 2.3 && Z < 3.8) continue;                      // ネットテープ（校正にも採点にも使わない。吹き出し等が化ける）
+              let bestD = 1e9, bestZ = null;
+              for (const Zt of [Z_BASE, Z_SVC, -Z_SVC, -Z_BASE]) if (Math.abs(Z - Zt) < bestD) { bestD = Math.abs(Z - Zt); bestZ = Zt; }
+              if (bestD <= 0.5) { const w = widthScore(p, bestZ, c0, c1); hits += w; if (w > 0) resid += bestD; }
             }
             if (!best || hits > best.hits || (hits === best.hits && resid < best.resid)) {
               best = { c0, c1, hits, resid, pair: [top[a].y, top[b].y], Za, Zb };
@@ -200,7 +245,7 @@ window.Court = (() => {
     const { mask, CL, thr } = lineMask(img);
     const prof = rowProfile(mask);
     const hPeaks = peaksOf(prof, TH.rowPeak, 5);
-    const z = solveZ(hPeaks);
+    const z = solveZ(hPeaks, prof);
     if (!z) return { ok: false, reason: 'no-horizontal-lines', CL, thr, hPeaks: hPeaks.length };
 
     const Yc = K / z.c1;
@@ -256,7 +301,7 @@ window.Court = (() => {
 
   return {
     XVP, YVP, K, X_DBL, X_SGL, Z_SVC, Z_BASE, W, H, SC, TH,
-    frame, lineMask, rowProfile, peaksOf, solveZ, voteS, solveX,
+    frame, lineMask, rowProfile, lineExtent, peaksOf, solveZ, voteS, solveX,
     estimate, toCourt, toScreen, inCourt,
   };
 })();

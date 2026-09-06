@@ -30,8 +30,8 @@ function findFfmpeg() {
 function loadModules(variant) {
   const dir = __dirname;
   const sandbox = {
-    console, Math, Date, isFinite, isNaN, parseInt, parseFloat,
-    Uint8Array, Uint8ClampedArray, Int32Array, Float32Array, Array, Object, JSON,
+    console, Math, Date, isFinite, isNaN, parseInt, parseFloat, Number, String, Set, Map, Infinity,
+    Uint8Array, Uint8ClampedArray, Int16Array, Int32Array, Float32Array, Array, Object, JSON,
   };
   sandbox.window = sandbox;
   sandbox.document = {
@@ -45,7 +45,7 @@ function loadModules(variant) {
     },
   };
   vm.createContext(sandbox);
-  for (const f of ['court.js', 'ball.js']) {
+  for (const f of ['court.js', 'ball.js', 'trail.js', 'rally-fuse.js']) {
     vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), sandbox, { filename: f });
   }
   // 変種: 同じサンドボックスで走らせ、window.BallTrack のエクスポートを差し替えさせる。
@@ -54,7 +54,7 @@ function loadModules(variant) {
     const vp = path.isAbsolute(variant) ? variant : path.join(dir, 'variants', variant.endsWith('.js') ? variant : variant + '.js');
     vm.runInContext(fs.readFileSync(vp, 'utf8'), sandbox, { filename: path.basename(vp) });
   }
-  return { Court: sandbox.Court, BallTrack: sandbox.BallTrack };
+  return { Court: sandbox.Court, BallTrack: sandbox.BallTrack, Trail: sandbox.Trail, RallyFuse: sandbox.RallyFuse };
 }
 
 // ---- ffmpeg から RGBA フレームを1枚ずつ ----
@@ -81,7 +81,7 @@ async function* frames(video, t0, t1, fps) {
 // ---- 1ラリーを解析 ----
 // camEvery: カメラ推定の間引き。ラリー中もドリーするので粗すぎると座標がずれる。
 async function analyze(opts) {
-  const { Court, BallTrack } = loadModules(opts.variant);
+  const { Court, BallTrack, Trail, RallyFuse } = loadModules(opts.variant);
   const { video, t0, t1, fps = 60, camEvery = 15 } = opts;
   // overlapMax=null で静止物フィルタを無効化できる（実験用）
   const overlapMax = opts.overlapMax === undefined ? 0.6 : opts.overlapMax;
@@ -90,6 +90,8 @@ async function analyze(opts) {
   let prevMask = null, cam = null, net = null, prev = [], state = {};
   const cams = [];                                     // {t, cam} 時刻ごとのカメラ
   const started = Date.now();
+  // Phase D: ショット色トレイル（opts.trail のとき毎フレーム）
+  const trailLog = [], hist = [];
 
   for await (const fr of frames(video, t0, t1, fps)) {
     if (fr.i % camEvery === 0) {
@@ -100,6 +102,12 @@ async function analyze(opts) {
         const base = Court.toScreen(0, 0, cam).y, u = 1 / cam.c0, hpx = 0.91 * u / cam.Yc;
         net = { y0: (base - hpx * 1.25) / 2, y1: (base + 12) / 2 };
       }
+    }
+    if (opts.trail) {
+      const tr = Trail.detect(fr.img, { cam, hist });
+      hist.unshift({ mask: tr.mask, blobs: tr.blobs }); if (hist.length > 3) hist.pop();
+      trailLog.push({ t: fr.t, f: fr.i, blobs: tr.blobs,
+                      ref: tr.ref ? { S90: +tr.ref.S90.toFixed(2), V90: +tr.ref.V90.toFixed(2), L90: Math.round(tr.ref.L90), Hmed: tr.ref.Hmed == null ? null : Math.round(tr.ref.Hmed), lineL: Math.round(tr.ref.lineL), useHue: tr.ref.useHue } : null });
     }
     const cs = BallTrack.candidates(fr.img, { prevMask });
     prevMask = cs.mask;
@@ -124,8 +132,13 @@ async function analyze(opts) {
   const ranked = BallTrack.pickBall(chains, { net });
   const segs = BallTrack.ballSegments(ranked);
   const events = segs.length ? BallTrack.classifyEvents(segs, camAt) : [];
+  const trailRuns = opts.trail ? Trail.runs(trailLog, { fps }) : null;
+  const shots = trailRuns ? Trail.shots(trailRuns, { tStart: t0 }) : null;
+  const track = []; segs.forEach(s => s.pts.forEach(p => track.push(p))); track.sort((a, b) => a.t - b.t);
+  const rally = shots ? RallyFuse.fuse({ shots, events, track, camAt, t0, t1 }).shots : null;
 
   return {
+    rally, shots, trailRuns, trailLog: opts.trail ? trailLog : undefined,
     video: path.basename(video), t0, t1, fps, variant: opts.variant || null,
     ms: Date.now() - started,
     nFrames: frameLog.length,
@@ -150,13 +163,15 @@ if (require.main === module) {
   const jsonAt = a.indexOf('--json');
   const fpsAt = a.indexOf('--fps');
   const varAt = a.indexOf('--variant');
+  const trail = a.includes('--trail');
   if (!video || !isFinite(t0) || !isFinite(t1)) {
     console.error('usage: node rally-node.js <video> <t0> <t1> [--json out.json] [--fps 60]');
     process.exit(2);
   }
-  analyze({ video, t0, t1, fps: fpsAt >= 0 ? +a[fpsAt + 1] : 60, variant: varAt >= 0 ? a[varAt + 1] : null }).then(r => {
+  analyze({ video, t0, t1, fps: fpsAt >= 0 ? +a[fpsAt + 1] : 60, variant: varAt >= 0 ? a[varAt + 1] : null, trail }).then(r => {
     if (jsonAt >= 0) fs.writeFileSync(a[jsonAt + 1], JSON.stringify(r, null, 1));
-    const { frameLog, ...brief } = r;
+    const { frameLog, trailLog, ...brief } = r;
+    if (brief.shots) brief.shots = brief.shots.map(({ frames, ...s }) => s);
     console.log(JSON.stringify(brief, null, 1));
   }).catch(e => { console.error(e); process.exit(1); });
 }
