@@ -77,7 +77,8 @@
       // ダブルスのアイコン枠(118x64)は右寄りにキャラが入る → 正方形に寄せて切り抜く
       const sq = r => ({ x: r.x + r.w - r.h - 4, y: r.y, w: r.h + 4, h: r.h });
       w.my.icons = [hlCropCanvas(sq(R.dIconL1), 120).toDataURL('image/png'), hlCropCanvas(sq(R.dIconL2), 120).toDataURL('image/png')];
-      const mr = (typeof myRowFromSigs === 'function') ? myRowFromSigs(V.nameSig(V.cropRegion(hv, R.dNameL1)), V.nameSig(V.cropRegion(hv, R.dNameL2))) : null;
+      w.my.sigs = [V.nameSig(V.cropRegion(hv, R.dNameL1)), V.nameSig(V.cropRegion(hv, R.dNameL2))]; // 選び直したとき学習に使う
+      const mr = (typeof myRowFromSigs === 'function') ? myRowFromSigs(w.my.sigs[0], w.my.sigs[1]) : null;
       w.my.row = mr ? mr.row : 1; w.my.sure = !!mr;
       w.my.icon = w.my.icons[w.my.row - 1];
     }
@@ -263,7 +264,10 @@
   $('hlList').addEventListener('change', e => {
     const el = e.target.closest('[data-act=myrow],[data-act=myshow]'); if (!el) return;
     const w = HL.windows[+el.dataset.w]; if (!w || !w.my) return;
-    if (el.dataset.act === 'myrow') { w.my.row = +el.value; w.my.sure = true; w.my.icon = w.my.icons ? w.my.icons[w.my.row - 1] : w.my.icon; }
+    if (el.dataset.act === 'myrow') {
+      w.my.row = +el.value; w.my.sure = true; w.my.icon = w.my.icons ? w.my.icons[w.my.row - 1] : w.my.icon;
+      if (w.my.sigs && typeof learnMySig === 'function') learnMySig(w.my.sigs[w.my.row - 1]); // 選んだ行の名前を自分として学習（戦績解析と共有）
+    }
     else w.my.show = el.checked;
     hlRender();
   });
