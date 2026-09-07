@@ -50,7 +50,8 @@ window.Trail = (() => {
       let Z = Court.toCourt(960, y * SC, cam).Z;
       let x0 = 1, x1 = 0;
       if (y < far) {
-        if (y >= far - 175) { const z = Court.Z_BASE; x0 = Court.toScreen(-XM - 1.5, z, cam).x / SC; x1 = Court.toScreen(XM + 1.5, z, cam).x / SC; }
+        // ロブは奥ベースラインより上の空間を通るので 120px だけ許す（175 だと砂コートのテントの縞が入る）。最上段 15px は常に除外
+        if (y >= far - 120 && y >= 15) { const z = Court.Z_BASE; x0 = Court.toScreen(-XM - 1.5, z, cam).x / SC; x1 = Court.toScreen(XM + 1.5, z, cam).x / SC; }
       } else if (Z >= -Court.Z_BASE - 4) {
         x0 = Court.toScreen(-XM, Z, cam).x / SC; x1 = Court.toScreen(XM, Z, cam).x / SC;
       }
@@ -135,32 +136,40 @@ window.Trail = (() => {
     for (let y = Math.max(0, yTop); y < H; y++) { const o = y * W; for (let x = 0; x < W; x++) if (t[o + x]) { for (let k = -r; k <= r; k++) { const xx = x + k; if (xx >= 0 && xx < W) t2[o + xx] = 1; } } }
     return t2;
   }
+  // HUD 除外は画素ごとの配列走査でなく事前に焼いたマスクで見る（effectMask が 85ms/コマだった主因のひとつ）
+  const _hud = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (inHud(x, y)) _hud[y * W + x] = 1;
   function effectMask(img, ref, rows, lines) {
-    const d = img.data, mask = new Uint8Array(W * H), wm = _wm;
+    const d = img.data, mask = new Uint8Array(W * H), wm = _wm, hud = _hud;
     let yTop = H; for (let y = 0; y < H; y++) if (rows[y * 2] <= rows[y * 2 + 1]) { yTop = y; break; }
     wm.fill(0, Math.max(0, yTop) * W);
-    const { S90, V90, L90, Hmed, whiteCap, useHue } = ref;
+    const S90 = ref.S90, V90 = ref.V90, L90 = ref.L90, Hmed = ref.Hmed, whiteCap = ref.whiteCap, useHue = ref.useHue;
+    const sK = S90 + 0.08, vK = V90 - 0.05, lB = L90 + 25;
     for (let y = 0; y < H; y++) {
       const x0 = rows[y * 2], x1 = rows[y * 2 + 1];
-      for (let x = x0; x <= x1; x++) {
-        if (inHud(x, y)) continue;
-        const i = (y * W + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
-        const mx = Math.max(r, g, b), mn = Math.min(r, g, b), s = mx ? (mx - mn) / mx : 0, v = mx / 255;
-        const l = lum(r, g, b);
-        let hit = (s > S90 + 0.08 && v > V90 - 0.05);
-        let h = -1;
-        const hueOf = () => { if (h >= 0) return h; const dd = mx - mn; if (dd <= 0) return (h = 0); let t = mx === r ? ((g - b) / dd) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4; t *= 60; if (t < 0) t += 360; return (h = t); };
-        if (!hit && l > L90 + 25 && s > 0.30) {
-          if (!useHue) hit = true;
-          else { hit = hueDist(hueOf(), Hmed) > 12; }
-        }
-        // 分岐H（追加・2026-09-07）: 明るく彩度の高いコート（芝 L90=178 / S90=0.75）では
-        // 青スライス(82,160,209: L=142 S=0.61)が分岐K/Bのどちらにも入らない。コート色相から
-        // 30°以上離れた有彩色画素を通す。緑の芝(H≈85)に対し 青200/紫300/橙25 は十分離れ、
-        // ボール本体(H≈60)と黄ロブ(H≈55)は 25〜30°で境界。赤クレイ(H≈358)では赤の尾は入らないが先端(28〜42)は入る
-        if (!hit && useHue && s > 0.35 && v > 0.55) hit = hueDist(hueOf(), Hmed) > 30;
-        if (hit) mask[y * W + x] = 1;
-        else if (s < 0.22 && l > L90 + 25 && l < whiteCap && !(lines && lines[y * W + x])) wm[y * W + x] = 1;
+      let j = y * W + x0, i = j * 4;
+      for (let x = x0; x <= x1; x++, j++, i += 4) {
+        if (hud[j]) continue;
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        let mx = r, mn = r;
+        if (g > mx) mx = g; else if (g < mn) mn = g;
+        if (b > mx) mx = b; else if (b < mn) mn = b;
+        const dd = mx - mn, s = mx ? dd / mx : 0, v = mx * (1 / 255);
+        const l = 0.299 * r + 0.587 * g + 0.114 * b;
+        let hit = (s > sK && v > vK);
+        if (!hit && useHue && ((l > lB && s > 0.30) || (s > 0.35 && v > 0.55) || (s >= 0.12 && v > 0.6))) {
+          // 色相（必要なときだけ・オブジェクトもクロージャも作らない）
+          let h = 0;
+          if (dd > 0) { h = mx === r ? ((g - b) / dd) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4; h *= 60; if (h < 0) h += 360; }
+          let hd = Math.abs(h - Hmed); if (hd > 180) hd = 360 - hd;
+          // 分岐B（輝度）は 12°、分岐H（追加・2026-09-07: 芝 L90=178/S90=0.75 で青スライス L=142 S=0.61 が K/B に入らない）は 30°
+          hit = (l > lB && s > 0.30) ? hd > 12 : hd > 30;
+          // 分岐P（追加・2026-09-08 砂コート実測）: 淡い水色のスライス (172,193,215) は S=0.20・L=189 で
+          // コートの L90(194) より暗く、K/B/H/白のどれにも入らない。色相が 60°以上離れていれば低彩度でも通す
+          if (!hit && s >= 0.12 && v > 0.6) hit = hd > 60;
+        } else if (!hit && !useHue && l > lB && s > 0.30) hit = true;
+        if (hit) mask[j] = 1;
+        else if (s < 0.22 && l > lB && l < whiteCap && !(lines && lines[j])) wm[j] = 1;
       }
     }
     const op = openWhite(wm, yTop, 4);
@@ -210,7 +219,7 @@ window.Trail = (() => {
           if (mask[k] && !seen[k]) { seen[k] = 1; stack[sp++] = k; }
         }
       }
-      if (pts.length >= MIN_AREA) out.push(pts);
+      if (pts.length >= MIN_AREA * 0.4) out.push(pts);   // 奥コートの小さなトレイル用に床を下げ、遠近スケール後の面積で shape 側が篩う
     }
     return out;
   }
@@ -275,10 +284,16 @@ window.Trail = (() => {
     if (Ht == null) Ht = Htip;
     if (Ht == null) return 'unknown';
     if (Ht >= 250 && Ht < 345) return 'flat';
-    if (Ht >= 185 && Ht < 250) return 'slice';
-    if (Ht >= 345 || Ht < 15) return 'topspin';
-    if (Ht >= 15 && Ht < 40) return (Htip != null && Htip >= 48) ? 'lob' : 'topspin';
-    if (Ht >= 40 && Ht < 70) return 'lob';
+    if (Ht >= 140 && Ht < 250) return 'slice';      // 仕様 197-207。芝で先端 150〜195 の水色が実測されたので広げた（2026-09-08）
+    if (Ht >= 345 || Ht < 75) {
+      // 暖色族: トップスピンとロブは先端の色相で分ける（仕様: topspin 先端 28-42 / lob 54-55）。
+      // 0908 芝 p0（全打トップスピン）で先端 44〜51 が出たので境界は 52
+      // 尾が橙〜赤(<45)ならトップスピン（ロブは尾まで黄色い）。クレイでは橙トレイルの先端が 59 まで黄に寄る（2026-09-08 実測）
+      if (Ht >= 345 || Ht < 45) return 'topspin';
+      const tip = Htip != null ? Htip : Ht;
+      if (tip >= 52 && tip < 75) return 'lob';
+      return 'topspin';
+    }
     return 'unknown';
   }
 
@@ -306,7 +321,8 @@ window.Trail = (() => {
     for (const pts of components(mask, yTop)) {
       if (pts.length > MAX_AREA) continue;
       const sh = shape(pts);
-      if (sh.elong < MIN_ELONG || sh.len < MIN_LEN) continue;
+      const psc = Math.min(1.3, Math.max(0.45, (sh.cy + 325) / 625));           // 遠近: 奥(y≈100)は 0.68倍
+      if (sh.n < MIN_AREA * psc * psc || sh.elong < MIN_ELONG || sh.len < MIN_LEN * psc) continue;
       const ov = overlapWith(pts, old);
       if (ov >= 0.97) continue;   // 仕様の0.8は本物のトレイル(0.3秒残る)まで落とす。ラインは幾何で除外済み
       // 先端の決定: ボール位置 → 直前blobの端点との一致（尾は動かない）→ 明るい側
@@ -357,10 +373,16 @@ window.Trail = (() => {
           if (dist > 50 + 30 * Math.max(1, k)) continue;   // トレイル重心の移動は最大でも 30px/コマ程度。緩いと選手のオーラと繋がる
           // 種別が違う blob は別のショット（同じ場所でも繋がない）。unknown はどちらにも付く
           const same = b.cls === last.b.cls || b.cls === 'unknown' || last.b.cls === 'unknown';
-          const cost = dist + (same ? 0 : 1e6);
+          // 進行方向が反転したら別のショット（同じ橙色でも、自分の打球と相手の返球は逆向きに進む）
+          const ddy = b.cy - last.b.cy;
+          const rev = r.dirSign && Math.abs(ddy) > 8 && Math.sign(ddy) !== r.dirSign;
+          const cost = dist + (same && !rev ? 0 : 1e6);
           if (cost < bd) { bd = cost; best = r; }
         }
-        if (best && bd < 1e6) { best.frames.push({ t: f.t, b }); used.add(best); }
+        if (best && bd < 1e6) {
+          best.frames.push({ t: f.t, b }); used.add(best);
+          if (!best.dirSign && best.frames.length >= 3) { const d0 = b.cy - best.frames[0].b.cy; if (Math.abs(d0) >= 6) best.dirSign = Math.sign(d0); }
+        }
         else { const r = { t0: f.t, frames: [{ t: f.t, b }] }; open.push(r); used.add(r); }
       }
       for (let i = open.length - 1; i >= 0; i--) {
@@ -381,7 +403,16 @@ window.Trail = (() => {
     const use = win.length >= 2 ? win : fr.slice(0, Math.min(fr.length, 6));
     const votes = {};
     for (const f of use) votes[f.b.cls] = (votes[f.b.cls] || 0) + 1;
-    const cls = Object.entries(votes).sort((a, b) => b[1] - a[1])[0][0];
+    let cls = Object.entries(votes).sort((a, b) => b[1] - a[1])[0][0];
+    // 'drop' は run の前半で彩度が一度も 0.25 を超えないときだけ（マックスチャージの白い閃光で色が飛ぶ数コマを弾く）
+    const sMax = Math.max(...fr.slice(0, Math.min(fr.length, 10)).map(f => f.b.Smed == null ? 0 : f.b.Smed));
+    if (cls === 'drop' && sMax >= 0.25) {
+      const alt = Object.entries(votes).filter(e => e[0] !== 'drop').sort((a, b) => b[1] - a[1])[0];
+      cls = alt ? alt[0] : 'unknown';
+    }
+    // 重心の1ステップあたりの移動量の中央値（トレイルはボールと一緒に動く: 10〜60px/2コマ。選手・ラベル・看板は数px）
+    const steps = []; for (let i = 1; i < fr.length; i++) steps.push(Math.hypot(fr[i].b.cx - fr[i - 1].b.cx, fr[i].b.cy - fr[i - 1].b.cy) / Math.max(1, Math.round((fr[i].t - fr[i - 1].t) * fps)));
+    const spd = median(steps) || 0;
     // 側は打点＝出現直後の尾の位置で決める（尾はボールと一緒に動くので全期間の多数決は駄目）
     // 側は「トレイルがどちらへ進むか」で決める（尾の位置は出現が遅れると動いてしまう）。
     // 重心の y が減る（画面上へ進む）＝自分の打球、増える＝相手の打球。動きが小さいときだけ尾の Z で補う
@@ -393,7 +424,7 @@ window.Trail = (() => {
     const dy = fr[k].b.cy - first.cy;
     const dir = Math.abs(dy) >= 6 ? (dy < 0 ? 'up' : 'down') : null;
     const side = dir ? (dir === 'up' ? 'me' : 'opp') : (zEarly > 0 ? 'opp' : 'me');
-    return { t0, t1, n: fr.length, cls, votes, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1),
+    return { t0, t1, n: fr.length, cls, votes, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1), spd: +spd.toFixed(1), dur: +(t1 - t0).toFixed(2), sMax: +sMax.toFixed(2),
              tail: { x: first.tail.x, y: first.tail.y, X: first.tailX, Z: first.tailZ },
              Htip: median(use.map(f => f.b.Htip).filter(v => v != null)),
              Htail: median(use.map(f => f.b.Htail).filter(v => v != null)),
@@ -408,8 +439,12 @@ window.Trail = (() => {
   //  併合の種別は「色相の隣り合う族」まで許す（topspin/lob は先端の色相が流れて後半の断片が lob に化ける）。
   //  併合後の種別は最初の断片のもの（打点+4〜10コマの色が仕様上いちばん信用できる）。
   const FAMILY = { topspin: 'warm', lob: 'warm', slice: 'blue', flat: 'purple', drop: 'white', unknown: 'any' };
-  function shots(runsIn, { minDisp = 40, minN = 5, mergeGap = 0.45, tStart = -Infinity } = {}) {
-    const keep = runsIn.filter(r => r.disp >= minDisp && r.n >= minN && r.t0 >= tStart + 0.3).sort((a, b) => a.t0 - b.t0);
+  //  4. 進行方向が無い（|dy|<6）・重心速度が遅い（spd<6px/ステップ）・1秒を超えて続く run は選手／ラベル／看板
+  function shots(runsIn, { minDisp = 40, minN = 5, mergeGap = 0.45, tStart = -Infinity, minSpd = 6, maxDur = 1.0 } = {}) {
+    // 遠近: 奥コート(y≈100)のトレイルは手前の 0.7 倍ほど小さく遅い。しきい値を y でスケールする
+    const scOf = r => Math.min(1.3, Math.max(0.5, (r.frames[0].cy + 325) / 625));
+    const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minN && r.t0 >= tStart + 0.3 && r.dir && r.spd >= minSpd * sc && r.dur <= maxDur
+                                       && !(r.cls === 'unknown' && r.Smed != null && r.Smed >= 0.4); }).sort((a, b) => a.t0 - b.t0);   // 有彩色なのに種別が無い＝選手（緑のルイージ等）
     const out = [];
     for (const r of keep) {
       const last = out[out.length - 1];
@@ -423,5 +458,5 @@ window.Trail = (() => {
     return out;
   }
 
-  return { W, H, SC, hsv, hueDist, courtRef, effectMask, detect, runs, shots, classify, HUD_EXCL };
+  return { W, H, SC, hsv, hueDist, courtRef, effectMask, detect, runs, shots, classify, HUD_EXCL, _region: region, _closing: closing, _components: components, _buildLineNear: buildLineNear };
 })();
