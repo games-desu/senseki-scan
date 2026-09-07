@@ -32,6 +32,7 @@ window.Trail = (() => {
     let h = Math.atan2(sy, sx) * 180 / Math.PI; if (h < 0) h += 360; return h;
   }
   const median = a => { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; };
+  const FAMILY = { topspin: 'warm', lob: 'warm', slice: 'blue', flat: 'purple', drop: 'white', unknown: 'any' };
   const pct = (a, p) => { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
 
   // ---- HUD 除外矩形（FHD 仕様値 / SC）----
@@ -277,7 +278,12 @@ window.Trail = (() => {
   function classify(c, ref) {
     const { Htip, Htail, Smed } = c;
     if (Smed == null) return 'unknown';
-    if (Smed < 0.20) return 'drop';
+    if (Smed < 0.20) {
+      // 淡い水色（砂コートのスライス S≈0.16〜0.20）はドロップ(白)ではない。色相が青なら slice
+      const hb = Htail != null ? Htail : Htip;
+      if (hb != null && hb >= 140 && hb < 250 && Smed >= 0.10) return 'slice';
+      return 'drop';
+    }
     let Ht = Htail;
     // クレイ赤×赤: 尾の色相がコート色と同一になるので先端で判定（手順7）
     if (ref && ref.useHue && Ht != null && hueDist(Ht, ref.Hmed) < 15 && (Ht >= 340 || Ht < 20) && Htip != null) Ht = Htip;
@@ -343,10 +349,10 @@ window.Trail = (() => {
       const tip = tipIsP2 ? sh.p2 : sh.p1, tail = tipIsP2 ? sh.p1 : sh.p2;
       const col = sampleColors(img, pts, sh, tipIsP2);
       const cls = classify(col, ref);
-      const tz = Court.toCourt(tail.x * SC, tail.y * SC, cam);
+      const tz = Court.toCourt(tail.x * SC, tail.y * SC, cam), cz = Court.toCourt(sh.cx * SC, sh.cy * SC, cam);
       blobs.push({ n: sh.n, cx: +sh.cx.toFixed(1), cy: +sh.cy.toFixed(1), elong: +sh.elong.toFixed(2), len: +sh.len.toFixed(1),
                    tip: { x: tip.x, y: tip.y }, tail: { x: tail.x, y: tail.y }, ov: +ov.toFixed(2),
-                   tailZ: +tz.Z.toFixed(2), tailX: +tz.X.toFixed(2), side: tz.Z > 0 ? 'opp' : 'me',
+                   tailZ: +tz.Z.toFixed(2), tailX: +tz.X.toFixed(2), cZ: +cz.Z.toFixed(2), side: tz.Z > 0 ? 'opp' : 'me',
                    Htip: col.Htip == null ? null : Math.round(col.Htip), Hcore: col.Hcore == null ? null : Math.round(col.Hcore),
                    Htail: col.Htail == null ? null : Math.round(col.Htail), Smed: col.Smed == null ? null : +col.Smed.toFixed(2),
                    cls });
@@ -372,7 +378,7 @@ window.Trail = (() => {
           const dist = Math.hypot(b.cx - last.b.cx, b.cy - last.b.cy);
           if (dist > 50 + 30 * Math.max(1, k)) continue;   // トレイル重心の移動は最大でも 30px/コマ程度。緩いと選手のオーラと繋がる
           // 種別が違う blob は別のショット（同じ場所でも繋がない）。unknown はどちらにも付く
-          const same = b.cls === last.b.cls || b.cls === 'unknown' || last.b.cls === 'unknown';
+          const same = b.cls === last.b.cls || b.cls === 'unknown' || last.b.cls === 'unknown' || FAMILY[b.cls] === FAMILY[last.b.cls];   // topspin↔lob は同族
           // 進行方向が反転したら別のショット（同じ橙色でも、自分の打球と相手の返球は逆向きに進む）
           const ddy = b.cy - last.b.cy;
           const rev = r.dirSign && Math.abs(ddy) > 8 && Math.sign(ddy) !== r.dirSign;
@@ -429,7 +435,7 @@ window.Trail = (() => {
              Htip: median(use.map(f => f.b.Htip).filter(v => v != null)),
              Htail: median(use.map(f => f.b.Htail).filter(v => v != null)),
              Smed: median(use.map(f => f.b.Smed).filter(v => v != null)),
-             nMax: Math.max(...fr.map(f => f.b.n)), frames: fr.map(f => ({ t: f.t, cx: f.b.cx, cy: f.b.cy, n: f.b.n, cls: f.b.cls, side: f.b.side })) };
+             nMax: Math.max(...fr.map(f => f.b.n)), cZ0: first.cZ, frames: fr.map(f => ({ t: f.t, cx: f.b.cx, cy: f.b.cy, n: f.b.n, cls: f.b.cls, side: f.b.side })) };
   }
 
   // ---- ショット列の整形 ----
@@ -438,12 +444,16 @@ window.Trail = (() => {
   //  3. 同種別・同側で近接した run を1本に併合（ネットや選手で分断された同じトレイル）
   //  併合の種別は「色相の隣り合う族」まで許す（topspin/lob は先端の色相が流れて後半の断片が lob に化ける）。
   //  併合後の種別は最初の断片のもの（打点+4〜10コマの色が仕様上いちばん信用できる）。
-  const FAMILY = { topspin: 'warm', lob: 'warm', slice: 'blue', flat: 'purple', drop: 'white', unknown: 'any' };
   //  4. 進行方向が無い（|dy|<6）・重心速度が遅い（spd<6px/ステップ）・1秒を超えて続く run は選手／ラベル／看板
   function shots(runsIn, { minDisp = 40, minN = 5, mergeGap = 0.45, tStart = -Infinity, minSpd = 6, maxDur = 1.0 } = {}) {
     // 遠近: 奥コート(y≈100)のトレイルは手前の 0.7 倍ほど小さく遅い。しきい値を y でスケールする
     const scOf = r => Math.min(1.3, Math.max(0.5, (r.frames[0].cy + 325) / 625));
+    // 側の整合: 自分の打球は手前(Z<0)から上へ、相手の打球は奥(Z>0)から下へ進む。尾の Z と進行方向が食い違う run は
+    // トレイルではない（チャージ中のキャラのオーラが下へ伸びる等・0908 芝 58.5 で自分の打点を潰した）。ネット際(|Z|<2)は不問
+    // 判定は出現時の重心の Z（尾は最初のコマで先端と取り違えることがある）。緩めに: 自分は Z<3・相手は Z>-3
+    const sideOk = r => r.cZ0 == null || (r.side === 'me' ? r.cZ0 < 3 : r.cZ0 > -3);
     const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minN && r.t0 >= tStart + 0.3 && r.dir && r.spd >= minSpd * sc && r.dur <= maxDur
+                                       && sideOk(r)
                                        && !(r.cls === 'unknown' && r.Smed != null && r.Smed >= 0.4); }).sort((a, b) => a.t0 - b.t0);   // 有彩色なのに種別が無い＝選手（緑のルイージ等）
     const out = [];
     for (const r of keep) {

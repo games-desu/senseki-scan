@@ -104,7 +104,7 @@ async function analyze(opts) {
         cams.push({ t: fr.t, cam: e });
         const base = Court.toScreen(0, 0, cam).y, u = 1 / cam.c0, hpx = 0.91 * u / cam.Yc;
         net = { y0: (base - hpx * 1.25) / 2, y1: (base + 12) / 2 };
-      } else if (e.ok && e.xHits >= 1 && e.hHits >= 1) {
+      } else if (e.ok && e.xHits >= 2 && e.hHits >= 1.5) {   // 緩めすぎるとサーブ画(1/1)でも通ってしまう（砂 412.1 の偽打点）
         // 仮カメラ: サーブ画→ラリー画へのズーム中（0.4秒ほど）は横ラインが揃わない。座標には使わないがトレイル検出には使う
         camProv = e; camProvAt_i = fr.i;
       }
