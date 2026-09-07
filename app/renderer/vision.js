@@ -32,7 +32,11 @@ window.Vision = (() => {
     dNameL2: { x: 277,  y: 926, w: 370, h: 64 },
     dNameR1: { x: 1268, y: 852, w: 370, h: 64 },
     dNameR2: { x: 1268, y: 926, w: 370, h: 64 },
-    dMidBand: { x: 300, y: 852, w: 320, h: 30 }, // ダブルスVSの中央黒帯（シングルスにはカードが無いy帯）
+    dMidBand: { x: 300, y: 852, w: 320, h: 30 }, // ダブルスVSの左の名前帯・上の行（シングルスにはカードが無いy帯）
+    dMidBandR: { x: 1290, y: 852, w: 320, h: 30 }, // 同・右の名前帯（アイコンに覆われないのでキャラに依存しない）
+    // 名前帯の外側（左右とも背景）。「暗いコートだから帯も暗く見えるだけ」を弾くための対照区
+    dSideL: { x: 120,  y: 852, w: 145, h: 30 },
+    dSideR: { x: 1660, y: 852, w: 140, h: 30 },
     dIconL1: { x: 690,  y: 852, w: 118, h: 64 },
     dIconL2: { x: 690,  y: 926, w: 118, h: 64 },
     dIconR1: { x: 1125, y: 852, w: 118, h: 64 },
@@ -953,12 +957,25 @@ window.Vision = (() => {
 
   // ダブルスのVS画面か: シングルスではカードが無いy帯(852-882)に「左=青カード AND 右=オレンジカード AND 中央=黒帯」が同時に揃うか
   // （単色チェックだと水面コートの青やクレイコートのオレンジなど背景に誤爆する）。index.html の解析と hl-ui.js の自分キャラ検出で共用
+  // 巨体キャラ（パックンフラワー・ゲッソー等）のアイコンは上の行のカードをほぼ覆い、青/橙が 0.000 まで落ちる
+  // （2026-09-08 ネヤさん報告=ダブルスがシングルス扱いで解析され、自分/相手キャラが同じ名前になった）。
+  // 救済は「名前帯」で見る: 名前帯はアイコンの外側にあるのでキャラに左右されない。
+  // ただし暗いコートで背景まで暗いと誤爆するので、帯の外側（背景）との差で判定する。
   function detectDoublesVs(video) {
-    const l1 = cropRegion(video, REGIONS.dIconL1), r1 = cropRegion(video, REGIONS.dIconR1), mid = cropRegion(video, REGIONS.dMidBand);
+    const l1 = cropRegion(video, REGIONS.dIconL1), r1 = cropRegion(video, REGIONS.dIconR1);
     const blueL = frac(l1, 0, 0, REGIONS.dIconL1.w, 30, (r, g, b) => b > r + 40 && b > 120);
     const orgR = frac(r1, 0, 0, REGIONS.dIconR1.w, 30, (r, g, b) => r > 160 && b < 100 && g > 40 && g < 170);
-    const darkM = frac(mid, 0, 0, REGIONS.dMidBand.w, 30, (r, g, b) => lum(r, g, b) < 60);
-    return blueL > 0.2 && orgR > 0.15 && darkM > 0.5;
+    const darkFrac = reg => frac(cropRegion(video, reg), 0, 0, reg.w, reg.h, (r, g, b) => lum(r, g, b) < 60);
+    const darkL = darkFrac(REGIONS.dMidBand);
+    if (blueL > 0.2 && orgR > 0.15 && darkL > 0.5) return true;
+    const darkR = darkFrac(REGIONS.dMidBandR);
+    if (darkL > 0.65 && darkR > 0.65) {
+      // 実測(VS 15枚): ダブルスは左右の帯とも 0.91〜0.99／シングルスは同じy帯が背景で 0.00〜0.25。
+      // 外側との差は「どちらか片側」で見る（左に暗い構造物があるコートで差が0.365まで縮んだ実例）
+      const outL = darkFrac(REGIONS.dSideL), outR = darkFrac(REGIONS.dSideR);
+      if (darkL - outL > 0.3 || darkR - outR > 0.3) return true;
+    }
+    return false;
   }
 
   // HUD(FVゲージ)が映っているか: 枡とバーの境目の黒い縦罫が左右とも暗ければ可視。

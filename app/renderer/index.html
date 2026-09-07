@@ -1337,6 +1337,18 @@ async function analyze() {
     setProgress(`${fileInfo.name}: 試合 ${i + 1}/${grouped.length} を解析中…`, 0.7 + 0.3 * i / grouped.length);
     const m = { n: matches.length + videoMatches.length + 1, video: fileInfo.name, flags: {}, crops: {} };
 
+    // --- 部門ボード（シングルス/ダブルス）を先に読む ---
+    // VS画面の見た目だけでダブルスを判定すると、巨体キャラのアイコンが左右のカードを覆ったときに
+    // シングルスとして解析してしまい、キャラも名前も丸ごと別の場所を読む（2026-09-08 ネヤさん報告）。
+    // レートパネルの部門ボードは文字テンプレ照合＝キャラに依存しないので、確信があるときはこちらを優先する。
+    // groupMatches はレートパネルが揃った試合だけを返すので g.rating は必ずある。
+    let modeSaysDoubles = null;
+    {
+      await seekTo(g.rating.t0 + 0.6);
+      const md0 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode1), 24, 8), TPL.mode1);
+      if (md0.score > 0.85 && (md0.name === 'シングルス' || md0.name === 'ダブルス')) modeSaysDoubles = md0.name === 'ダブルス';
+    }
+
     // --- VS画面: コート・キャラ・名前クロップ ---
     await seekTo((g.vs.t0 + g.vs.t1) / 2);
     // ステイルフレーム対策: VS画面でないフレームを掴んだら少しずらして1回だけ再シーク
@@ -1353,7 +1365,11 @@ async function analyze() {
     if (court.score < 0.85) m.flags.court = true;
     // 似た名前のコート(ハード⇔クレイ等)の無警告取り違え対策: 異ラベル2位と僅差なら要確認
     if (court.second != null && court.score - court.second < 0.04) m.flags.court = true;
-    m.isDoubles = V.detectDoublesVs(video); // 判定条件は vision.js（hl-ui.js と共用）
+    const dblPix = V.detectDoublesVs(video); // VS画面の見た目からの判定（vision.js・hl-ui.js と共用）
+    m.isDoubles = modeSaysDoubles != null ? modeSaysDoubles : dblPix;
+    if (modeSaysDoubles != null && modeSaysDoubles !== dblPix) {
+      log(`m${m.n}: VS画面は${dblPix ? 'ダブルス' : 'シングルス'}に見えますが部門ボードは${modeSaysDoubles ? 'ダブルス' : 'シングルス'}です。ボードを優先します`);
+    }
     if (!m.isDoubles) {
       const myVec = V.iconVec(V.cropRegion(video, R.myicon), 16, 16);
       const opVec = V.iconVec(V.cropRegion(video, R.oppicon), 16, 16);
@@ -1429,7 +1445,9 @@ async function analyze() {
     m.crops.mode2 = regionJpeg({ x: 995, y: 293, w: 295, h: 58 }, 140);  // 証拠: フィーバーラケット あり/なし(余白詰め)
     const md1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode1), 24, 8), TPL.mode1);
     const md2 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode2), 32, 8), TPL.mode2);
-    const singles = md1.name === 'シングルス' && md1.score > 0.85;
+    // ボードが読めなければ VS画面の見た目（m.isDoubles）に合わせる。既定でダブルスにすると
+    // 「部門はダブルスなのに欄はシングルス」という食い違った状態のまま出てしまう
+    const singles = modeSaysDoubles != null ? !modeSaysDoubles : !m.isDoubles;
     const classic = md2.name === 'なし' && md2.score > 0.85;
     m.mode = (classic ? 'classic_' : 'fever_') + (singles ? 'singles' : 'doubles');
     if (md1.score < 0.85 || md2.score < 0.85) m.flags.mode = true;
