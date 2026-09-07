@@ -82,29 +82,38 @@ async function* frames(video, t0, t1, fps) {
 // camEvery: カメラ推定の間引き。ラリー中もドリーするので粗すぎると座標がずれる。
 async function analyze(opts) {
   const { Court, BallTrack, Trail, RallyFuse } = loadModules(opts.variant);
-  const { video, t0, t1, fps = 60, camEvery = 15 } = opts;
+  const { video, t0, t1, fps = 60, camEvery = 15, trailEvery = 2 } = opts;   // トレイルは2コマに1回で足りる（仕様: 4コマ間隔で可）
   // overlapMax=null で静止物フィルタを無効化できる（実験用）
   const overlapMax = opts.overlapMax === undefined ? 0.6 : opts.overlapMax;
 
   const frameLog = [];
-  let prevMask = null, cam = null, net = null, prev = [], state = {};
+  let prevMask = null, cam = null, net = null, prev = [], state = {}, camAt_i = -1e9, camProv = null, camProvAt_i = -1e9;
   const cams = [];                                     // {t, cam} 時刻ごとのカメラ
   const started = Date.now();
   // Phase D: ショット色トレイル（opts.trail のとき毎フレーム）
   const trailLog = [], hist = [];
 
   for await (const fr of frames(video, t0, t1, fps)) {
-    if (fr.i % camEvery === 0) {
+    // カメラが古い（カット直後）ときは 5 コマごとに推定し直して復帰を早める（サーブ画→ラリー画の切替で打点を落とさない）
+    if (fr.i % camEvery === 0 || (fr.i - camAt_i > 30 && fr.i % 5 === 0)) {
       const e = Court.estimate(fr.img);
-      if (e.ok && !e.suspect) {
-        cam = e;
+      // サーブ画（別カメラ・ロール付き）は横1本＋縦1本で "ok・suspect=false・agree=null" が通ってしまう。
+      // 横2本以上・縦2本以上・交差検証あり、を「ラリーカメラ」の条件にする（2026-09-08 実測: 0908 p3 110.5〜111.75）
+      if (e.ok && !e.suspect && e.hHits >= 2 && e.xHits >= 2 && e.agree != null) {
+        cam = e; camAt_i = fr.i; camProv = null;
         cams.push({ t: fr.t, cam: e });
         const base = Court.toScreen(0, 0, cam).y, u = 1 / cam.c0, hpx = 0.91 * u / cam.Yc;
         net = { y0: (base - hpx * 1.25) / 2, y1: (base + 12) / 2 };
+      } else if (e.ok && e.xHits >= 1 && e.hHits >= 1) {
+        // 仮カメラ: サーブ画→ラリー画へのズーム中（0.4秒ほど）は横ラインが揃わない。座標には使わないがトレイル検出には使う
+        camProv = e; camProvAt_i = fr.i;
       }
     }
-    if (opts.trail) {
-      const tr = Trail.detect(fr.img, { cam, hist });
+    if (opts.trail && fr.i % trailEvery === 0) {
+      // カメラが 0.5 秒以上更新されていない（サーブ画・リプレイ・演出カット）ならトレイルは見ない
+      const fresh = fr.i - camAt_i <= 30, prov = !fresh && fr.i - camProvAt_i <= 10;
+      const tr = fresh ? Trail.detect(fr.img, { cam, hist }) : prov ? Trail.detect(fr.img, { cam: camProv, hist }) : { blobs: [], ref: null, mask: null };
+      if (prov) tr.blobs.forEach(b => { b.prov = true; });
       hist.unshift({ mask: tr.mask, blobs: tr.blobs }); if (hist.length > 3) hist.pop();
       trailLog.push({ t: fr.t, f: fr.i, blobs: tr.blobs,
                       ref: tr.ref ? { S90: +tr.ref.S90.toFixed(2), V90: +tr.ref.V90.toFixed(2), L90: Math.round(tr.ref.L90), Hmed: tr.ref.Hmed == null ? null : Math.round(tr.ref.Hmed), lineL: Math.round(tr.ref.lineL), useHue: tr.ref.useHue } : null });
@@ -132,7 +141,7 @@ async function analyze(opts) {
   const ranked = BallTrack.pickBall(chains, { net });
   const segs = BallTrack.ballSegments(ranked);
   const events = segs.length ? BallTrack.classifyEvents(segs, camAt) : [];
-  const trailRuns = opts.trail ? Trail.runs(trailLog, { fps }) : null;
+  const trailRuns = opts.trail ? Trail.runs(trailLog, { fps: fps / trailEvery }) : null;
   const shots = trailRuns ? Trail.shots(trailRuns, { tStart: t0 }) : null;
   const track = []; segs.forEach(s => s.pts.forEach(p => track.push(p))); track.sort((a, b) => a.t - b.t);
   const rally = shots ? RallyFuse.fuse({ shots, events, track, camAt, t0, t1 }).shots : null;

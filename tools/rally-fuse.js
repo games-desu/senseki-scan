@@ -92,9 +92,23 @@ window.RallyFuse = (() => {
 
   function fuse({ shots = [], events = [], track = [], camAt = null, t0 = -Infinity, t1 = Infinity } = {}) {
     track = purgeStatic(track);
-    const hits = shots.map(s => ({ t: +(s.t0 - LEAD).toFixed(3), side: s.side, cls: s.cls, src: 'trail',
-                                   from: s.tail ? { X: s.tail.X, Z: s.tail.Z } : null, n: s.n, nMax: s.nMax, disp: s.disp }))
-                      .sort((a, b) => a.t - b.t);
+    let hits = shots.map(s => ({ t: +(s.t0 - LEAD).toFixed(3), side: s.side, cls: s.cls, src: 'trail',
+                                 from: s.tail ? { X: s.tail.X, Z: s.tail.Z } : null, n: s.n, nMax: s.nMax, disp: s.disp }))
+                    .sort((a, b) => a.t - b.t);
+    // 打点と打点は 0.3 秒以上離れる（ネットを越える時間）。近すぎる2本は blob の大きい方だけ残す
+    // 近すぎる2本の解決: (1) 直前に採った打点と同じ側の方を落とす（側は交替する） (2) 種別が unknown の方を落とす (3) blob の小さい方を落とす
+    const MIN_GAP = 0.3;
+    for (let i = 1; i < hits.length; i++) {
+      if (hits[i].t - hits[i - 1].t >= MIN_GAP) continue;
+      const a = hits[i - 1], b = hits[i], prev = i >= 2 ? hits[i - 2] : null;
+      let drop;
+      if (prev && a.side === prev.side && b.side !== prev.side) drop = i - 1;
+      else if (prev && b.side === prev.side && a.side !== prev.side) drop = i;
+      else if (a.cls === 'unknown' && b.cls !== 'unknown') drop = i - 1;
+      else if (b.cls === 'unknown' && a.cls !== 'unknown') drop = i;
+      else drop = b.nMax >= a.nMax ? i - 1 : i;
+      hits.splice(drop, 1); i = Math.max(0, i - 2);
+    }
     // 同側連続 → 間に反対側の追跡 hit があれば補完
     const out = [];
     for (let i = 0; i < hits.length; i++) {
