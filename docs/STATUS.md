@@ -597,7 +597,8 @@ courts 47 / racketBanners 77 / myname 5 / mode 28 / albumBar 2
 | E | 可視化（ショットチャート） | 最小限 |
 
 **2026-09-07 再開**: ラリーゲート(tools/rally-match.js)・Phase D(tools/trail.js)・融合(tools/rally-fuse.js)を実装。芝クラシック(15-18-15)の1ポイントで打点6/6・種別5/6。
-**2026-09-08**: 台本録画(samples/2026-09-08 01-48-39.mp4・芝/クレイ/砂)で目視GT 38打・ベンチ v2(tools/rally-bench2.js)。打点 再現率0.84/適合率0.79/種別0.89。速度は実時間の1.5倍。ロブ点/ドロップ点の色が台本と合わない件はユーザー確認待ち。
+**2026-09-08**: 台本録画(samples/2026-09-08 01-48-39.mp4・芝/クレイ/砂)で目視GT 38打・ベンチ v2(tools/rally-bench2.js)。打点 再現率0.82/適合率0.76/種別0.84（4ポイント38打）。速度は実時間の1.5倍。**ロブは弾道（頂点高さ）で判定**して芝3/3・クレイ14/17・砂5/12。**ドロップ(白)は未解決**。
+**次回の着手点**: docs/rally-analysis.md 末尾「2026-09-08 午前」節の「次にやること」= ①スライス/フラットの取りこぼし ②砂コートのボール追跡 ③ドロップは到達距離で再挑戦。再開コマンド: `node tools/rally-bench2.js samples/rally/gt-0908.json --run`（ベンチ）／`node tools/rally-match.js "samples/2026-09-08 01-48-39.mp4" --points samples/rally/pts-0908.json --out samples/rally/0908`（台本20ポイント）。
 Phase B の横ライン同定が芝で裏返っていた件を court.js で修正（ラインの見かけ幅で採点）。詳細と次の一手は docs/rally-analysis.md 末尾の「2026-09-07 再開セッション」。
 旧GT(10-44-35/22-18-37/01-57-16)は削除済み。新GT=samples/2026-09-06 15-18-15.mp4（芝・クラシック・40ポイント）。
 
