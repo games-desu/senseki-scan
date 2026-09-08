@@ -276,7 +276,7 @@ window.Trail = (() => {
   }
 
   function classify(c, ref) {
-    const { Htip, Htail, Smed } = c;
+    const { Htip, Htail, Hcore, Smed } = c;
     if (Smed == null) return 'unknown';
     if (Smed < 0.20) {
       // 淡い水色（砂コートのスライス S≈0.16〜0.20）はドロップ(白)ではない。色相が青なら slice
@@ -288,6 +288,10 @@ window.Trail = (() => {
     // クレイ赤×赤: 尾の色相がコート色と同一になるので先端で判定（手順7）
     if (ref && ref.useHue && Ht != null && hueDist(Ht, ref.Hmed) < 15 && (Ht >= 340 || Ht < 20) && Htip != null) Ht = Htip;
     if (Ht == null) Ht = Htip;
+    // 尾と核（彩度最大のビン）の色相が 60° 以上離れている blob は2本のトレイルが結合したもの
+    // （0908 芝: ピンクのチャージ付きフラットの尾に来球の青スライスが繋がり尾=179〜228・核=284〜300）。核で決める。
+    // オフライン評価（samples/rally/cls-eval-0908.js）で 27/34 → 29/34・退行なし
+    if (Ht != null && Hcore != null && hueDist(Ht, Hcore) > 60) Ht = Hcore;
     if (Ht == null) return 'unknown';
     if (Ht >= 250 && Ht < 345) return 'flat';
     if (Ht >= 140 && Ht < 250) return 'slice';      // 仕様 197-207。芝で先端 150〜195 の水色が実測されたので広げた（2026-09-08）
@@ -369,12 +373,18 @@ window.Trail = (() => {
     for (const f of frames) {
       const used = new Set();
       for (const b of f.blobs) {
+        // 有彩色なのに種別が無い blob（緑のルイージ等の選手）は run に入れない。run の先頭に混ざると t0/側/cZ0 を汚す
+        // （0908 砂 417.9: ルイージの緑 blob → 小 blob → 自分のトレイルの大 blob と繋がって"相手の打点"になった）
+        if (b.cls === 'unknown' && b.Smed != null && b.Smed >= 0.4) continue;
         let best = null, bd = Infinity;
         for (const r of open) {
           if (used.has(r)) continue;
           const last = r.frames[r.frames.length - 1];
           const k = Math.round((f.t - last.t) * fps);
           if (k > maxGap) continue;
+          // 小さい blob の連なり（看板・静止物）が、通りがかった大きなトレイルに乗り移るのを防ぐ。
+          // 本物のトレイルは最初の1〜2コマで急に育つ（279→4696 等）ので、4コマ以上続いた run にだけ掛ける
+          if (r.frames.length >= 4 && b.n > 4 * r.nMax) continue;
           const dist = Math.hypot(b.cx - last.b.cx, b.cy - last.b.cy);
           if (dist > 50 + 30 * Math.max(1, k)) continue;   // トレイル重心の移動は最大でも 30px/コマ程度。緩いと選手のオーラと繋がる
           // 種別が違う blob は別のショット（同じ場所でも繋がない）。unknown はどちらにも付く
@@ -386,10 +396,10 @@ window.Trail = (() => {
           if (cost < bd) { bd = cost; best = r; }
         }
         if (best && bd < 1e6) {
-          best.frames.push({ t: f.t, b }); used.add(best);
+          best.frames.push({ t: f.t, b }); used.add(best); if (b.n > best.nMax) best.nMax = b.n;
           if (!best.dirSign && best.frames.length >= 3) { const d0 = b.cy - best.frames[0].b.cy; if (Math.abs(d0) >= 6) best.dirSign = Math.sign(d0); }
         }
-        else { const r = { t0: f.t, frames: [{ t: f.t, b }] }; open.push(r); used.add(r); }
+        else { const r = { t0: f.t, frames: [{ t: f.t, b }], nMax: b.n }; open.push(r); used.add(r); }
       }
       for (let i = open.length - 1; i >= 0; i--) {
         const r = open[i], last = r.frames[r.frames.length - 1];
@@ -403,8 +413,24 @@ window.Trail = (() => {
 
   // 色は打点から 4〜10 コマ後の中央値で決める（固定点で色相が流れるため・shot-color H項）
   function summarize(r, fps) {
-    const fr = r.frames;
+    let fr = r.frames;
+    // 打点の再アンカー: run の先頭にチャージ中のオーラ（小さく、その場でゆらぐ blob）が繋がっていることがある
+    // （0908 芝 55.85: オーラ6コマ→トレイル。votes の窓がオーラに掛かり 'unknown' で選手扱いに落ちた）。
+    // 「面積がそれまでの中央値の 2.5 倍以上に跳ね、かつ重心が 40px 以上動いた」コマをトレイルの出現とみなし、そこから後ろだけを使う。
+    // 本物のトレイルは先頭 1〜2 コマで育ちきる（279→1224→4696）ので i>=3 に限れば誤爆しない（実測: 0908 の本物 run で該当 0）
+    // 位置の跳びは面積の跳びの 1 コマ前に来ることがある（出現コマは小さく、次のコマで育つ）ので i と i-1 の大きい方を見る
+    const stepAt = i => i <= 0 ? 0 : Math.hypot(fr[i].b.cx - fr[i - 1].b.cx, fr[i].b.cy - fr[i - 1].b.cy);
+    let birth = 0;
+    for (let i = 3; i < fr.length; i++) {
+      const prev = median(fr.slice(0, i).map(f => f.b.n));
+      if (fr[i].b.n >= 2.5 * prev && Math.max(stepAt(i), stepAt(i - 1)) >= 40) birth = i;
+    }
+    if (birth > 0 && fr.length - birth >= 3) { r.reanchored = birth; fr = fr.slice(birth); }
     const t0 = fr[0].t, t1 = fr[fr.length - 1].t;
+    // 仮カメラ（サーブ画→ラリー画のズーム中）で見つけた blob の割合。ズーム中は座標も進行方向も意味を持たない
+    const provFrac = fr.filter(f => f.b.prov).length / fr.length;
+    // 直進度 = 最大変位 / 経路長。トレイルは 0.9〜1.0（反転で run が切れるのでロブでも片道）。走る選手（赤いマリオ）は 0.5〜0.6 で蛇行する
+    let path = 0; for (let i = 1; i < fr.length; i++) path += stepAt(i);
     const win = fr.filter(f => f.t - t0 >= 3 / fps && f.t - t0 <= 10 / fps);
     const use = win.length >= 2 ? win : fr.slice(0, Math.min(fr.length, 6));
     const votes = {};
@@ -430,7 +456,8 @@ window.Trail = (() => {
     const dy = fr[k].b.cy - first.cy;
     const dir = Math.abs(dy) >= 6 ? (dy < 0 ? 'up' : 'down') : null;
     const side = dir ? (dir === 'up' ? 'me' : 'opp') : (zEarly > 0 ? 'opp' : 'me');
-    return { t0, t1, n: fr.length, cls, votes, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1), spd: +spd.toFixed(1), dur: +(t1 - t0).toFixed(2), sMax: +sMax.toFixed(2),
+    return { t0, t1, n: fr.length, cls, votes, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1), spd: +spd.toFixed(1), dur: +(t1 - t0).toFixed(2), sMax: +sMax.toFixed(2), reanchored: r.reanchored || 0,
+             provFrac: +provFrac.toFixed(2), straight: path > 0 ? +(disp / path).toFixed(2) : 1,
              tail: { x: first.tail.x, y: first.tail.y, X: first.tailX, Z: first.tailZ },
              Htip: median(use.map(f => f.b.Htip).filter(v => v != null)),
              Htail: median(use.map(f => f.b.Htail).filter(v => v != null)),
@@ -454,13 +481,20 @@ window.Trail = (() => {
     const sideOk = r => r.cZ0 == null || (r.side === 'me' ? r.cZ0 < 3 : r.cZ0 > -3);
     const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minN && r.t0 >= tStart + 0.3 && r.dir && r.spd >= minSpd * sc && r.dur <= maxDur
                                        && sideOk(r)
+                                       && !(r.provFrac >= 0.8)          // 仮カメラのズーム中だけの run（0908 芝 52.37: サーブ画の blob が"相手の打点"になった）
+                                       && !(r.straight != null && r.straight < 0.7)   // 蛇行する run は走る選手（0908 クレイ 227.93 マリオ 0.57）
                                        && !(r.cls === 'unknown' && r.Smed != null && r.Smed >= 0.4); }).sort((a, b) => a.t0 - b.t0);   // 有彩色なのに種別が無い＝選手（緑のルイージ等）
     const out = [];
     for (const r of keep) {
       const last = out[out.length - 1];
       const fam = (a, b) => FAMILY[a] === FAMILY[b] || FAMILY[a] === 'any' || FAMILY[b] === 'any';
       if (last && fam(last.cls, r.cls) && (last.dir === r.dir || !r.dir || !last.dir) && r.t0 - last.t1 <= mergeGap) {
-        last.t1 = Math.max(last.t1, r.t1); last.n += r.n; last.nMax = Math.max(last.nMax, r.nMax); last.merged = (last.merged || 1) + 1;
+        // 先行断片が「4コマ以上あるのに後続の 1/5 未満」ならチャージ中のオーラ（0908 クレイ 225.4: nMax 834 → 本物 13343、
+        // 砂 413.7: 723 → 7688）。時刻・種別・側などは後続（本物のトレイル）のものにする。本物が途中で切れた断片は 1〜2 コマ目で
+        // 育ちきっているので 5 倍差にはならない（芝 56.267 で最大 4.6 倍）
+        const t1 = Math.max(last.t1, r.t1), n = last.n + r.n, merged = (last.merged || 1) + 1;
+        if (last.n >= 4 && r.nMax >= 5 * last.nMax) Object.assign(last, r, { t1, n, merged, auraT0: last.auraT0 != null ? last.auraT0 : last.t0 });
+        else { last.t1 = t1; last.n = n; last.nMax = Math.max(last.nMax, r.nMax); last.merged = merged; }
         continue;
       }
       out.push(Object.assign({}, r));
