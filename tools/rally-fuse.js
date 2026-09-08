@@ -123,6 +123,22 @@ window.RallyFuse = (() => {
     }
     for (let i = 0; i < out.length; i++) {
       const h = out[i], tNext = i + 1 < out.length ? out[i + 1].t : t1;
+      // ロブは色だけでは決まらない（クレイの黄ロブ 42〜56° と芝の橙トップスピン 33〜49° が重なる・2026-09-08 実測）。
+      // 弾道の頂点で決める: 打点〜次の打点の追跡点の画面 y 最小が奥ベースライン行より 50px(960) 以上「上」なら高い球＝ロブ。
+      // 実測: 芝/クレイの自分のロブ 13/15 が rel≤-50、トップスピンは -41〜+121。0.7 秒未満の飛行は判定しない
+      const seg = track.filter(p => p.t > h.t + 0.1 && p.t < tNext - 0.1);
+      // サーブはロブにならない。最後の打点（次の打点が無い）は場外へ飛ぶ球まで含むので色が lob のときだけ
+      const last = i + 1 >= out.length;
+      if (i > 0 && !last && seg.length >= 4 && tNext - h.t >= 0.7 && camAt && typeof Court !== 'undefined') {
+        const mn = seg.reduce((a, p) => p.y < a.y ? p : a);
+        const cam = camAt(mn.t);
+        if (cam && cam.ok) {
+          const yFar = Court.toScreen(0, Court.Z_BASE, cam).y / 2;
+          h.apex = +(mn.y - yFar).toFixed(0);
+          // drop も含める: 砂では黄ロブが淡く読めて 'drop' になる。ドロップは高く上がらないので頂点で否定できる
+          if (h.apex <= -50 && (h.cls === 'topspin' || h.cls === 'lob' || h.cls === 'unknown' || h.cls === 'drop')) { if (h.cls !== 'lob') h.clsColor = h.cls; h.cls = 'lob'; }
+        }
+      }
       h.land = landingFromTrack(track, h.t, tNext, camAt, h.side);
       if (h.land && h.land.Z != null) h.land.wrongSide = h.side === 'me' ? h.land.Z < -0.5 : h.land.Z > 0.5;
       h.serve = i === 0;
