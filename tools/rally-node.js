@@ -153,6 +153,7 @@ async function analyze(opts) {
     nFrames: frameLog.length,
     nCands: frameLog.reduce((s, f) => s + f.c.length, 0),
     camOk: cams.length, net,
+    cams: cams.map(c => ({ t: c.t, c0: c.cam.c0, c1: c.cam.c1, Xc: c.cam.Xc, Yc: c.cam.Yc })),
     chains: chains.length,
     ranked: ranked.slice(0, 12).map(c => ({
       t0: c.pts[0].t, t1: c.pts[c.pts.length - 1].t, len: c.len,
