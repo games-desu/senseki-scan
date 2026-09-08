@@ -834,6 +834,27 @@ function applyMyRow(m, row) {
   m.partnerName = ''; if (m.autoName) delete m.autoName.partnerName; if (m.edited) delete m.edited.partnerName;
   const hit = nameFromSig(d.names[pt].sig) || ocrName(d.names[pt].band);
   if (hit) { m.partnerName = hit.name; (m.autoName ??= {}).partnerName = true; }
+  applyRacketRows(m); // フィーバーダブルス: 自分/味方のラケットも行に合わせて入れ替える
+}
+// フィーバーダブルス: FVゲージのキー(L1/L2=自チーム上/下・R1/R2=相手チーム上/下)別に決めたラケット(m._rk)を、
+// 自分の行に合わせて 自分/味方/相手1/相手2 の欄へ振り分ける。「自分の行」を選び直しても動画を読み直さずに振り直せる
+const RK_FIELDS = { me: 'myRacket', partner: 'partnerRacket', opp: 'oppRacket', opp2: 'opp2Racket' };
+// 表示するラケット欄（side, ラベル）: シングルス=自分/相手・ダブルス=自分/味方/相手1/相手2
+const rkSides = m => m.isDoubles ? [['me', '自分'], ['partner', '味方'], ['opp', '相手1'], ['opp2', '相手2']] : [['me', '自分'], ['opp', '相手']];
+function applyRacketRows(m) {
+  const rk = m._rk; if (!rk) return;
+  const row = (m._dbl && m._dbl.row) || 1;
+  const map = { [row === 1 ? 'L1' : 'L2']: 'me', [row === 1 ? 'L2' : 'L1']: 'partner', R1: 'opp', R2: 'opp2' };
+  for (const [k, side] of Object.entries(map)) {
+    const f = RK_FIELDS[side];
+    if (m.edited && m.edited[f]) continue; // 手修正済みの欄は上書きしない
+    m[f] = rk[k] ?? null;
+    if (m.auto) delete m.auto[f];
+    m.flags[f] = !m[f] || m[f] === 'ハテナラケット' || !!m._rkUnsure;
+  }
+  // 自分ラケットが読めなかったときの「直前のフィーバー試合と同じ」仮入力（シングルスと同じ規則）
+  if (!m.myRacket && m._rkPrev && !(m.edited && m.edited.myRacket)) { m.myRacket = m._rkPrev; (m.auto ??= {}).myRacket = true; }
+  for (const e of m.racketEvents || []) if (e.gauge) e.side = map[e.gauge] || null;
 }
 // ユーザーが「上が自分/下が自分」を選んだ: その試合に当てはめ、選んだ行の名前を自分として学習し、
 // 同じ解析中でまだ決められていない他のダブルス試合にも学習結果で当てはめる
@@ -1513,10 +1534,17 @@ async function analyze() {
 
     // フィーバー: 発動バナー（〇〇ショット/ブースト）を収集→列プロファイル照合でラケット特定。
     // 帰属はFVゲージの減少側。同じ側から複数種のバナー=ハテナラケット（ランダム発動）
-    if (m.mode === 'fever_singles') {
+    // ダブルス(2026-09-08〜): HUDは4人ぶん(左上=自チーム上/下・右上=相手チーム上/下)のFVゲージがあるので、
+    // 4本のゲージで「誰の発動か」まで個人に帰属する（実戦 22-45-12 m1: 8バナー全件が発動者のゲージに一致）。
+    // 帰属キーは L1/L2/R1/R2。自分/味方の割り当ては自分の行に依存するので applyRacketRows で行う
+    if (m.mode === 'fever_singles' || m.mode === 'fever_doubles') {
       setProgress(`試合 ${i + 1}: フィーバーラケットを解析中…`, null);
-      const evs = await V.collectBanners(video, g.vs.t1 + 12, g.rating.t0 - 6, {});
-      const names = { me: {}, opp: {} };
+      const dbl = m.mode === 'fever_doubles';
+      const bOpt = dbl ? { gauges: { L1: R.fvL, L2: R.fvL2, R1: R.fvR, R2: R.fvR2 },
+                           borders: [R.fvBorderL, R.fvBorderR, R.fvBorderL2, R.fvBorderR2] } : {};
+      const evs = await V.collectBanners(video, g.vs.t1 + 12, g.rating.t0 - 6, bOpt);
+      const KEYS = dbl ? ['L1', 'L2', 'R1', 'R2'] : ['me', 'opp'];
+      const names = Object.fromEntries(KEYS.map(k => [k, {}]));
       m.racketEvents = [];
       for (const e of evs) {
         let bestName = null, bestScore = 0;
@@ -1572,8 +1600,8 @@ async function analyze() {
             seq.push(frameJpeg(640));
           }
         }
-        m.racketEvents.push({ t: +e.t.toFixed(1), side: e.side, name: matched, score: +bestScore.toFixed(2), crop, seq });
-        if (e.side && matched) names[e.side][matched] = (names[e.side][matched] || 0) + 1;
+        m.racketEvents.push({ t: +e.t.toFixed(1), side: e.side, gauge: e.gauge, name: matched, score: +bestScore.toFixed(2), crop, seq });
+        if (e.side && matched && names[e.side]) names[e.side][matched] = (names[e.side][matched] || 0) + 1;
       }
       const decide = obj => {
         const ks = Object.keys(obj);
@@ -1591,30 +1619,39 @@ async function analyze() {
         const total = ks.reduce((s, k) => s + obj[k], 0);
         return total >= 3 ? 'ハテナラケット' : null;
       };
-      m.myRacket = decide(names.me);
-      m.oppRacket = decide(names.opp);
-      if (!m.myRacket || m.myRacket === 'ハテナラケット') m.flags.myRacket = true;
-      if (!m.oppRacket || m.oppRacket === 'ハテナラケット') m.flags.oppRacket = true;
       // 自分ラケットが読めなかった場合は直前のフィーバー試合と同じラケットを仮入力する
       // （自分のラケットは連戦で変えないことが多い・ユーザー要望2026-08-28）。要確認フラグは維持
-      if (!m.myRacket) {
+      // ただし、この試合で照合できたバナー名の中に前試合のラケットが1本も無いなら
+      // ラケットを変えている＝持ち越しは誤り（m9でビリキューが入ったが実際はかざん/カーブ・2026-08-31）
+      const prevMy = () => {
         const prev = [...matches, ...videoMatches].reverse().find(x =>
           x.mode && x.mode.startsWith('fever') && x.myRacket && x.myRacket !== 'ハテナラケット');
-        // ただし、この試合で照合できたバナー名の中に前試合のラケットが1本も無いなら
-        // ラケットを変えている＝持ち越しは誤り（m9でビリキューが入ったが実際はかざん/カーブ・2026-08-31）
         const seen = new Set((m.racketEvents || []).filter(e => e.name).map(e => e.name));
-        if (prev && (!seen.size || seen.has(prev.myRacket))) { m.myRacket = prev.myRacket; (m.auto ??= {}).myRacket = true; }
-      }
+        return prev && (!seen.size || seen.has(prev.myRacket)) ? prev.myRacket : null;
+      };
       // 未帰属/未照合バナーの要確認判定（2026-08-27精緻化）:
       // - 照合スコア0.7未満の未照合イベントは相手ネームプレート表示（黒帯の名前テキスト）等の
       //   誤検出が主でラケット情報を持たない → フラグ根拠にしない（全問正解の試合が過剰フラグされていた実例）
       // - side不明でも名前が確定済みラケット（自分/相手）と同じなら情報の矛盾なし → フラグ不要
-      const decidedNames = new Set([m.myRacket, m.oppRacket].filter(x => x && x !== 'ハテナラケット'));
-      if (m.racketEvents.some(e =>
-        (!e.name && e.score >= 0.7) || (e.name && !e.side && !decidedNames.has(e.name)))) {
-        m.flags.myRacket = true; m.flags.oppRacket = true;
+      const unsure = decidedList => {
+        const decidedNames = new Set(decidedList.filter(x => x && x !== 'ハテナラケット'));
+        return m.racketEvents.some(e => (!e.name && e.score >= 0.7) || (e.name && !e.side && !decidedNames.has(e.name)));
+      };
+      if (dbl) {
+        m._rk = Object.fromEntries(KEYS.map(k => [k, decide(names[k])]));
+        m._rkPrev = prevMy();
+        m._rkUnsure = unsure(Object.values(m._rk));
+        applyRacketRows(m);
+        log(`m${m.n}: ラケット 自分=${m.myRacket ?? '?'} 味方=${m.partnerRacket ?? '?'} 相手1=${m.oppRacket ?? '?'} 相手2=${m.opp2Racket ?? '?'} (バナー${m.racketEvents.length}件・自分の行=${m._dbl && m._dbl.row === 2 ? '下' : '上'})`);
+      } else {
+        m.myRacket = decide(names.me);
+        m.oppRacket = decide(names.opp);
+        if (!m.myRacket || m.myRacket === 'ハテナラケット') m.flags.myRacket = true;
+        if (!m.oppRacket || m.oppRacket === 'ハテナラケット') m.flags.oppRacket = true;
+        if (!m.myRacket) { const p = prevMy(); if (p) { m.myRacket = p; (m.auto ??= {}).myRacket = true; } }
+        if (unsure([m.myRacket, m.oppRacket])) { m.flags.myRacket = true; m.flags.oppRacket = true; }
+        log(`m${m.n}: ラケット 自分=${m.myRacket ?? '?'} 相手=${m.oppRacket ?? '?'} (バナー${m.racketEvents.length}件)`);
       }
-      log(`m${m.n}: ラケット 自分=${m.myRacket ?? '?'} 相手=${m.oppRacket ?? '?'} (バナー${m.racketEvents.length}件)`);
     }
 
     // 回線品質: 試合中の4本バーアイコンを複数回サンプリングして平均（→CSVのconnection_quality）。
@@ -1628,22 +1665,38 @@ async function analyze() {
       // 長時間の試合でも解析時間が破綻しないよう上限120点
       const STRIDE = 2.5;
       const nS = Math.min(120, Math.max(0, Math.floor((ct1 - ct0) / STRIDE)));
+      // フィーバーダブルス: 回線アイコンは「自分の行」(上/下)の右に出る → 上下どちらで読めたかも数える
+      const dblConn = m.mode === 'fever_doubles';
+      const rowHits = [0, 0];
       for (let sIdx = 0; sIdx < nS; sIdx++) {
         if (sIdx % 10 === 0) setProgress(`試合 ${i + 1}: 回線を確認中… ${sIdx}/${nS}`, null);
         await seekTo(ct0 + (ct1 - ct0) * (sIdx + 0.5) / nS);
-        const cr = V.readConnection(video, m.mode);
+        const cr = dblConn ? V.readConnectionDoubles(video) : V.readConnection(video, m.mode);
         if (cr.ok) {
           vals.push(cr.level);
+          if (dblConn) rowHits[cr.row - 1]++;
           // 証拠: 回線バーのクロップ。読めた本数の種類ごとに1枚（同じ本数は重複させない・ユーザー要望2026-08-29）
           m.connCrops ??= [];
           if (!m.connCrops.some(c => c.level === cr.level)) {
             const R0 = m.mode && m.mode.startsWith('fever')
-              ? { x: 356, y: 14, w: 76, h: 78 } : { x: 26, y: 6, w: 74, h: 80 }; // conn領域+パディング10px
+              ? { x: 356, y: dblConn && cr.row === 2 ? 122 : 14, w: 76, h: 78 } : { x: 26, y: 6, w: 74, h: 80 }; // conn領域+パディング10px
             m.connCrops.push({ level: cr.level, img: regionJpeg(R0, 120) });
           }
         }
       }
       m.connSamples = vals;
+      // フィーバーダブルスで自分の名前が未学習のとき、回線アイコンの行を自分の行にする
+      // （2026-09-08 22-45-12 実測: 自分が下の行の試合は全サンプルが下、上の行の試合は全サンプルが上）。
+      // 片方の行だけで3回以上読めたときに限る。名前の学習も同時に行い、次回からはクラシックダブルスでも効く
+      if (dblConn && m._dbl && !m._dbl.decided) {
+        const [h1, h2] = rowHits;
+        const row = h1 >= 3 && h2 === 0 ? 1 : h2 >= 3 && h1 === 0 ? 2 : null;
+        if (row) {
+          applyMyRow(m, row); m._dbl.decided = true; m._dbl.byConn = true; m.flags.myRow = false; (m.auto ??= {}).myRow = true;
+          learnMySig(m._dbl.sigs[row - 1]);
+          log(`m${m.n}: 回線アイコンの位置(HUDの${row === 1 ? '上' : '下'}の行)から自分の行を${row === 1 ? '上' : '下'}と判定し、自分の名前として学習しました`);
+        }
+      }
       if (m.connCrops) m.connCrops.sort((a, b) => a.level - b.level);
       m.connection = vals.length >= 2
         ? Math.max(0, Math.min(4, Math.round(vals.reduce((a, b) => a + b, 0) / vals.length))) : null;
@@ -1736,7 +1789,7 @@ function comboSources() {
 }
 
 const EDIT_KEYS = ['playedAt', 'mode', 'myChar', 'partnerChar', 'partnerName', 'oppChar', 'oppName',
-  'opp2Char', 'opp2Name', 'myRacket', 'oppRacket', 'court', 'myScore', 'oppScore', 'result',
+  'opp2Char', 'opp2Name', 'myRacket', 'partnerRacket', 'oppRacket', 'opp2Racket', 'court', 'myScore', 'oppScore', 'result',
   'ratingBefore', 'ratingAfter', 'connection'];
 function snapshotOrig(m) {
   m._orig = {};
@@ -1795,7 +1848,7 @@ function evi(label, src, cls) {
 // （side誤帰属で別ラケットのバナーが先頭に来ると、入力値と画像が食い違って見えるため）
 function racketCrop(m, side) {
   const evs = (m.racketEvents || []).filter(e => e.side === side && e.crop);
-  const decided = side === 'me' ? m.myRacket : m.oppRacket;
+  const decided = m[RK_FIELDS[side]];
   const hit = (decided && decided !== 'ハテナラケット') ? evs.find(e => e.name === decided) : null;
   return (hit || evs[0] || {}).crop;
 }
@@ -1869,7 +1922,7 @@ setInterval(() => {
 function racketCrops(m, side) {
   const evs0 = m.racketEvents || [];
   const withSeq = c => { const ev = evs0.find(e => e.crop === c.crop); if (ev && ev.seq) { c.seq = ev.seq; c.evIdx = evs0.indexOf(ev); } return c; };
-  const decided = side === 'me' ? m.myRacket : m.oppRacket;
+  const decided = m[RK_FIELDS[side]];
   if (decided !== 'ハテナラケット') {
     const c = racketCrop(m, side);
     if (c) return [withSeq({ crop: c })];
@@ -1911,7 +1964,7 @@ function matchCard(m) {
         ${evi('最終スコア', m.crops.winnerPanel, 'small')}
         ${evi('レート変動前', m.crops.ratingBefore)}
         ${evi('レート変動後', m.crops.ratingAfter)}
-        ${racketCrops(m, 'me').map((c, i) => evi(c.unknown ? '発動バナー(帰属不明)' : 'ラケット発動 (自分' + (i ? '・種類' + (i + 1) : '') + ')', c.crop)).join('')}${racketCrops(m, 'opp').map((c, i) => evi(c.unknown ? '発動バナー(帰属不明)' : 'ラケット発動 (相手' + (i ? '・種類' + (i + 1) : '') + ')', c.crop)).join('')}
+        ${rkSides(m).map(([side, lab]) => racketCrops(m, side).map((c, i) => evi(c.unknown ? '発動バナー(帰属不明)' : 'ラケット発動 (' + lab + (i ? '・種類' + (i + 1) : '') + ')', c.crop)).join('')).join('')}
       </div>
       <div class="grid">
         ${myRowHtml(m)}
@@ -1924,8 +1977,7 @@ function matchCard(m) {
         ${field(m, 'oppName', '相手1の名前（画像を見て入力）', m.oppName ?? '', { crop: m.crops.oppname, ph: '任意', combo: 'name' })}
         ${m.isDoubles ? field(m, 'opp2Char', '相手2キャラ', m.opp2Char, { combo: 'char' }) : ''}
         ${m.isDoubles ? field(m, 'opp2Name', '相手2の名前（画像を見て入力）', m.opp2Name ?? '', { crop: m.crops.opp2name, ph: '任意', combo: 'name' }) : ''}
-        ${m.mode && m.mode.startsWith('fever') ? field(m, 'myRacket', '自分ラケット', m.myRacket ?? '', { crop: racketCrop(m, 'me'), ph: '例: トゲゾーラケット', combo: 'racket' }) : ''}
-        ${m.mode && m.mode.startsWith('fever') ? field(m, 'oppRacket', '相手ラケット', m.oppRacket ?? '', { crop: racketCrop(m, 'opp'), ph: '任意', combo: 'racket' }) : ''}
+        ${m.mode && m.mode.startsWith('fever') ? rkSides(m).map(([side, lab]) => field(m, RK_FIELDS[side], lab + 'ラケット', m[RK_FIELDS[side]] ?? '', { crop: racketCrop(m, side), ph: side === 'me' ? '例: トゲゾーラケット' : '任意', combo: 'racket' })).join('') : ''}
         ${field(m, 'court', 'コート', m.court, { combo: 'court' })}
         ${field(m, 'myScore', '自分スコア', m.myScore)}
         ${field(m, 'oppScore', '相手スコア', m.oppScore)}
@@ -1938,15 +1990,19 @@ function matchCard(m) {
 
 const FIELD_LABELS = { playedAt: '日時', mode: 'mode', myRow: '自分の行', myChar: '自分キャラ', partnerChar: '味方キャラ',
   partnerName: '味方の名前', oppChar: '相手1キャラ', oppName: '相手1の名前', opp2Char: '相手2キャラ',
-  opp2Name: '相手2の名前', myRacket: '自分ラケット', oppRacket: '相手ラケット', court: 'コート',
+  opp2Name: '相手2の名前', myRacket: '自分ラケット', partnerRacket: '味方ラケット', oppRacket: '相手ラケット', opp2Racket: '相手2ラケット', court: 'コート',
   myScore: '自分スコア', oppScore: '相手スコア', result: 'result', ratingBefore: 'レート前', ratingAfter: 'レート後', connection: '回線' };
 
 // 1件ずつ確認用: フィールドカード型（全入力欄の真上にその根拠画像・ユーザー設計 2026-08-29改2）
 // 行構成: [日時|mode|コート|回線|全景] [キャラ] [名前] [ラケット] [スコア自分/相手/result] [レート前後]
 function matchCardPaired(m) {
   const isFever = m.mode && m.mode.startsWith('fever');
-  const rkme = racketCrops(m, 'me'), rkopp = racketCrops(m, 'opp');
   const rkLabel = (base, arr) => arr.some(c => c.unknown) ? base + '（画像は帰属不明バナー）' : base;
+  const rkFields = rkSides(m).map(([side, lab]) => {
+    const arr = racketCrops(m, side);
+    return field(m, RK_FIELDS[side], rkLabel(lab + 'ラケット', arr), m[RK_FIELDS[side]] ?? '',
+      { combo: 'racket', ph: side === 'me' ? '例: トゲゾーラケット' : '任意', crops: arr.map(c => c.crop), extra: seqPlayers(m, arr) });
+  }).join('');
   return `
     <div class="fgrid">
       ${field(m, 'playedAt', '日時 (played_at)', m.playedAt, { crops: [m.crops.vsFrame] })}
@@ -1966,10 +2022,7 @@ function matchCardPaired(m) {
       ${field(m, 'oppName', '相手1の名前（任意）', m.oppName ?? '', { crop: m.crops.oppname, ph: '任意', combo: 'name' })}
       ${m.isDoubles ? field(m, 'opp2Name', '相手2の名前（任意）', m.opp2Name ?? '', { crop: m.crops.opp2name, ph: '任意', combo: 'name' }) : ''}
     </div>
-    ${isFever ? `<div class="fgrid">
-      ${field(m, 'myRacket', rkLabel('自分ラケット', rkme), m.myRacket ?? '', { combo: 'racket', ph: '例: トゲゾーラケット', crops: rkme.map(c => c.crop), extra: seqPlayers(m, rkme) })}
-      ${field(m, 'oppRacket', rkLabel('相手ラケット', rkopp), m.oppRacket ?? '', { combo: 'racket', ph: '任意', crops: rkopp.map(c => c.crop), extra: seqPlayers(m, rkopp) })}
-    </div>` : ''}
+    ${isFever ? `<div class="fgrid">${rkFields}</div>` : ''}
     <div class="fgrid">
       ${field(m, 'myScore', '自分スコア', m.myScore, { crops: [m.crops.scoreMine || m.crops.winnerPanel] })}
       ${field(m, 'oppScore', '相手スコア', m.oppScore, { crops: [m.crops.scoreOpp] })}
@@ -2233,9 +2286,9 @@ function buildCsvText() {
     const row = {
       played_at: m.playedAt, mode: m.mode,
       my_character: myC, my_character_color: myCol, my_racket1: m.myRacket ?? '',
-      partner_name: m.partnerName ?? '', partner_character: paC, partner_character_color: paCol, partner_racket1: '',
+      partner_name: m.partnerName ?? '', partner_character: paC, partner_character_color: paCol, partner_racket1: m.partnerRacket ?? '',
       opponent1_name: m.oppName ?? '', opponent1_character: opC, opponent1_character_color: opCol, opponent1_racket1: m.oppRacket ?? '',
-      opponent2_name: m.opp2Name ?? '', opponent2_character: o2C, opponent2_character_color: o2Col, opponent2_racket1: '',
+      opponent2_name: m.opp2Name ?? '', opponent2_character: o2C, opponent2_character_color: o2Col, opponent2_racket1: m.opp2Racket ?? '',
       court: m.court, my_score: m.myScore, opponent_score: m.oppScore, result: m.result,
       rating_before: m.ratingBefore, rating_after: m.ratingAfter, memo: '',
       connection_quality: m.connection ?? '',

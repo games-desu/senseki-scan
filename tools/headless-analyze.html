@@ -45,6 +45,13 @@ window.addEventListener("error", e => progress("error", { msg: String(e.message)
       csv: w.buildCsvText(),
       // matches は index.html の let 変数で外から見えないので CSV（buildCsvText）で受け取る
       flags: [...w.document.querySelectorAll('.flag, .warn')].map(e => e.textContent.trim()).filter(Boolean).slice(0, 50),
+      // 確認UIの描画チェック: 一覧/1件ずつの両ビューで入力欄(data-key)がどう並ぶか（欄の追加・削除の回帰用）
+      ui: (() => {
+        const dump = () => [...w.document.querySelectorAll('[data-key]')].map(e => `${e.dataset.n}:${e.dataset.key}=${e.value ?? ''}`);
+        const out = { list: dump() };
+        try { w.document.getElementById('modeSingle').click(); out.single = dump(); w.document.getElementById('modeList').click(); } catch (e) { out.single = ['ERROR ' + e]; }
+        return out;
+      })(),
     });
   } catch (e) {
     await post({ ok: false, error: String(e && e.stack || e), log: w.document.getElementById('logPanel')?.innerText });
