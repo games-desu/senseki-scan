@@ -93,14 +93,21 @@ window.RallyFuse = (() => {
   function fuse({ shots = [], events = [], track = [], camAt = null, t0 = -Infinity, t1 = Infinity } = {}) {
     track = purgeStatic(track);
     let hits = shots.map(s => ({ t: +(s.t0 - LEAD).toFixed(3), side: s.side, cls: s.cls, src: 'trail',
-                                 from: s.tail ? { X: s.tail.X, Z: s.tail.Z } : null, n: s.n, nMax: s.nMax, disp: s.disp }))
+                                 from: s.tail ? { X: s.tail.X, Z: s.tail.Z } : null, n: s.n, nMax: s.nMax, disp: s.disp, S: s.Smed }))
                     .sort((a, b) => a.t - b.t);
+    const FAM = { topspin: 'warm', lob: 'warm', slice: 'blue', flat: 'purple', drop: 'white', unknown: 'any' };
     // 打点と打点は 0.3 秒以上離れる（ネットを越える時間）。近すぎる2本は blob の大きい方だけ残す
     // 近すぎる2本の解決: (1) 直前に採った打点と同じ側の方を落とす（側は交替する） (2) 種別が unknown の方を落とす (3) blob の小さい方を落とす
     const MIN_GAP = 0.3;
     for (let i = 1; i < hits.length; i++) {
       if (hits[i].t - hits[i - 1].t >= MIN_GAP) continue;
-      const a = hits[i - 1], b = hits[i], prev = i >= 2 ? hits[i - 2] : null;
+      // 「側は交替する」は直前の打点が近い（1.5秒以内）ときだけ信じる。前の打点を取りこぼしていると逆の方を落とす
+      // （0908 砂 417.8: 直前が 2.1 秒前の 415.6 で、自分の打点を捨てて相手側の偽打点を採っていた）
+      const a = hits[i - 1], b = hits[i], prev = i >= 2 && a.t - hits[i - 2].t <= 1.5 ? hits[i - 2] : null;
+      // 側が違い・色族も違い・どちらも大きく有彩色なら、別々の本物のトレイル（相手のスライスの検出が遅れて自分の返球と
+      // 0.1 秒差になった 0908 砂 420.6/421.05）。両方残す。白（ドロップ）は閃光と紛らわしいので対象外
+      if (a.side !== b.side && FAM[a.cls] !== FAM[b.cls] && FAM[a.cls] !== 'any' && FAM[b.cls] !== 'any' && FAM[a.cls] !== 'white' && FAM[b.cls] !== 'white'
+          && a.nMax >= 1000 && b.nMax >= 1000 && (a.S == null || a.S >= 0.25) && (b.S == null || b.S >= 0.25)) { a.tight = b.tight = true; continue; }
       let drop;
       if (prev && a.side === prev.side && b.side !== prev.side) drop = i - 1;
       else if (prev && b.side === prev.side && a.side !== prev.side) drop = i;
