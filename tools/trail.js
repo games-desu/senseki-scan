@@ -282,6 +282,10 @@ window.Trail = (() => {
       // 淡い水色（砂コートのスライス S≈0.16〜0.20）はドロップ(白)ではない。色相が青なら slice
       const hb = Htail != null ? Htail : Htip;
       if (hb != null && hb >= 140 && hb < 250 && Smed >= 0.10) return 'slice';
+      // 淡い紫（15-18-15 デイジーの溜めフラット S=0.16・先端 315°）も同じ。色相ビンは s>0.25 の画素からしか作られないので、
+      // 色相が読めている＝芯に有彩色がある。真っ白なドロップは Htip/Htail が null のまま drop に落ちる
+      const hp = Htip != null ? Htip : Htail;
+      if (hp != null && hp >= 250 && hp < 345 && Smed >= 0.10) return 'flat';
       return 'drop';
     }
     let Ht = Htail;
@@ -425,12 +429,15 @@ window.Trail = (() => {
       const prev = median(fr.slice(0, i).map(f => f.b.n));
       if (fr[i].b.n >= 2.5 * prev && Math.max(stepAt(i), stepAt(i - 1)) >= 40) birth = i;
     }
+    const cZpre = fr[0].b.cZ;   // 再アンカー前の先頭（オーラなら選手の位置）。側の整合の判定に使う
     if (birth > 0 && fr.length - birth >= 3) { r.reanchored = birth; fr = fr.slice(birth); }
     const t0 = fr[0].t, t1 = fr[fr.length - 1].t;
     // 仮カメラ（サーブ画→ラリー画のズーム中）で見つけた blob の割合。ズーム中は座標も進行方向も意味を持たない
     const provFrac = fr.filter(f => f.b.prov).length / fr.length;
-    // 直進度 = 最大変位 / 経路長。トレイルは 0.9〜1.0（反転で run が切れるのでロブでも片道）。走る選手（赤いマリオ）は 0.5〜0.6 で蛇行する
-    let path = 0; for (let i = 1; i < fr.length; i++) path += stepAt(i);
+    // 縦の直進度 = |y の正味の変位| / Σ|Δy|。トレイルは y が単調（0.9〜1.0・反転で run が切れるのでロブでも片道）。
+    // 走る選手（赤いマリオ・0908 クレイ 227.93）は y が 394→351→389 と往復して 0.14。x は分断された断片の交互出現で揺れるので見ない（芝 274.77 の本物のロブが x 揺れで 0.56 だった）
+    let yPath = 0; for (let i = 1; i < fr.length; i++) yPath += Math.abs(fr[i].b.cy - fr[i - 1].b.cy);
+    const yStraight = yPath >= 1 ? Math.abs(fr[fr.length - 1].b.cy - fr[0].b.cy) / yPath : 1;
     const win = fr.filter(f => f.t - t0 >= 3 / fps && f.t - t0 <= 10 / fps);
     const use = win.length >= 2 ? win : fr.slice(0, Math.min(fr.length, 6));
     const votes = {};
@@ -457,7 +464,7 @@ window.Trail = (() => {
     const dir = Math.abs(dy) >= 6 ? (dy < 0 ? 'up' : 'down') : null;
     const side = dir ? (dir === 'up' ? 'me' : 'opp') : (zEarly > 0 ? 'opp' : 'me');
     return { t0, t1, n: fr.length, cls, votes, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1), spd: +spd.toFixed(1), dur: +(t1 - t0).toFixed(2), sMax: +sMax.toFixed(2), reanchored: r.reanchored || 0,
-             provFrac: +provFrac.toFixed(2), straight: path > 0 ? +(disp / path).toFixed(2) : 1,
+             provFrac: +provFrac.toFixed(2), straight: +yStraight.toFixed(2), cZpre,
              tail: { x: first.tail.x, y: first.tail.y, X: first.tailX, Z: first.tailZ },
              Htip: median(use.map(f => f.b.Htip).filter(v => v != null)),
              Htail: median(use.map(f => f.b.Htail).filter(v => v != null)),
@@ -478,11 +485,13 @@ window.Trail = (() => {
     // 側の整合: 自分の打球は手前(Z<0)から上へ、相手の打球は奥(Z>0)から下へ進む。尾の Z と進行方向が食い違う run は
     // トレイルではない（チャージ中のキャラのオーラが下へ伸びる等・0908 芝 58.5 で自分の打点を潰した）。ネット際(|Z|<2)は不問
     // 判定は出現時の重心の Z（尾は最初のコマで先端と取り違えることがある）。緩めに: 自分は Z<3・相手は Z>-3
-    const sideOk = r => r.cZ0 == null || (r.side === 'me' ? r.cZ0 < 3 : r.cZ0 > -3);
+    // 再アンカーした run は出現時の重心が先へ進んでいる（クレイ 327.27: Z=3.68 で本物のロブが落ちた）ので、切り離す前の先頭（cZpre）でも可
+    // 閾値 5: 自分のトレイルはネット手前 Z=3.2 で出現することがある（15-18-15 p8 デイジーのスライス/フラット・3 だと落ちた）。オーラは選手の位置（|Z|≈8〜10）なので余裕がある
+    const sideOk = r => r.cZ0 == null || (r.side === 'me' ? (r.cZ0 < 5 || r.cZpre < 5) : (r.cZ0 > -5 || r.cZpre > -5));
     const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minN && r.t0 >= tStart + 0.3 && r.dir && r.spd >= minSpd * sc && r.dur <= maxDur
                                        && sideOk(r)
                                        && !(r.provFrac >= 0.8)          // 仮カメラのズーム中だけの run（0908 芝 52.37: サーブ画の blob が"相手の打点"になった）
-                                       && !(r.straight != null && r.straight < 0.7)   // 蛇行する run は走る選手（0908 クレイ 227.93 マリオ 0.57）
+                                       && !(r.straight != null && r.straight < 0.6)   // y が往復する run は走る選手（0908 クレイ 227.93 マリオ 0.14・本物は 0.85 以上）
                                        && !(r.cls === 'unknown' && r.Smed != null && r.Smed >= 0.4); }).sort((a, b) => a.t0 - b.t0);   // 有彩色なのに種別が無い＝選手（緑のルイージ等）
     const out = [];
     for (const r of keep) {

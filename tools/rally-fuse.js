@@ -109,7 +109,11 @@ window.RallyFuse = (() => {
       if (a.side !== b.side && FAM[a.cls] !== FAM[b.cls] && FAM[a.cls] !== 'any' && FAM[b.cls] !== 'any' && FAM[a.cls] !== 'white' && FAM[b.cls] !== 'white'
           && a.nMax >= 1000 && b.nMax >= 1000 && (a.S == null || a.S >= 0.25) && (b.S == null || b.S >= 0.25)) { a.tight = b.tight = true; continue; }
       let drop;
-      if (prev && a.side === prev.side && b.side !== prev.side) drop = i - 1;
+      // 白（ドロップ）か不明で、相手方の 1/4 未満の blob は閃光・網の白帯（クレイ 313.2: ネット際の白 923 が本物のロブ 18523 を側の交替で押し出した）
+      const small = (x, y) => (FAM[x.cls] === 'white' || FAM[x.cls] === 'any') && x.nMax * 4 < y.nMax;
+      if (small(a, b)) drop = i - 1;
+      else if (small(b, a)) drop = i;
+      else if (prev && a.side === prev.side && b.side !== prev.side) drop = i - 1;
       else if (prev && b.side === prev.side && a.side !== prev.side) drop = i;
       else if (a.cls === 'unknown' && b.cls !== 'unknown') drop = i - 1;
       else if (b.cls === 'unknown' && a.cls !== 'unknown') drop = i;
