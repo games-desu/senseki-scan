@@ -424,8 +424,10 @@ window.Trail = (() => {
     // 本物のトレイルは先頭 1〜2 コマで育ちきる（279→1224→4696）ので i>=3 に限れば誤爆しない（実測: 0908 の本物 run で該当 0）
     // 位置の跳びは面積の跳びの 1 コマ前に来ることがある（出現コマは小さく、次のコマで育つ）ので i と i-1 の大きい方を見る
     const stepAt = i => i <= 0 ? 0 : Math.hypot(fr[i].b.cx - fr[i - 1].b.cx, fr[i].b.cy - fr[i - 1].b.cy);
+    // 先頭 10 コマ（0.33 秒）以内に限る: 奥から迫るロブは近づくほど blob が育ち、降下で 40px 跳ぶので run の途中（0908b p4: 31 コマ目）が"出現"に見えてしまう。
+    // オーラは打つ直前 0.2〜0.4 秒だけなので 10 で足りる（実測 birth=4〜6）
     let birth = 0;
-    for (let i = 3; i < fr.length; i++) {
+    for (let i = 3; i < Math.min(fr.length, 11); i++) {
       const prev = median(fr.slice(0, i).map(f => f.b.n));
       if (fr[i].b.n >= 2.5 * prev && Math.max(stepAt(i), stepAt(i - 1)) >= 40) birth = i;
     }
@@ -479,7 +481,8 @@ window.Trail = (() => {
   //  併合の種別は「色相の隣り合う族」まで許す（topspin/lob は先端の色相が流れて後半の断片が lob に化ける）。
   //  併合後の種別は最初の断片のもの（打点+4〜10コマの色が仕様上いちばん信用できる）。
   //  4. 進行方向が無い（|dy|<6）・重心速度が遅い（spd<6px/ステップ）・1秒を超えて続く run は選手／ラベル／看板
-  function shots(runsIn, { minDisp = 40, minN = 5, mergeGap = 0.45, tStart = -Infinity, minSpd = 6, maxDur = 1.0 } = {}) {
+  // maxDur 1.3: 0908b ハード p0 の自分のサーブのトレイルが 1.07 秒続いて落ちた（選手・看板は直進度/速度/緑で別途落ちる）
+  function shots(runsIn, { minDisp = 40, minN = 5, mergeGap = 0.45, tStart = -Infinity, minSpd = 6, maxDur = 1.3 } = {}) {
     // 遠近: 奥コート(y≈100)のトレイルは手前の 0.7 倍ほど小さく遅い。しきい値を y でスケールする
     const scOf = r => Math.min(1.3, Math.max(0.5, (r.frames[0].cy + 325) / 625));
     // 側の整合: 自分の打球は手前(Z<0)から上へ、相手の打球は奥(Z>0)から下へ進む。尾の Z と進行方向が食い違う run は
@@ -492,6 +495,8 @@ window.Trail = (() => {
                                        && sideOk(r)
                                        && !(r.provFrac >= 0.8)          // 仮カメラのズーム中だけの run（0908 芝 52.37: サーブ画の blob が"相手の打点"になった）
                                        && !(r.straight != null && r.straight < 0.6)   // y が往復する run は走る選手（0908 クレイ 227.93 マリオ 0.14・本物は 0.85 以上）
+                                       // 尾か先端が緑（80〜140°）＝選手が混ざった blob（0908b ヨッシー: 赤い甲羅で topspin 判定・先端 101°）。ショット色に緑は無い（ロブの先端は 66° まで）
+                                       && !((r.Htail != null && r.Htail >= 80 && r.Htail < 140) || (r.Htip != null && r.Htip >= 80 && r.Htip < 140))
                                        && !(r.cls === 'unknown' && r.Smed != null && r.Smed >= 0.4); }).sort((a, b) => a.t0 - b.t0);   // 有彩色なのに種別が無い＝選手（緑のルイージ等）
     const out = [];
     for (const r of keep) {

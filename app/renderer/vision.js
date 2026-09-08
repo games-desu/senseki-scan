@@ -50,11 +50,20 @@ window.Vision = (() => {
     // ゲージ枡とバーの境目(常に黒い縦罫)。HUD可視ゲートに使う
     fvBorderL: { x: 312, y: 72, w: 5, h: 20 },
     fvBorderR: { x: 1600, y: 72, w: 5, h: 20 },
+    // フィーバーダブルスのHUDは4人ぶん（左上=自チーム2行・右上=相手チーム2行）。上の行はシングルスと同じ座標で、
+    // 下の行はちょうど +108px（2026-09-08 22-45-12 実測: FVバー 上81-97/下189-205・枡の黒罫 x313-314/1602-1603 は共通）
+    fvL2: { x: 216,  y: 180, w: 250, h: 20 },
+    fvR2: { x: 1453, y: 180, w: 249, h: 20 },
+    fvBorderL2: { x: 312, y: 180, w: 5, h: 20 },
+    fvBorderR2: { x: 1600, y: 180, w: 5, h: 20 },
     bannerBand: { x: 0, y: 690, w: 1920, h: 320 },
     // 回線品質アイコン（4本バー・対戦全体で1つ）。クラシック=画面左上／フィーバー=左上HPバーの右
     // （2026-08-28実測: クラシックはFHD x43-80,y25-70・フィーバーは x373-415,y30-75・やや斜め）
     connClassic: { x: 36, y: 16, w: 54, h: 60 },
     connFever:   { x: 366, y: 24, w: 56, h: 58 },
+    // フィーバーダブルスでは回線アイコンが「自分の行」の右に出る（上の行なら connFever と同じ位置・下の行なら +108px。
+    // 2026-09-08 22-45-12 実測: 自分が下の行の試合は y146-179、上の行の試合は y38-71）。回線品質と同時に自分の行の根拠にもなる
+    connFever2:  { x: 366, y: 132, w: 56, h: 58 },
     // Switch(2)本体のアルバム再生バーの凡例帯（「+全画面表示 Y再生 X消去 Bもどる Aメニュー」）。
     // 録画中にホーム→アルバムで過去のスクショ/動画を見返すと、ゲーム映像がほぼ全面に再生され、
     // 中にVS/勝敗/レートパネルが写るとスキャンが誤爆する。凡例は固定UIなので白chテンプレ照合で判定できる
@@ -932,12 +941,17 @@ window.Vision = (() => {
   // x条件だけだと、パネル下端〜コートの白い横帯(帯下端 y976-1009)がfindBannerに拾われて
   // x1=1919となり、本物の勝敗パネルを3試合分スキップした実例(2026-08-29・クレイ/ワンダー)
   // → 数字行の縦帯(dw1digit上端〜dw2digit下端)に重なる場合のみ真のオーバーラップとする
+  // さらに「重なる」の基準はバナーの文字ボックスでなく **リボン帯**（文字の真下・実測で高さ70px前後）にする。
+  // 文字は白なので黄色枠の誤検出源にならず、黄色を持ち込むのはサンボショット等のリボンだけ。
+  // 文字ボックス基準だと、パネル下端の白い横線がバナー扱い（文字箱 y942-1009）になり dw2digit(913-965) と
+  // 23px重なって、フィーバーダブルスの勝敗パネル（表示1.5秒のうち5/6の走査点）を棄却した実例
+  // （2026-09-08 22-45-12 m2: 再探索でも取れず 2-7 loss が空欄）。リボン帯 y1009〜 は数字行に届かない
   function bannerOverlapsPanel(video) {
     const b = findBanner(video);
     if (!b) return false;
-    const y0 = REGIONS.bannerBand.y + b.box.y0, y1 = REGIONS.bannerBand.y + b.box.y1;
+    const y1 = REGIONS.bannerBand.y + b.box.y1; // 文字ボックス下端 = リボン帯の上端
     const top = REGIONS.dw1digit.y, bot = REGIONS.dw2digit.y + REGIONS.dw2digit.h;
-    return b.box.x1 >= 1400 && y1 >= top && y0 <= bot;
+    return b.box.x1 >= 1400 && y1 <= bot && y1 + 80 >= top;
   }
 
   // ダブルス勝敗パネルの「最後の表示フレーム」を探す。
@@ -980,9 +994,10 @@ window.Vision = (() => {
 
   // HUD(FVゲージ)が映っているか: 枡とバーの境目の黒い縦罫が左右とも暗ければ可視。
   // HUD非表示中はそこに背景が写り暗くならない(実測: 可視0.43〜0.67・非表示0・半透明フェード0〜0.25)
-  function gaugeFrameVisible(video) {
+  // borders: 判定に使う黒罫の領域（省略=シングルスの左右。ダブルスは4本すべて）
+  function gaugeFrameVisible(video, borders) {
     const dark = reg => frac(cropRegion(video, reg), 0, 0, reg.w, reg.h, (r, g, b) => lum(r, g, b) < 50);
-    return dark(REGIONS.fvBorderL) >= 0.4 && dark(REGIONS.fvBorderR) >= 0.4;
+    return (borders || [REGIONS.fvBorderL, REGIONS.fvBorderR]).every(reg => dark(reg) >= 0.4);
   }
 
   // FVゲージの充填率（0=空〜1=満タン。バーの非黒ピクセル割合）
@@ -1011,8 +1026,17 @@ window.Vision = (() => {
     return total >= 40;
   }
 
-  function readConnection(video, mode) {
-    const R0 = (mode && String(mode).indexOf('fever') === 0) ? REGIONS.connFever : REGIONS.connClassic;
+  // フィーバーダブルス: 回線アイコンは上の行(connFever)か下の行(connFever2)のどちらかに出る。
+  // 読めた方の行を返す（=自分の行）。両方読めた/どちらも読めなければ ok=false
+  function readConnectionDoubles(video) {
+    const a = readConnection(video, 'fever', REGIONS.connFever), b = readConnection(video, 'fever', REGIONS.connFever2);
+    if (a.ok && !b.ok) return { ...a, row: 1 };
+    if (b.ok && !a.ok) return { ...b, row: 2 };
+    return { level: 0, ok: false, row: null };
+  }
+
+  function readConnection(video, mode, region) {
+    const R0 = region || ((mode && String(mode).indexOf('fever') === 0) ? REGIONS.connFever : REGIONS.connClassic);
     const img = cropRegion(video, R0);
     const { data, width, height } = img;
     // アイコンの黄色は(≈230,230,40)。芝(緑)やテント(赤)を弾くため彩度条件を強めに取る
@@ -1225,24 +1249,30 @@ window.Vision = (() => {
   // dropMin: エッジとみなすゲージの急落量。領域を「枡＋バー」左右対称に広げた(2026-09-05)ため、
   // ストック1個の消費は 0.2〜0.38 の落差になる。0.22 だと取りこぼす(01-44-03 m2: 名前付き6件中1件しか帰属できず
   // 自分ラケットが null)。0.18 で 21-24-23(自分トゲゾー/相手ビリキュー)・01-44-03(自分ファイアバー/相手マジック)とも全帰属正解
-  async function collectBanners(video, t0, t1, { step = 0.7, onProgress, dropMin = 0.18 } = {}) {
+  // gauges: 追跡するFVゲージ {キー: 領域}（省略=シングルスの L/R）。フィーバーダブルスは L1/L2/R1/R2 の4本を渡す。
+  //   帰属結果は e.gauge にキーで入る。e.side は L/R のとき従来どおり me/opp、それ以外はキーそのもの
+  // borders: HUD可視ゲートに使う黒罫（省略=シングルスの左右）
+  async function collectBanners(video, t0, t1, { step = 0.7, onProgress, dropMin = 0.18, gauges: gaugeRegs, borders } = {}) {
     const seekTo = makeSeeker(video);
     const events = [];
     let t = t0;
+    const GR = gaugeRegs || { L: REGIONS.fvL, R: REGIONS.fvR };
+    const KEYS = Object.keys(GR);
     // maxH緩和: メタルブースト等の斜め表示バナーは文字ボックス高が110pxを超える(FHD実測131px)。
     // 他の呼び出し箇所(勝敗パネル棄却ガード等)は既定のまま、バナー収集だけ広げる
     const bOpts = { maxH: 160 };
-    const gauges = []; // {t, L, R} 時系列(side帰属のエッジ検出に使う)
+    const gauges = []; // {t, <キー>: 充填率} 時系列(side帰属のエッジ検出に使う)
     // HUD可視性ゲート: フィーバーショット発動中はHUD全体が非表示になり、ゲージ領域には
     // 背景(ピンボールの市松床等)が写る。輝度率ベースの読みが汚染され偽エッジになるため、
     // HUDが映っているフレームのサンプルだけを時系列に採用する。
     // 判定は「ゲージの枡とバーの境目(常に黒い縦罫)が両側とも暗い」こと。旧方式の回線アイコンは
     // 回線品質が低い(1〜2本)と点滅して半分近く落ち、発動直前のサンプルが欠けてエッジが立たなかった
     // (2026-09-05 21-24-23: 141サンプル中 回線80 / 枡罫94・HUD非表示フレームの誤通過0)
-    const hudOk = () => gaugeFrameVisible(video);
+    const hudOk = () => gaugeFrameVisible(video, borders);
+    const sample = tt => { const g = { t: tt }; for (const k of KEYS) g[k] = gaugeFill(video, GR[k]); gauges.push(g); };
     while (t < t1) {
       await seekTo(t);
-      if (hudOk()) gauges.push({ t, L: gaugeFill(video, REGIONS.fvL), R: gaugeFill(video, REGIONS.fvR) });
+      if (hudOk()) sample(t);
       const b = findBanner(video, null, bOpts);
       if (b) {
         // 見切れガード: 帯の端に接触したバナーはスライド途中で文字が欠けており、
@@ -1267,7 +1297,7 @@ window.Vision = (() => {
         // バナー表示中(スキップ区間)もゲージのエッジを見逃さないよう追加サンプル
         for (const dt of [1.3, 2.6]) {
           await seekTo(t + dt);
-          if (hudOk()) gauges.push({ t: t + dt, L: gaugeFill(video, REGIONS.fvL), R: gaugeFill(video, REGIONS.fvR) });
+          if (hudOk()) sample(t + dt);
         }
         t += 4.0; // 同一バナーの再ヒット回避
       } else t += step;
@@ -1284,9 +1314,9 @@ window.Vision = (() => {
     // 絶対閾値だと不成立: ゲージ読みは明るい画素率のため「空」の基準値が左右で違う
     // (実測: 自分側=0.08・相手側=0.29前後。相手側領域に常時明るい表示が混入している)。
     // 相対ドロップなら両側で成立し、発動時のグロー→暗転(1.0→0.37)も正しくエッジになる
-    const edges = { L: [], R: [] };
+    const edges = Object.fromEntries(KEYS.map(k => [k, []]));
     gauges.sort((a, b) => a.t - b.t);
-    for (const k of ['L', 'R']) {
+    for (const k of KEYS) {
       for (let i = 2; i < gauges.length; i++) {
         const prevMin = Math.min(gauges[i - 2][k], gauges[i - 1][k]);
         // 次点の確認は「次のサンプルがあれば」。窓の末尾で発動直後にHUDが消える(勝敗演出)と次点が無く、
@@ -1298,20 +1328,25 @@ window.Vision = (() => {
         }
       }
     }
-    for (const eL of [...edges.L]) for (const eR of [...edges.R]) {
-      if (Math.abs(eL - eR) <= 0.8) {
-        edges.L = edges.L.filter(x => x !== eL);
-        edges.R = edges.R.filter(x => x !== eR);
-      }
+    // 同時エッジの破棄: 2本(シングルス)なら相手側と同時のエッジは破棄。4本(ダブルス)では、本物の連続発動
+    // (2026-09-08 22-45-12 m1: 相手2のファイア→自分側味方のドッスンが0.7秒差)を残すため、
+    // 「他の3本以上」が同時に落ちたときだけ HUD非表示のアーティファクトとみなして破棄する
+    const needOthers = KEYS.length <= 2 ? 1 : KEYS.length - 1;
+    const drop = Object.fromEntries(KEYS.map(k => [k, new Set()]));
+    for (const k of KEYS) for (const te of edges[k]) {
+      const others = KEYS.filter(k2 => k2 !== k && edges[k2].some(x => Math.abs(x - te) <= 0.8)).length;
+      if (others >= needOthers) drop[k].add(te);
     }
+    for (const k of KEYS) edges[k] = edges[k].filter(x => !drop[k].has(x));
     for (const e of events) {
       let best = null;
-      for (const k of ['L', 'R']) for (const te of edges[k]) {
+      for (const k of KEYS) for (const te of edges[k]) {
         const d = Math.abs(te - (e.t + 0.3));
         if (d <= 3.5 && (!best || d < best.d)) best = { k, te, d };
       }
       if (best) {
-        e.side = best.k === 'L' ? 'me' : 'opp';
+        e.gauge = best.k;
+        e.side = best.k === 'L' ? 'me' : best.k === 'R' ? 'opp' : best.k;
         edges[best.k] = edges[best.k].filter(x => x !== best.te);
       }
     }
@@ -1340,6 +1375,6 @@ window.Vision = (() => {
 
   return { REGIONS, NUM_SEG, LOOSE, NAME_SIG, GLYPH, nameSig, nameSigScore, nameBand, sigFromBand, nameStrokes, glyphVec, nameGlyphs, readName, lum, makeSeeker, setSourceRect, getSourceRect, srcRect, frameToData, cropRegion, frac, classify, mask, segment, normalize, ncc,
            matchGlyph, readGlyphs, parseNumber, iconVec, textVec, matchIcon, VS_ICON_LEN, matchIconCard, matchIconCardAround, iconGray, iconCardMasked, detectDoublesVs, matchIconWh, nccWh, scan, groupMatches, findWinnerFrame, locateWinner,
-           bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection,
+           bannerOverlapsPanel, findPanelEnd, readRatingPair, readConnection, readConnectionDoubles,
            gaugeFill, gaugeFrameVisible, findBanner, captureStableBanner, profileXcorr, collectBanners, TW, TH };
 })();
