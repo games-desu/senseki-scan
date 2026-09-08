@@ -90,10 +90,25 @@ window.RallyFuse = (() => {
     return Object.assign(base, { X: +c.X.toFixed(2), Z: +c.Z.toFixed(2), inCourt: Court.inCourt(c.X, c.Z, 0.3) });
   }
 
-  function fuse({ shots = [], events = [], track = [], camAt = null, t0 = -Infinity, t1 = Infinity } = {}) {
+  // 着弾＝星マーカー（tools/star.js）。打点の 0.15 秒後〜次の打点の 0.1 秒後までに現れた最初のマーカーで、打った側の反対のコートにあるもの。
+  // 星は着弾後に地面に出る印なので、位置は地面ホモグラフィでそのまま座標にできる（高さバイアス無し）
+  function landingFromStar(markers, tA, tB, camAt, side) {
+    for (const m of markers) {
+      if (m.t0 < tA + 0.15 || m.t0 > tB + 0.1) continue;
+      const cam = camAt ? camAt(m.t0) : null;
+      if (!cam || !cam.ok || typeof Court === 'undefined') return { t: m.t0, x: m.x, y: m.y, src: 'star', k: m.k };
+      const c = Court.toCourt(m.x * 2, m.y * 2, cam);
+      if (side === 'me' ? c.Z < -0.5 : c.Z > 0.5) continue;
+      return { t: m.t0, x: m.x, y: m.y, X: +c.X.toFixed(2), Z: +c.Z.toFixed(2), inCourt: Court.inCourt(c.X, c.Z, 0.3), src: 'star', k: m.k };
+    }
+    return null;
+  }
+
+  function fuse({ shots = [], events = [], track = [], camAt = null, t0 = -Infinity, t1 = Infinity, markers = [] } = {}) {
     track = purgeStatic(track);
     let hits = shots.map(s => ({ t: +(s.t0 - LEAD).toFixed(3), side: s.side, cls: s.cls, src: 'trail',
-                                 from: s.tail ? { X: s.tail.X, Z: s.tail.Z } : null, n: s.n, nMax: s.nMax, disp: s.disp, S: s.Smed }))
+                                 from: s.tail ? { X: s.tail.X, Z: s.tail.Z } : null, n: s.n, nMax: s.nMax, disp: s.disp, S: s.Smed,
+                                 tyMin: s.frames && s.frames.length ? Math.min(...s.frames.map(f => f.ty != null ? f.ty : f.cy)) : null }))
                     .sort((a, b) => a.t - b.t);
     const FAM = { topspin: 'warm', lob: 'warm', slice: 'blue', flat: 'purple', drop: 'white', unknown: 'any' };
     // 打点と打点は 0.3 秒以上離れる（ネットを越える時間）。近すぎる2本は blob の大きい方だけ残す
@@ -150,11 +165,23 @@ window.RallyFuse = (() => {
           if (h.apex <= -50 && (h.cls === 'topspin' || h.cls === 'lob' || h.cls === 'unknown' || h.cls === 'drop')) { if (h.cls !== 'lob') h.clsColor = h.cls; h.cls = 'lob'; }
         }
       }
-      h.land = landingFromTrack(track, h.t, tNext, camAt, h.side);
+      // トレイル自身の先端 y の最小（＝ボールが画面上でいちばん高く見えた位置）と奥ベースライン行の差。追跡が無いロブ（相手のロブ）の頂点判定に使う
+      if (h.tyMin != null && camAt && typeof Court !== 'undefined') {
+        const cam = camAt(h.t);
+        if (cam && cam.ok) h.apexTrail = +(h.tyMin - Court.toScreen(0, Court.Z_BASE, cam).y / 2).toFixed(0);
+        // 実測（0908 GT + 0908b p4/p5）: 相手のロブ −73〜−114／相手のトップスピン・フラット・スライス −19 以上／
+        // 自分のロブ −65〜−68／自分のトップスピン −33 以上（1 本だけ −52）。サーブと最後の打点は除く
+        const th = h.side === 'me' ? -60 : -50;
+        if (i > 0 && !last && h.apexTrail != null && h.apexTrail <= th && (h.cls === 'topspin' || h.cls === 'lob' || h.cls === 'unknown' || h.cls === 'drop')) {
+          if (h.cls !== 'lob') h.clsColor = h.cls;
+          h.cls = 'lob'; h.lobBy = 'trail';
+        }
+      }
+      h.land = landingFromStar(markers, h.t, tNext, camAt, h.side) || landingFromTrack(track, h.t, tNext, camAt, h.side);
       if (h.land && h.land.Z != null) h.land.wrongSide = h.side === 'me' ? h.land.Z < -0.5 : h.land.Z > 0.5;
       h.serve = i === 0;
     }
     return { shots: out };
   }
-  return { fuse, landingFromTrack, purgeStatic };
+  return { fuse, landingFromTrack, landingFromStar, purgeStatic };
 })();

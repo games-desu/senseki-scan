@@ -388,7 +388,7 @@ window.Trail = (() => {
           if (k > maxGap) continue;
           // 小さい blob の連なり（看板・静止物）が、通りがかった大きなトレイルに乗り移るのを防ぐ。
           // 本物のトレイルは最初の1〜2コマで急に育つ（279→4696 等）ので、4コマ以上続いた run にだけ掛ける
-          if (r.frames.length >= 4 && b.n > 4 * r.nMax) continue;
+          if (r.frames.length >= 4 && b.n > 4 * r.nMax) continue;   // 3 倍にすると 0908 芝 101.7 のチャージ付きフラット（1280→4087=3.2 倍）が割れて topspin に化ける。静止物への乗り移りは summarize の前置き/後置き切りで対処
           const dist = Math.hypot(b.cx - last.b.cx, b.cy - last.b.cy);
           if (dist > 50 + 30 * Math.max(1, k)) continue;   // トレイル重心の移動は最大でも 30px/コマ程度。緩いと選手のオーラと繋がる
           // 種別が違う blob は別のショット（同じ場所でも繋がない）。unknown はどちらにも付く
@@ -433,6 +433,18 @@ window.Trail = (() => {
     }
     const cZpre = fr[0].b.cZ;   // 再アンカー前の先頭（オーラなら選手の位置）。側の整合の判定に使う
     if (birth > 0 && fr.length - birth >= 3) { r.reanchored = birth; fr = fr.slice(birth); }
+    // 静止した前置き／後置きを切り落とす: 看板・テントの縁など静止した同色の blob に、通りがかったトレイルが前後で繋がる
+    // （0908b ハード p4: 上端の橙 17 コマ → 相手のロブ → 下端の橙 17 コマ、で dir=null・2.8 秒になり捨てられた）。
+    // 「先頭から 5 コマ以上が先頭の位置の 12px 以内」なら、そこまでを捨てる（末尾も同様）。トレイルは 1 コマ 5px 以上動くので該当しない
+    // ただしロブの頂点付近も画面上ではほとんど動かない（奥へ進むだけ）ので、「面積が run の最大の半分未満」の blob だけを静止物とみなす
+    // （静止物は 1300〜1800 のまま・ロブの頂点は 5000〜6650 で最大 8150）
+    const nMaxAll = Math.max(...fr.map(f => f.b.n));
+    const near = (a, b) => Math.hypot(a.b.cx - b.b.cx, a.b.cy - b.b.cy) <= 12 && a.b.n < 0.5 * nMaxAll && b.b.n < 0.5 * nMaxAll;
+    // 隣り合うコマ同士で見る（静止物はドリーでゆっくり流れるので、端のコマ基準だと 90 コマの静止が 5 コマで止まる）
+    let pre = 0; while (pre + 1 < fr.length && near(fr[pre + 1], fr[pre])) pre++;
+    if (pre + 1 >= 5 && fr.length - (pre + 1) >= 3) { r.trimPre = pre + 1; fr = fr.slice(pre + 1); }
+    let suf = 0; while (suf + 1 < fr.length && near(fr[fr.length - 2 - suf], fr[fr.length - 1 - suf])) suf++;
+    if (suf + 1 >= 5 && fr.length - (suf + 1) >= 3) { r.trimSuf = suf + 1; fr = fr.slice(0, fr.length - (suf + 1)); }
     const t0 = fr[0].t, t1 = fr[fr.length - 1].t;
     // 仮カメラ（サーブ画→ラリー画のズーム中）で見つけた blob の割合。ズーム中は座標も進行方向も意味を持たない
     const provFrac = fr.filter(f => f.b.prov).length / fr.length;
@@ -463,7 +475,12 @@ window.Trail = (() => {
     let disp = 0; for (const f of fr) disp = Math.max(disp, Math.hypot(f.b.cx - first.cx, f.b.cy - first.cy));
     const k = Math.min(fr.length - 1, 8);
     const dy = fr[k].b.cy - first.cy;
-    const dir = Math.abs(dy) >= 6 ? (dy < 0 ? 'up' : 'down') : null;
+    let dir = Math.abs(dy) >= 6 ? (dy < 0 ? 'up' : 'down') : null;
+    // 先頭 8 コマの動きが弱い（|dy|<20）ときは run 全体の優勢方向（上向き移動量 vs 下向き移動量）で決める。
+    // 相手のロブは頂点付近で 12 コマ漂って（dy=-6 で 'up'→自分側扱い）から 390px 降りてくる（0908b p4 192.2）
+    let upSum = 0, downSum = 0;
+    for (let i = 1; i < fr.length; i++) { const d = fr[i].b.cy - fr[i - 1].b.cy; if (d < 0) upSum -= d; else downSum += d; }
+    if (Math.abs(dy) < 20 && Math.max(upSum, downSum) >= 20 && Math.max(upSum, downSum) >= 3 * Math.min(upSum, downSum)) dir = downSum > upSum ? 'down' : 'up';
     const side = dir ? (dir === 'up' ? 'me' : 'opp') : (zEarly > 0 ? 'opp' : 'me');
     return { t0, t1, n: fr.length, cls, votes, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1), spd: +spd.toFixed(1), dur: +(t1 - t0).toFixed(2), sMax: +sMax.toFixed(2), reanchored: r.reanchored || 0,
              provFrac: +provFrac.toFixed(2), straight: +yStraight.toFixed(2), cZpre,
@@ -471,7 +488,8 @@ window.Trail = (() => {
              Htip: median(use.map(f => f.b.Htip).filter(v => v != null)),
              Htail: median(use.map(f => f.b.Htail).filter(v => v != null)),
              Smed: median(use.map(f => f.b.Smed).filter(v => v != null)),
-             nMax: Math.max(...fr.map(f => f.b.n)), cZ0: first.cZ, frames: fr.map(f => ({ t: f.t, cx: f.b.cx, cy: f.b.cy, n: f.b.n, cls: f.b.cls, side: f.b.side })) };
+             trimPre: r.trimPre || 0, trimSuf: r.trimSuf || 0,
+             nMax: Math.max(...fr.map(f => f.b.n)), cZ0: first.cZ, frames: fr.map(f => ({ t: f.t, cx: f.b.cx, cy: f.b.cy, ty: f.b.tip.y, n: f.b.n, cls: f.b.cls, side: f.b.side })) };
   }
 
   // ---- ショット列の整形 ----

@@ -45,7 +45,7 @@ function loadModules(variant) {
     },
   };
   vm.createContext(sandbox);
-  for (const f of ['court.js', 'ball.js', 'trail.js', 'rally-fuse.js']) {
+  for (const f of ['court.js', 'ball.js', 'trail.js', 'star.js', 'rally-fuse.js']) {
     vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), sandbox, { filename: f });
   }
   // 変種: 同じサンドボックスで走らせ、window.BallTrack のエクスポートを差し替えさせる。
@@ -54,7 +54,7 @@ function loadModules(variant) {
     const vp = path.isAbsolute(variant) ? variant : path.join(dir, 'variants', variant.endsWith('.js') ? variant : variant + '.js');
     vm.runInContext(fs.readFileSync(vp, 'utf8'), sandbox, { filename: path.basename(vp) });
   }
-  return { Court: sandbox.Court, BallTrack: sandbox.BallTrack, Trail: sandbox.Trail, RallyFuse: sandbox.RallyFuse };
+  return { Court: sandbox.Court, BallTrack: sandbox.BallTrack, Trail: sandbox.Trail, Star: sandbox.Star, RallyFuse: sandbox.RallyFuse };
 }
 
 // ---- ffmpeg から RGBA フレームを1枚ずつ ----
@@ -81,7 +81,7 @@ async function* frames(video, t0, t1, fps) {
 // ---- 1ラリーを解析 ----
 // camEvery: カメラ推定の間引き。ラリー中もドリーするので粗すぎると座標がずれる。
 async function analyze(opts) {
-  const { Court, BallTrack, Trail, RallyFuse } = loadModules(opts.variant);
+  const { Court, BallTrack, Trail, Star, RallyFuse } = loadModules(opts.variant);
   const { video, t0, t1, fps = 60, camEvery = 15, trailEvery = 2 } = opts;   // トレイルは2コマに1回で足りる（仕様: 4コマ間隔で可）
   // overlapMax=null で静止物フィルタを無効化できる（実験用）
   const overlapMax = opts.overlapMax === undefined ? 0.6 : opts.overlapMax;
@@ -91,7 +91,7 @@ async function analyze(opts) {
   const cams = [];                                     // {t, cam} 時刻ごとのカメラ
   const started = Date.now();
   // Phase D: ショット色トレイル（opts.trail のとき毎フレーム）
-  const trailLog = [], hist = [];
+  const trailLog = [], hist = [], starLog = [];
 
   for await (const fr of frames(video, t0, t1, fps)) {
     // カメラが古い（カット直後）ときは 5 コマごとに推定し直して復帰を早める（サーブ画→ラリー画の切替で打点を落とさない）
@@ -115,6 +115,8 @@ async function analyze(opts) {
       const tr = fresh ? Trail.detect(fr.img, { cam, hist }) : prov ? Trail.detect(fr.img, { cam: camProv, hist }) : { blobs: [], ref: null, mask: null };
       if (prov) tr.blobs.forEach(b => { b.prov = true; });
       hist.unshift({ mask: tr.mask, blobs: tr.blobs }); if (hist.length > 3) hist.pop();
+      // 着弾の星マーカー（ラリーカメラのときだけ・砂コートは star.js 側で除外）
+      if (fresh) starLog.push({ t: fr.t, stars: Star.detect(fr.img, { cam, ref: tr.ref }) });
       trailLog.push({ t: fr.t, f: fr.i, blobs: tr.blobs,
                       ref: tr.ref ? { S90: +tr.ref.S90.toFixed(2), V90: +tr.ref.V90.toFixed(2), L90: Math.round(tr.ref.L90), Hmed: tr.ref.Hmed == null ? null : Math.round(tr.ref.Hmed), lineL: Math.round(tr.ref.lineL), useHue: tr.ref.useHue } : null });
     }
@@ -144,10 +146,11 @@ async function analyze(opts) {
   const trailRuns = opts.trail ? Trail.runs(trailLog, { fps: fps / trailEvery }) : null;
   const shots = trailRuns ? Trail.shots(trailRuns, { tStart: t0 }) : null;
   const track = []; segs.forEach(s => s.pts.forEach(p => track.push(p))); track.sort((a, b) => a.t - b.t);
-  const rally = shots ? RallyFuse.fuse({ shots, events, track, camAt, t0, t1 }).shots : null;
+  const markers = opts.trail ? Star.track(starLog) : [];
+  const rally = shots ? RallyFuse.fuse({ shots, events, track, camAt, t0, t1, markers }).shots : null;
 
   return {
-    rally, shots, trailRuns, trailLog: opts.trail ? trailLog : undefined,
+    rally, shots, trailRuns, markers, trailLog: opts.trail ? trailLog : undefined,
     video: path.basename(video), t0, t1, fps, variant: opts.variant || null,
     ms: Date.now() - started,
     nFrames: frameLog.length,
