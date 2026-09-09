@@ -318,7 +318,23 @@ window.Trail = (() => {
     return c / pts.length;
   }
 
-  let _refCam = null, _ref = null;
+  // ---- 居座り画素の除外（選手・チャージ中のオーラ・看板）----
+  // 同じ画素が直近 PN コマのうち PTHR コマ以上エフェクト判定されていたら、その画素は今のコマのマスクから外す。
+  // トレイルは一か所に 0.35 秒（≈10 コマ）しか残らず、ロブの頂点の漂いも 12 コマなので消えない。
+  // 選手（0908b ヨッシーの赤い甲羅が topspin の run になって自分側の偽打点を作った）は毎コマ同じ場所にいるので消える。
+  // 数えるのは除外前の生マスク（除外後を数えると PN コマ後に選手が復活して振動する）
+  const PN = 20, PTHR = 14;
+  const _ring = [], _cnt = new Uint16Array(W * H); let _ringI = 0;
+  function persistFilter(raw, yTop) {
+    const start = Math.max(0, yTop) * W, copy = raw.slice();
+    let removed = 0;
+    if (_ring.length >= PTHR) for (let j = start; j < W * H; j++) if (raw[j] && _cnt[j] >= PTHR) { raw[j] = 0; removed++; }
+    if (_ring.length < PN) { _ring.push(copy); for (let j = start; j < W * H; j++) _cnt[j] += copy[j]; }
+    else { const old = _ring[_ringI]; for (let j = 0; j < W * H; j++) _cnt[j] += copy[j] - old[j]; _ring[_ringI] = copy; _ringI = (_ringI + 1) % PN; }
+    return removed;
+  }
+
+  let _refCam = null, _ref = null, _lastCam = null;
   function detect(img, { cam, hist = [], ball = null } = {}) {
     if (!cam || !cam.ok) return { blobs: [], ref: null, mask: null };
     let ref;
@@ -328,6 +344,11 @@ window.Trail = (() => {
     let yTop = H; for (let y = 0; y < H; y++) if (rows[y * 2] <= rows[y * 2 + 1]) { yTop = y; break; }
     const lines = buildLineNear(cam);
     const raw = effectMask(img, ref, rows, lines);
+    // カメラが大きく変わった（サーブ画→ラリー画のカット）ら居座りの履歴を捨てる。前の画の選手の位置が"居座り"として残り、
+    // そこを通るサーブのトレイルが消えた（0908b p4 185.6: c0 0.00074→0.00091・Yc 16.7→12.7）
+    if (_lastCam && (Math.abs(cam.c0 - _lastCam.c0) / _lastCam.c0 > 0.12 || Math.abs(cam.Yc - _lastCam.Yc) > 1.5)) { _ring.length = 0; _ringI = 0; _cnt.fill(0); }
+    _lastCam = cam;
+    const persisted = persistFilter(raw, yTop);
     const mask = closing(raw, yTop);
     const old = hist[2] && hist[2].mask;              // 3フレーム前
     const prev = hist[0] && hist[0].blobs || [];
@@ -366,7 +387,7 @@ window.Trail = (() => {
                    cls });
     }
     blobs.sort((a, b) => b.n - a.n);
-    return { blobs, ref, mask: raw };
+    return { blobs, ref, mask: raw, persisted };
   }
 
   // ---- ショット（トレイルの時間的な連なり）----
@@ -439,12 +460,22 @@ window.Trail = (() => {
     // ただしロブの頂点付近も画面上ではほとんど動かない（奥へ進むだけ）ので、「面積が run の最大の半分未満」の blob だけを静止物とみなす
     // （静止物は 1300〜1800 のまま・ロブの頂点は 5000〜6650 で最大 8150）
     const nMaxAll = Math.max(...fr.map(f => f.b.n));
-    const near = (a, b) => Math.hypot(a.b.cx - b.b.cx, a.b.cy - b.b.cy) <= 12 && a.b.n < 0.5 * nMaxAll && b.b.n < 0.5 * nMaxAll;
+    // 隣接 16px（上端のテントの縁は 12.04px で 12 を超えて切れなかった）。末尾に 1〜2 コマだけ付いた飛び値（40px 超・小さい）は先に落とす
+    // （0908b p4 185.6 のサーブ: 末尾に 177px 先の別物が 1 コマ付き、末尾の静止 6 コマが切れず dur 1.67 で捨てられた）
+    const near = (a, b) => Math.hypot(a.b.cx - b.b.cx, a.b.cy - b.b.cy) <= 16 && a.b.n < 0.5 * nMaxAll && b.b.n < 0.5 * nMaxAll;
+    for (let k = 0; k < 2 && fr.length >= 5; k++) {
+      const L = fr[fr.length - 1], P = fr[fr.length - 2];
+      if (Math.hypot(L.b.cx - P.b.cx, L.b.cy - P.b.cy) > 40 && L.b.n < 0.5 * nMaxAll) { fr = fr.slice(0, -1); r.trimSuf = (r.trimSuf || 0) + 1; } else break;
+    }
     // 隣り合うコマ同士で見る（静止物はドリーでゆっくり流れるので、端のコマ基準だと 90 コマの静止が 5 コマで止まる）
     let pre = 0; while (pre + 1 < fr.length && near(fr[pre + 1], fr[pre])) pre++;
     if (pre + 1 >= 5 && fr.length - (pre + 1) >= 3) { r.trimPre = pre + 1; fr = fr.slice(pre + 1); }
+    // 先頭に 3 コマ以上続く「ごく小さい blob（run 最大の 15% 未満）」は別物の切れ端（0908b p4 相手ロブの前の 769/217/884/499/224/139）。
+    // 本物のトレイルは 1〜2 コマで育つ（279→1224→4696）ので 3 コマ以上の条件で当たらない
+    let tiny = 0; while (tiny < fr.length && fr[tiny].b.n < 0.15 * nMaxAll) tiny++;
+    if (tiny >= 3 && fr.length - tiny >= 3) { r.trimPre = (r.trimPre || 0) + tiny; fr = fr.slice(tiny); }
     let suf = 0; while (suf + 1 < fr.length && near(fr[fr.length - 2 - suf], fr[fr.length - 1 - suf])) suf++;
-    if (suf + 1 >= 5 && fr.length - (suf + 1) >= 3) { r.trimSuf = suf + 1; fr = fr.slice(0, fr.length - (suf + 1)); }
+    if (suf + 1 >= 5 && fr.length - (suf + 1) >= 3) { r.trimSuf = (r.trimSuf || 0) + suf + 1; fr = fr.slice(0, fr.length - (suf + 1)); }
     const t0 = fr[0].t, t1 = fr[fr.length - 1].t;
     // 仮カメラ（サーブ画→ラリー画のズーム中）で見つけた blob の割合。ズーム中は座標も進行方向も意味を持たない
     const provFrac = fr.filter(f => f.b.prov).length / fr.length;
@@ -456,7 +487,8 @@ window.Trail = (() => {
     const use = win.length >= 2 ? win : fr.slice(0, Math.min(fr.length, 6));
     const votes = {};
     for (const f of use) votes[f.b.cls] = (votes[f.b.cls] || 0) + 1;
-    let cls = Object.entries(votes).sort((a, b) => b[1] - a[1])[0][0];
+    // 同数なら既知の種別を優先（砂 413.5: unknown 2 / slice 2 で unknown が先頭になり、頂点判定で lob に化けた）
+    let cls = Object.entries(votes).sort((a, b) => b[1] - a[1] || (a[0] === 'unknown') - (b[0] === 'unknown'))[0][0];
     // 'drop' は run の前半で彩度が一度も 0.25 を超えないときだけ（マックスチャージの白い閃光で色が飛ぶ数コマを弾く）
     const sMax = Math.max(...fr.slice(0, Math.min(fr.length, 10)).map(f => f.b.Smed == null ? 0 : f.b.Smed));
     if (cls === 'drop' && sMax >= 0.25) {
@@ -500,7 +532,7 @@ window.Trail = (() => {
   //  併合後の種別は最初の断片のもの（打点+4〜10コマの色が仕様上いちばん信用できる）。
   //  4. 進行方向が無い（|dy|<6）・重心速度が遅い（spd<6px/ステップ）・1秒を超えて続く run は選手／ラベル／看板
   // maxDur 1.3: 0908b ハード p0 の自分のサーブのトレイルが 1.07 秒続いて落ちた（選手・看板は直進度/速度/緑で別途落ちる）
-  function shots(runsIn, { minDisp = 40, minN = 5, mergeGap = 0.45, tStart = -Infinity, minSpd = 6, maxDur = 1.3 } = {}) {
+  function shots(runsIn, { minDisp = 40, minN = 5, mergeGap = 0.45, tStart = -Infinity, minSpd = 6, maxDur = 2.0 } = {}) {   // 2.0: 相手のロブは頂点で 0.4 秒漂ってから 0.5 秒降りる（0908b p4 で 1.1〜1.5 秒）。選手・看板は居座り除外/直進度/速度で落ちる
     // 遠近: 奥コート(y≈100)のトレイルは手前の 0.7 倍ほど小さく遅い。しきい値を y でスケールする
     const scOf = r => Math.min(1.3, Math.max(0.5, (r.frames[0].cy + 325) / 625));
     // 側の整合: 自分の打球は手前(Z<0)から上へ、相手の打球は奥(Z>0)から下へ進む。尾の Z と進行方向が食い違う run は
