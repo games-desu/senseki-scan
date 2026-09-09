@@ -79,7 +79,18 @@ async function run(opts) {
     console.log(`p${i} ${row.score.padEnd(12)} ${t0}-${t1} (${row.dur}s ${(row.ms / 1000).toFixed(1)}s) seg=${row.nSeg} ev=${row.nEv}`);
     for (const h of rally) console.log(`    ${h.t.toFixed(2)} ${h.side.padEnd(3)} ${h.cls.padEnd(7)} ${h.src}${h.racket ? ' [' + h.racket + ']' : ''}${h.serve ? ' SERVE' : ''}${h.suspect ? ' !' + h.suspect : ''}  land ${h.land ? `${h.land.t.toFixed(2)} X${h.land.X} Z${h.land.Z}${h.land.inCourt ? '' : ' OUT'}${h.land.bridged ? ' ~' : ''}` : '-'}`);
     const merged = prevPoints.filter(p => !summary.some(q => q.idx === p.idx)).concat(summary).sort((a, b) => a.idx - b.idx);
-    fs.writeFileSync(pointsFile, JSON.stringify({ video, info, variant: opts.variant || 'merged2', points: merged }, null, 1));
+    // 試合（game）ごとのラケット: 本体アプリと同じ規則「同じ側から 3 種以上のバナー = ハテナラケット（ランダム発動）」。
+    // 各 fever 打点の racket は実際に出たショット名のまま（ハテナでも キラー/サンダー…）
+    const rackets = {};
+    for (const p of merged) for (const h of p.rally) if (h.cls === 'fever' && h.racket) {
+      const g = rackets[p.game] = rackets[p.game] || { me: {}, opp: {} };
+      g[h.side][h.racket] = (g[h.side][h.racket] || 0) + 1;
+    }
+    for (const g of Object.values(rackets)) for (const side of ['me', 'opp']) {
+      const names = Object.keys(g[side]);
+      g[side + 'Racket'] = names.length >= 3 ? 'ハテナラケット' : names.length ? names.sort((a, b) => g[side][b] - g[side][a])[0] : null;
+    }
+    fs.writeFileSync(pointsFile, JSON.stringify({ video, info, variant: opts.variant || 'merged2', rackets, points: merged }, null, 1));
     if (banners && opts.fever === 'auto') fs.writeFileSync(feverFile, JSON.stringify(banners.filter(b => b.t0 != null), null, 1));
   }
   return { outDir, summary };
