@@ -476,6 +476,16 @@ window.Trail = (() => {
     if (tiny >= 3 && fr.length - tiny >= 3) { r.trimPre = (r.trimPre || 0) + tiny; fr = fr.slice(tiny); }
     let suf = 0; while (suf + 1 < fr.length && near(fr[fr.length - 2 - suf], fr[fr.length - 1 - suf])) suf++;
     if (suf + 1 >= 5 && fr.length - (suf + 1) >= 3) { r.trimSuf = (r.trimSuf || 0) + suf + 1; fr = fr.slice(0, fr.length - (suf + 1)); }
+    // 「速く動いた後にその場で止まる」末尾（1 コマ 6px 以下が 4 コマ以上・大きさ不問）は走って止まった選手（0908b ヨッシーの赤い甲羅: 413→384 と動いて 319 付近で静止）。
+    // トレイルは消えるまで動き続ける。ロブの頂点の漂いは run の先頭側（相手）か、自分側なら反転で run が切れた後なので末尾には来ない
+    {
+      const st = i => Math.hypot(fr[i].b.cx - fr[i - 1].b.cx, fr[i].b.cy - fr[i - 1].b.cy);
+      let k = 0; while (k + 1 < fr.length && st(fr.length - 1 - k) <= 6) k++;
+      if (k >= 4 && fr.length - k >= 3) {
+        const steps = []; for (let i = 1; i < fr.length - k; i++) steps.push(st(i));
+        if (median(steps) >= 8) { r.trimSuf = (r.trimSuf || 0) + k; fr = fr.slice(0, fr.length - k); }
+      }
+    }
     const t0 = fr[0].t, t1 = fr[fr.length - 1].t;
     // 仮カメラ（サーブ画→ラリー画のズーム中）で見つけた blob の割合。ズーム中は座標も進行方向も意味を持たない
     const provFrac = fr.filter(f => f.b.prov).length / fr.length;
@@ -544,6 +554,7 @@ window.Trail = (() => {
     const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minN && r.t0 >= tStart + 0.3 && r.dir && r.spd >= minSpd * sc && r.dur <= maxDur
                                        && sideOk(r)
                                        && !(r.provFrac >= 0.8)          // 仮カメラのズーム中だけの run（0908 芝 52.37: サーブ画の blob が"相手の打点"になった）
+                                       && !(r.side === 'me' && r.nMax < 500)   // 手前（自分側）のトレイルは大きく映る（GT の自分の打点は全部 600 以上・本物のドロップ 1024〜4383）。ヨッシーの白い切れ端 319 を落とす
                                        && !(r.straight != null && r.straight < 0.6)   // y が往復する run は走る選手（0908 クレイ 227.93 マリオ 0.14・本物は 0.85 以上）
                                        // 尾か先端が緑（80〜140°）＝選手が混ざった blob（0908b ヨッシー: 赤い甲羅で topspin 判定・先端 101°）。ショット色に緑は無い（ロブの先端は 66° まで）
                                        && !((r.Htail != null && r.Htail >= 80 && r.Htail < 140) || (r.Htip != null && r.Htip >= 80 && r.Htip < 140))
