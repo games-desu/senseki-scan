@@ -719,7 +719,8 @@ window.Vision = (() => {
   // 辞書の64キャラ中47キャラは片側のカードの手札しか無く、反対側で出ると別キャラに化けた
   // （実例: 自分側のガボン→ヨッシー:ピンク0.61・自分側のカロン→チコ:青）。
   // 2段階: ①輝度だけのNCCでキャラ（ベース名）を決める（辞書の反対側照合: キャラ正解 99/101・別キャラ間max 0.71）
-  //        ②同ベースの色違いは「カード色（左端3列の平均）に近いセルを灰に潰した」色つきNCCで決める
+  //        ②同ベースの色違いは「カード色（右端3列の中央値）に近いセルを灰に潰した」色つきNCC 7 ＋
+  //          「彩度上位12セルの平均色」の近さ 3 の混合で決める（2026-09-09 に配合を追加）
   //          （反対側照合 top1 94/101 vs 生RGB 87・全体 287/299 vs 279）。ダブルス辞書も 3/38→26/38（反対側）・31→41（全体）
   // score は①の輝度NCC（要確認フラグの 0.8 判定に使う）。辞書ベクトルは従来どおり全体RGBのまま保存し、ここで都度変換（テンプレ側はキャッシュ）
   function iconGray(v, w, rows) {
@@ -727,32 +728,75 @@ window.Vision = (() => {
     for (let p = 0; p < n; p++) o[p] = 0.299 * v[p * 3] + 0.587 * v[p * 3 + 1] + 0.114 * v[p * 3 + 2];
     return o;
   }
+  // カード色の推定（2026-09-09 改）: 旧実装は「左端3列の平均」だったが、アイコン枠の左端には
+  // ランクバッジ（S+/S- で色が違う）とラケットの柄が入り、下の行はキャラ本体なので **地の色にならない**。
+  // 実測: 橙カードの相手側ヘイホーで推定値が #833d62（橙とキャラの赤の混色）。マスクが効かないと
+  // 色つきNCCが「カードの色」で決まってしまい、橙カードの赤ヘイホーが（同じ橙カードで採った）
+  // ヘイホー:青 に化けた（2026-09-09 ぴんやさん報告 m10。正解の無印は同ベース7色中の最下位 0.460）。
+  // → **右端3列の中央値**を採る（バッジもラケットも無く、キャラに覆われにくい帯。中央値なので数セルの
+  //   混入に強い）。辞書316本中307本がこれで青/橙のどちらかに寄る。
+  // 残る9本（ボスパックン/ワンワン/ガボン/テレサ＝右端まで覆う巨体）はどちらのカード色からも遠いので、
+  // そのときだけカード色の既定値2種で落とす（この4体に色違いは無いので実害は無いが、将来の網として）
+  const CARD_COLORS = [[0.24, 0.60, 0.97], [0.95, 0.40, 0.09]]; // 青カード / 橙カード（実測の代表値）
+  const colorDist = (v, p, c) => Math.abs(v[p * 3] - c[0]) + Math.abs(v[p * 3 + 1] - c[1]) + Math.abs(v[p * 3 + 2] - c[2]);
+  function cardColors(v, w, rows) {
+    const ch = [[], [], []];
+    for (let y = 0; y < rows; y++) for (let x = w - 3; x < w; x++) {
+      const p = y * w + x;
+      for (let c = 0; c < 3; c++) ch[c].push(v[p * 3 + c]);
+    }
+    const est = ch.map(a => a.sort((x, y) => x - y)[a.length >> 1]);
+    const near = CARD_COLORS.some(c => Math.abs(est[0] - c[0]) + Math.abs(est[1] - c[1]) + Math.abs(est[2] - c[2]) < 0.5);
+    return near ? [est] : CARD_COLORS; // 推定できたら実測色（録画の色調にも追従する）
+  }
   function iconCardMasked(v, w, rows) {
-    const n = w * rows;
-    let r = 0, g = 0, b = 0, k = 0;
-    for (let p = 0; p < n; p++) { if (p % w > 2) continue; r += v[p * 3]; g += v[p * 3 + 1]; b += v[p * 3 + 2]; k++; }
-    r /= k; g /= k; b /= k;
+    const n = w * rows, cards = cardColors(v, w, rows);
     const o = new Float32Array(n * 3);
     for (let p = 0; p < n; p++) {
-      const d = Math.abs(v[p * 3] - r) + Math.abs(v[p * 3 + 1] - g) + Math.abs(v[p * 3 + 2] - b);
-      if (d < 0.35) { o[p * 3] = o[p * 3 + 1] = o[p * 3 + 2] = 0.5; }
+      if (cards.some(c => colorDist(v, p, c) < 0.35)) { o[p * 3] = o[p * 3 + 1] = o[p * 3 + 2] = 0.5; }
       else { o[p * 3] = v[p * 3]; o[p * 3 + 1] = v[p * 3 + 1]; o[p * 3 + 2] = v[p * 3 + 2]; }
     }
     return o;
   }
+  // 「彩度がいちばん高いセル上位K個の平均色」＝キャラの色の芯。
+  // 色つきNCCだけだと、ヘイホーのように**白い仮面が面積の大半**を占めるキャラで色違い同士が団子になる
+  // （ぴんやさんの録画で実測: ピンク 0.827 / 無印(赤) 0.826 ＝ 0.001差）。さらに縮小した録画は
+  // にじみで赤が薄れ、絶対色で比べると「赤 → ピンク」に寄ってしまう。彩度上位のセルだけ見れば
+  // にじんでも芯の色は残るので、赤(0.70,0.09,0.16)とピンクははっきり離れる
+  function iconTopSat(v, w, rows, K = 12) {
+    const n = w * rows, cards = cardColors(v, w, rows), arr = [];
+    for (let p = 0; p < n; p++) {
+      if (cards.some(c => colorDist(v, p, c) < 0.35)) continue; // カード地は色の手がかりにならない
+      const r = v[p * 3], g = v[p * 3 + 1], b = v[p * 3 + 2];
+      arr.push({ s: Math.max(r, g, b) - Math.min(r, g, b), r, g, b });
+    }
+    if (!arr.length) return null;
+    arr.sort((a, b) => b.s - a.s);
+    const k = Math.min(K, arr.length);
+    let r = 0, g = 0, b = 0;
+    for (let i = 0; i < k; i++) { r += arr[i].r; g += arr[i].g; b += arr[i].b; }
+    return [r / k, g / k, b / k];
+  }
+  const topSatSim = (a, b) => (a && b) ? 1 - (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3 : 0;
   function matchIconCard(v, lib, { w = 16, rows = 11 } = {}) {
     if (!lib || !lib.length) return { name: null, score: 0 };
     const key = w + 'x' + rows;
-    const prep = t => { if (!t._card || t._card.key !== key) t._card = { key, g: iconGray(t.v, w, rows), m: iconCardMasked(t.v, w, rows) }; return t._card; };
+    const prep = t => { if (!t._card || t._card.key !== key) t._card = { key, g: iconGray(t.v, w, rows), m: iconCardMasked(t.v, w, rows), s: iconTopSat(t.v, w, rows) }; return t._card; };
     const qg = iconGray(v, w, rows);
     let best = null;
     for (const t of lib) { const s = ncc(qg, prep(t).g); if (!best || s > best.score) best = { name: t.name, score: s }; }
     const base = String(best.name).split(':')[0];
     const cands = lib.filter(t => String(t.name).split(':')[0] === base);
     if (new Set(cands.map(t => t.name)).size > 1) {
-      const qm = iconCardMasked(v, w, rows);
+      // 色つきNCC（形も見る）7 : 彩度上位の平均色（にじみに強い）3。辞書の総当たりで最良の配合
+      // （vsIcons: leave-one-out 300/308・反対側照合 99/108 ＝ どちらも旧実装 295/93 より上。
+      //   0.65〜0.8 × 上位8〜16 の範囲はどれも同等＝崖の上に乗せた値ではない）
+      const qm = iconCardMasked(v, w, rows), qs = iconTopSat(v, w, rows);
       let cb = null;
-      for (const t of cands) { const s = ncc(qm, prep(t).m); if (!cb || s > cb.score) cb = { name: t.name, score: s }; }
+      for (const t of cands) {
+        const p = prep(t), s = 0.7 * ncc(qm, p.m) + 0.3 * topSatSim(qs, p.s);
+        if (!cb || s > cb.score) cb = { name: t.name, score: s };
+      }
       return { name: cb.name, score: best.score, colorScore: cb.score, base };
     }
     return { name: best.name, score: best.score, base };
@@ -908,8 +952,12 @@ window.Vision = (() => {
     if (!stable.length) return { before: none, after: none };
     const first = stable[0], last = stable[stable.length - 1];
     if (first === last) {
-      // 安定ランが1つ = カウント演出を映さずスキップされた等。最終表示が確定値(変動後)。変動前は不明
-      return { before: none, after: { value: last.value, conf: last.conf, stable: true } };
+      // 安定ランが1つ = カウント演出を映さずスキップされた等。最終表示が確定値(変動後)。変動前は不明。
+      // ただし「カウント前の静止だけが読めて、カウント後の静止を取り逃した」ときも同じ形になり、
+      // そのときは変動前の値が変動後として入る（2026-09-09 ぴんやさん報告 m4: 画面は3174→3163 なのに
+      // 3174→3174 で出た）。どちらかは1枚では決められないので lone を立てて呼び出し側に判断させる
+      // （前試合の確定レートと同値なら「変動前で止まっている」＝レートは試合ごとに必ず動く）
+      return { before: none, after: { value: last.value, conf: last.conf, stable: true, lone: true } };
     }
     return { before: { value: first.value, conf: first.conf, stable: true },
              after: { value: last.value, conf: last.conf, stable: true } };
