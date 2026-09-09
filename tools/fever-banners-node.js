@@ -58,9 +58,11 @@ async function scan({ video, t0, t1, fps = 5, templates }) {
   const rb = (TPL.sets && TPL.sets.racketBanners) || TPL.racketBanners || [];
   const bandW = V.REGIONS.bannerBand.w;
   const inside = b => b.box.x0 > 8 && b.box.x1 < bandW - 8;
-  const events = [];
+  const events = [], gauges = [];
   for await (const fr of frames(video, t0, t1 == null ? info.duration : t1, fps, info.w, info.h)) {
     vid._img = fr.img;
+    // FV ゲージ（HUD が映っているコマだけ）。側の帰属は本体アプリ（collectBanners）と同じ「充填→空」のエッジ検出
+    if (V.gaugeFrameVisible(vid)) gauges.push({ t: fr.t, L: V.gaugeFill(vid, V.REGIONS.fvL), R: V.gaugeFill(vid, V.REGIONS.fvR) });
     const b = V.findBanner(vid, null, { maxH: 160 });
     if (!b) continue;
     let name = null, score = 0;
@@ -69,7 +71,23 @@ async function scan({ video, t0, t1, fps = 5, templates }) {
     if (last && fr.t - last.t1 <= 4.0) { last.t1 = fr.t; last.n++; if (score > last.score) { last.score = score; last.name = name; } }
     else events.push({ t0: fr.t, t1: fr.t, n: 1, score, name });
   }
-  return events.map(e => ({ t0: e.t0, t1: e.t1, n: e.n, score: +e.score.toFixed(3), name: e.score >= 0.93 ? e.name : null, best: e.name }));
+  // エッジ: 直前 2 点の最小から 0.18 以上の急落・落下先 0.45 以下・次点も低いまま（vision.js collectBanners と同じ）
+  const edges = { L: [], R: [] };
+  for (const k of ['L', 'R']) for (let i = 2; i < gauges.length; i++) {
+    const prevMin = Math.min(gauges[i - 2][k], gauges[i - 1][k]), next = gauges[i + 1];
+    if (prevMin - gauges[i][k] >= 0.18 && gauges[i][k] <= 0.45 && (!next || next[k] <= gauges[i][k] + 0.08)) edges[k].push((gauges[i - 1].t + gauges[i].t) / 2);
+  }
+  const used = { L: new Set(), R: new Set() };
+  return events.map(e => {
+    let side = null, dL = Infinity, dR = Infinity, eL = null, eR = null;
+    for (const t of edges.L) if (!used.L.has(t) && Math.abs(t - e.t0) < dL) { dL = Math.abs(t - e.t0); eL = t; }
+    for (const t of edges.R) if (!used.R.has(t) && Math.abs(t - e.t0) < dR) { dR = Math.abs(t - e.t0); eR = t; }
+    const ok = d => d <= 1.5;
+    if (ok(dL) && ok(dR) && Math.abs(eL - eR) <= 0.8) side = null;            // 両側同時 = HUD 非表示のアーティファクト
+    else if (ok(dL) && (!ok(dR) || dL <= dR)) { side = 'me'; used.L.add(eL); }
+    else if (ok(dR)) { side = 'opp'; used.R.add(eR); }
+    return { t0: e.t0, t1: e.t1, n: e.n, score: +e.score.toFixed(3), name: e.score >= 0.93 ? e.name : null, best: e.name, side, edgeL: ok(dL) ? +eL.toFixed(2) : null, edgeR: ok(dR) ? +eR.toFixed(2) : null };
+  });
 }
 
 if (require.main === module) {
@@ -78,7 +96,7 @@ if (require.main === module) {
   const video = a[0];
   if (!video) { console.error('usage: node tools/fever-banners-node.js <video> <t0> <t1> [--fps 5] [--json out.json]'); process.exit(2); }
   scan({ video, t0: +(a[1] || 0), t1: a[2] != null && !a[2].startsWith('--') ? +a[2] : null, fps: +get('--fps', 5) }).then(ev => {
-    for (const e of ev) console.log(`${e.t0.toFixed(2)}-${e.t1.toFixed(2)} n=${e.n} ${e.name || '(未照合)'} ${e.score}${e.name ? '' : ' best=' + e.best}`);
+    for (const e of ev) console.log(`${e.t0.toFixed(2)}-${e.t1.toFixed(2)} n=${e.n} ${e.name || '(未照合)'} ${e.score}${e.name ? '' : ' best=' + e.best} side=${e.side || '?'} (L${e.edgeL ?? '-'} R${e.edgeR ?? '-'})`);
     if (get('--json')) fs.writeFileSync(get('--json'), JSON.stringify(ev, null, 1));
   }).catch(e => { console.error(e); process.exit(1); });
 }
