@@ -55,11 +55,12 @@ async function run(opts) {
     if (banners && r.rally) {
       for (const b of banners) {
         if (b.t0 < t0 - 1 || b.t0 > t1 + 1) continue;
-        const cand = r.rally.filter(h => h.t >= b.t0 - 0.5 && h.t <= b.t0 + 0.6).sort((x, y) => Math.abs(x.t - b.t0) - Math.abs(y.t - b.t0))[0];
+        // 側が分かるバナー（FV ゲージのエッジ）はその側の打点だけ、分からなければ最も近い打点
+        const cand = r.rally.filter(h => h.t >= b.t0 - 0.5 && h.t <= b.t0 + 0.6 && (!b.side || h.side === b.side)).sort((x, y) => Math.abs(x.t - b.t0) - Math.abs(y.t - b.t0))[0];
         if (cand) { cand.clsColor = cand.clsColor || cand.cls; cand.cls = 'fever'; cand.racket = b.name || null; cand.bannerT = b.t0; }
         else {
           const prev = [...r.rally].reverse().find(h => h.t < b.t0 && h.t >= b.t0 - 2.0);
-          const side = prev ? (prev.side === 'me' ? 'opp' : 'me') : (b.name === 'マイラケット' ? 'me' : 'opp');
+          const side = b.side || (prev ? (prev.side === 'me' ? 'opp' : 'me') : 'me');
           r.rally.push({ t: +b.t0.toFixed(3), side, cls: 'fever', src: 'banner', racket: b.name || null, bannerT: b.t0, serve: false, land: null });
           r.rally.sort((x, y) => x.t - y.t);
         }
