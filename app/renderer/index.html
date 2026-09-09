@@ -1480,10 +1480,21 @@ async function analyze() {
     m.ratingBefore = before.value; m.ratingAfter = after.value;
     if (before.value == null || !before.stable || before.conf < 0.8 || before.weak) m.flags.ratingBefore = true;
     if (after.value == null || !after.stable || after.conf < 0.8 || after.weak) m.flags.ratingAfter = true;
+    m._ratingRead = { before: before.value, after: after.value, lone: !!after.lone }; // 画面から読めた素の値（連鎖の検証用）
     // レート連鎖補完: 変動前 = 同一modeの直前試合の変動後（画面はカウント演出で変動前の静止表示が
     // ほぼ無いことがあり、連鎖の方が確実）。矛盾したら連鎖を優先して要確認に
     const chainKey = m.mode;
     const prevChain = RATE_CHAIN[chainKey];
+    // 安定ランが1つしか取れず、その値が前試合の確定レートと同じ = 「カウント前の静止」だけを読んでいる。
+    // レートは1試合ごとに必ず動くので、この値は変動後ではなく変動前。変動後は空にして要確認にする
+    // （そのまま変動後として採ると前後同値のまま出て、利用者が手で直すことになる・2026-09-09 ぴんやさん報告）
+    if (after.lone && m.ratingAfter != null && prevChain != null && prevChain.value === m.ratingAfter &&
+        m.playedAt && prevChain.playedAt && (new Date(m.playedAt) - new Date(prevChain.playedAt)) < 60 * 60000) {
+      m.ratingBefore = m.ratingAfter; m.ratingAfter = null;
+      m.flags.ratingAfter = true;
+      m._ratingRead = { before: m.ratingBefore, after: null, lone: true };
+      log(`m${m.n}: レートパネルはカウント前(${m.ratingBefore})しか読めていません。変動前として扱い、変動後は要確認にします`);
+    }
     if (prevChain != null && m.playedAt && prevChain.playedAt &&
         (new Date(m.playedAt) - new Date(prevChain.playedAt)) < 60 * 60000) {
       if (m.ratingBefore == null) {
@@ -1732,12 +1743,29 @@ async function analyze() {
   for (let i = 1; i < videoMatches.length; i++) {
     const cur = videoMatches[i];
     const prev = [...videoMatches.slice(0, i)].reverse().find(p => p.mode === cur.mode);
-    if (!prev || prev.ratingAfter == null) continue;
-    if (cur.ratingBefore == null || cur.flags.ratingBefore) {
+    if (!prev) continue;
+    // 逆向きの補完: 前試合の「変動後」が空／前後同値（＝カウント後を取り逃した）のとき、
+    // 次試合の画面から読めた「変動前」で埋める。連鎖は同一部門なら必ず一致するので、
+    // 前向きの補完（下）と同じ根拠で使える。誤読の持ち込みを防ぐため、前試合の変動前との差が
+    // ±200以内で、勝敗と増減の向きが合うときだけ採る（2026-09-09 ぴんやさん報告 m4=3174→3174）
+    const readBefore = cur._ratingRead ? cur._ratingRead.before : null;
+    const prevStuck = prev.ratingAfter == null || prev.ratingSuspect ||
+                      (prev.ratingBefore != null && prev.ratingAfter === prev.ratingBefore);
+    if (prevStuck && readBefore != null && prev.ratingBefore != null && readBefore !== prev.ratingBefore &&
+        Math.abs(readBefore - prev.ratingBefore) <= 200 &&
+        (!prev.result || (prev.result === 'win') === (readBefore > prev.ratingBefore))) {
+      prev.ratingAfter = readBefore; (prev.auto ??= {}).ratingAfter = true;
+      prev.ratingSuspect = false;
+      log(`m${prev.n}: レート後を次試合のbefore(${readBefore})で補完`);
+    }
+    if (prev.ratingAfter == null) continue;
+    if (cur.ratingBefore === prev.ratingAfter) {
+      if (!prev.flags.ratingAfter) delete cur.flags.ratingBefore; // 画面読みと連鎖が一致 → 確定
+    } else if (cur.ratingBefore == null || cur.flags.ratingBefore) {
       cur.ratingBefore = prev.ratingAfter;
       if (!prev.flags.ratingAfter) delete cur.flags.ratingBefore;
       log(`m${cur.n}: レート前を前試合のafter(${prev.ratingAfter})で補完`);
-    } else if (cur.ratingBefore !== prev.ratingAfter) {
+    } else {
       cur.flags.ratingBefore = true;
       prev.flags.ratingAfter = true;
     }
