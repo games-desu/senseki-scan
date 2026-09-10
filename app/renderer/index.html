@@ -1480,7 +1480,10 @@ async function analyze() {
     m.ratingBefore = before.value; m.ratingAfter = after.value;
     if (before.value == null || !before.stable || before.conf < 0.8 || before.weak) m.flags.ratingBefore = true;
     if (after.value == null || !after.stable || after.conf < 0.8 || after.weak) m.flags.ratingAfter = true;
-    m._ratingRead = { before: before.value, after: after.value, lone: !!after.lone }; // 画面から読めた素の値（連鎖の検証用）
+    // 画面から読めた素の値（連鎖の検証用）。conf も持たせる＝連鎖と食い違ったとき
+    // 「画面を信じるか連鎖を信じるか」を確信度で決めるため（2026-09-10）
+    m._ratingRead = { before: before.value, after: after.value, lone: !!after.lone,
+                      beforeConf: before.conf ?? 0, beforeStable: !!before.stable };
     // レート連鎖補完: 変動前 = 同一modeの直前試合の変動後（画面はカウント演出で変動前の静止表示が
     // ほぼ無いことがあり、連鎖の方が確実）。矛盾したら連鎖を優先して要確認に
     const chainKey = m.mode;
@@ -1759,8 +1762,20 @@ async function analyze() {
       log(`m${prev.n}: レート後を次試合のbefore(${readBefore})で補完`);
     }
     if (prev.ratingAfter == null) continue;
+    // 画面がしっかり読めているのに連鎖と食い違うときは、**画面を優先する**。
+    // 連鎖は「動画内の2試合が連続している」という前提の推測にすぎず、切り出し動画や
+    // 録画外で試合を挟んだ場合には成り立たない（2026-09-10 ぴんやさん報告: m4/m10 だけを
+    // 切り出した動画で、画面3207(conf0.78)を前試合のafter 3163 で上書きしていた）。
+    // 直接の証拠である画面読みを消さず、食い違いは要確認として見せる。
+    const rr = cur._ratingRead || {};
+    const screenSolid = rr.before != null && rr.beforeStable && (rr.beforeConf ?? 0) >= 0.75;
     if (cur.ratingBefore === prev.ratingAfter) {
       if (!prev.flags.ratingAfter) delete cur.flags.ratingBefore; // 画面読みと連鎖が一致 → 確定
+    } else if (screenSolid && cur.ratingBefore === rr.before) {
+      cur.flags.ratingBefore = true;   // 画面を残したまま「どちらか確かめて」と出す
+      prev.flags.ratingAfter = true;
+      log(`m${cur.n}: 画面のレート前(${rr.before})と前試合のafter(${prev.ratingAfter})が違います。` +
+          `画面の値を残しました（連続した試合でないか、どちらかの読み違いです）`);
     } else if (cur.ratingBefore == null || cur.flags.ratingBefore) {
       cur.ratingBefore = prev.ratingAfter;
       if (!prev.flags.ratingAfter) delete cur.flags.ratingBefore;
@@ -2468,10 +2483,19 @@ async function analyzeFile(f) {
     if (!TPL) await loadTemplates();
     await userDataReady; // 設定と名前テンプレ（自動入力に使う）
     const gr = V.getSourceRect();
-    if (gr) {
+    {
       const s = V.srcRect(video);
-      log(`ゲーム画面の位置: ${fmtRect(gr)} → 実ピクセル ${s.w}x${s.h}` +
-          (s.w < 1280 ? '（横1280px未満のため認識精度が落ちる可能性があります）' : ''));
+      if (gr) log(`ゲーム画面の位置: ${fmtRect(gr)} → 実ピクセル ${s.w}x${s.h}`);
+      // 横幅がフルHDより小さいほど、レートの4桁など細かい文字の確信度が下がる。
+      // 閾値は緩めず（誤読を招くため）、代わりに「大きく録ってください」と案内する。
+      // 1536 = 1920の8割。実例: 1404px の録画でレートの確信度が 0.62 前後まで落ちた（2026-09-10）
+      if (s.w < 1280) {
+        log(`[警告] ゲーム画面の横幅が ${s.w}px です（1280px未満）。文字が小さく、認識精度が落ちます。`);
+      } else if (s.w < 1536) {
+        log(`[注意] ゲーム画面の横幅が ${s.w}px で、フルHD(1920px)の8割未満です。` +
+            `レートの数字が小さくなり、読み取りの確信度が下がります（要確認が増えます）。` +
+            `配信レイアウトごと録るより、ゲーム画面を大きく録るほうが安定します。`);
+      }
     }
     await analyze();
   } finally {
