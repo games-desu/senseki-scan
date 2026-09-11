@@ -5,14 +5,18 @@
 // 実測（docs/rally-analysis.md 2026-09-08 夕方の続き・芝 p5 131.5 のロブ）:
 //   着弾の瞬間に白緑の閃光 → 直後から地面に橙黄の平たい星（960 空間で 60〜70×18〜20px・H 55〜70・S 0.6〜0.7・V 190〜225）が 0.5 秒以上残る。
 //   重心は出現時の成長とドリーで毎コマ 6〜9px 流れる。**着弾の予告ではなく着弾後の印**。ロブ・高い球で出やすく、常に出るわけではない。
-//   砂コート（コート自体が H 50〜53・S 0.8）では色で分けられないので、ref.Hmed が 40〜75 のときは検出しない。
+//   砂コート（Hmed 50〜53・V90 217）: 星は H 55・S 0.43・V 231 で砂（H 48〜53・S 0.50〜0.57・V 213〜219）に近いが、
+//   V ≥ 224（V90+7）・S 0.28〜0.50・H 52〜62 の三つを同時に課すと星だけが残る（2026-09-12 砂 p5 158.0〜158.4 で 83×29→44×12・
+//   きれいな砂のコマでは塊ゼロ）。**着弾の閃光（白〜淡黄の輪・V 240+）は使わない**: 打点の閃光（チャージ解放・SMASH）と見分けが付かず、
+//   砂では側の帰属が崩れるので側の条件で落とせない（2026-09-12 p0 で 11 本中 8 本が打点の閃光だった）。
 window.Star = (() => {
   const W = 960, H = 540, SC = 2;
   const _mask = new Uint8Array(W * H), _seen = new Uint8Array(W * H), _stack = new Int32Array(W * H);
 
   function detect(img, { cam, ref = null } = {}) {
     if (!cam || !cam.ok) return [];
-    if (ref && ref.Hmed != null && ref.Hmed >= 40 && ref.Hmed <= 75) return [];   // 砂コート
+    const sand = !!(ref && ref.Hmed != null && ref.Hmed >= 40 && ref.Hmed <= 75);   // 砂コート: 星は砂より少し明るく・薄く・緑寄り
+    const vTh = sand ? Math.max(224, Math.round((ref.V90 || 0) * 255) + 7) : 0;
     const d = img.data, m = _mask; m.fill(0);
     // 走査領域: コート台形（横 1.5m・前後 1.5m の余裕）。空や観客席の黄色を見ない
     const yFar = Math.max(0, Math.floor(Court.toScreen(0, Court.Z_BASE + 1.5, cam).y / SC));
@@ -24,7 +28,15 @@ window.Star = (() => {
       for (let x = x0; x <= x1; x++, j++, i += 4) {
         const r = d[i], g = d[i + 1], b = d[i + 2];
         let mx = r, mn = r; if (g > mx) mx = g; else if (g < mn) mn = g; if (b > mx) mx = b; else if (b < mn) mn = b;
-        const dd = mx - mn; if (mx < 140 || !dd) continue;
+        const dd = mx - mn;
+        if (sand) {
+          if (mx < vTh || !dd) continue;
+          const sat = dd / mx; if (sat < 0.28 || sat > 0.50) continue;
+          let h = mx === r ? ((g - b) / dd) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4; h *= 60; if (h < 0) h += 360;
+          if (h >= 52 && h <= 62) m[j] = 1;
+          continue;
+        }
+        if (mx < 140 || !dd) continue;
         if (dd / mx < 0.45) continue;
         let h = mx === r ? ((g - b) / dd) % 6 : mx === g ? (b - r) / dd + 2 : (r - g) / dd + 4; h *= 60; if (h < 0) h += 360;
         if (h >= 45 && h <= 68) m[j] = 1;
@@ -46,8 +58,10 @@ window.Star = (() => {
       const w = bx1 - bx0 + 1, h = by1 - by0 + 1;
       // 遠近: 手前ほど大きい。面積 120〜4000・幅 30 以上・幅/高さ 2.2 以上（平たい）・塗り率（n / (w*h)）0.3 以上（線状の縁を除く）
       // 実測（芝 p5）: 本物 62〜82×15〜23（n 354〜1018）。黄色いロブのトレイルが 32×11（n 271）で紛れたので幅 40・高さ 13 以上
-      if (n < 200 || n > 4000 || w < 40 || h < 13 || w / h < 2.2 || n / (w * h) < 0.3) continue;
-      out.push({ cx: +(sx / n).toFixed(1), cy: +(sy / n).toFixed(1), n, w, h });
+      // 砂: 星は奥で小さく映る（44×12）。砂のさざ波の明るい所は塊にならない（k≥4 で更に落とす）
+      if (sand) { if (n < 120 || n > 3000 || w < 36 || h < 9 || w / h < 1.8 || n / (w * h) < 0.3) continue; }
+      else if (n < 200 || n > 4000 || w < 40 || h < 13 || w / h < 2.2 || n / (w * h) < 0.3) continue;
+      out.push(sand ? { cx: +(sx / n).toFixed(1), cy: +(sy / n).toFixed(1), n, w, h, sand: true } : { cx: +(sx / n).toFixed(1), cy: +(sy / n).toFixed(1), n, w, h });
     }
     return out;
   }
@@ -63,13 +77,14 @@ window.Star = (() => {
         for (const o of open) { if (used.has(o)) continue; const d = Math.hypot(o.x - s.cx, o.y - s.cy); if (d < bd) { bd = d; best = o; } }
         if (best) { best.t1 = f.t; best.k++; best.nMax = Math.max(best.nMax, s.n); best.w = Math.max(best.w, s.w); best.h = Math.max(best.h, s.h);
                     best.x = +((best.x * 3 + s.cx) / 4).toFixed(1); best.y = +((best.y * 3 + s.cy) / 4).toFixed(1); best.fi = fi; used.add(best); }
-        else { const o = { t0: f.t, t1: f.t, k: 1, x: s.cx, y: s.cy, nMax: s.n, w: s.w, h: s.h, fi }; open.push(o); used.add(o); }
+        else { const o = { t0: f.t, t1: f.t, k: 1, x: s.cx, y: s.cy, nMax: s.n, w: s.w, h: s.h, fi, sand: !!s.sand }; open.push(o); used.add(o); }
       }
-      for (let i = open.length - 1; i >= 0; i--) if (fi - open[i].fi > maxGapFrames) { const o = open.splice(i, 1)[0]; if (o.k >= minK) done.push(o); }
+      for (let i = open.length - 1; i >= 0; i--) if (fi - open[i].fi > maxGapFrames) { const o = open.splice(i, 1)[0]; if (o.k >= (o.sand ? 4 : minK)) done.push(o); }
     }
-    open.forEach(o => { if (o.k >= minK) done.push(o); });
+    open.forEach(o => { if (o.k >= (o.sand ? 4 : minK)) done.push(o); });
     done.sort((a, b) => a.t0 - b.t0);
-    return done.map(o => ({ t0: o.t0, t1: o.t1, k: o.k, x: o.x, y: o.y, nMax: o.nMax, w: o.w, h: o.h }));
+    return done.map(o => o.sand ? { t0: o.t0, t1: o.t1, k: o.k, x: o.x, y: o.y, nMax: o.nMax, w: o.w, h: o.h, sand: true }
+                                 : { t0: o.t0, t1: o.t1, k: o.k, x: o.x, y: o.y, nMax: o.nMax, w: o.w, h: o.h });
   }
 
   return { detect, track };
