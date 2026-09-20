@@ -176,6 +176,11 @@
   .hlmy { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--sub); margin-left:8px; }
   .hlmy img { height:30px; border-radius:4px; background:#000; vertical-align:middle; }
   .hlmy label { display:inline-flex; align-items:center; gap:3px; cursor:pointer; }
+  /* 対戦相手の行（VSカードの画像＋読めた名前）。画像は名前が読める大きさ（高さ72px≒FHDの0.47倍） */
+  .hlwho { display:flex; align-items:center; gap:12px; margin:0 0 8px; flex-wrap:wrap; }
+  .hlwho img { height:72px; border-radius:6px; background:#000; border:1px solid var(--border); }
+  .hlwho .sub { margin:0; font-size:12px; }
+  .hlwho b { color:var(--text); font-weight:bold; }
   .hlrows { display:grid; grid-template-columns:repeat(auto-fill,minmax(470px,1fr)); gap:6px; }
   .hlp { display:flex; align-items:center; gap:10px; padding:6px 8px; border:1px solid var(--border); border-radius:8px; opacity:.55; }
   .hlp.on { opacity:1; border-color:#3a5546; }
@@ -285,6 +290,7 @@
         <button id="hlOpenDir" style="display:none; font-size:11px; padding:3px 10px">フォルダを開く</button>
         <label><input type="checkbox" id="hlGuard" checked>名前が映る区間を自動で除外（推奨）</label>
         <label><input type="checkbox" id="hlScale" checked>1440p以上は1080pに縮小</label>
+        <label title="読めた相手の名前を「_vs相手名」としてファイル名に入れます（動画そのものには入りません）"><input type="checkbox" id="hlOppName" checked>ファイル名に相手の名前を入れる</label>
         <label><input type="checkbox" id="hlBadge" checked>自分のキャラを表示
           <select id="hlBadgeMode" style="background:#0c130f; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:3px 6px; font-size:12px">
             <option value="3">最初の3秒</option><option value="5">最初の5秒</option><option value="always">ずっと</option>

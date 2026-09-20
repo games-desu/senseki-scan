@@ -65,6 +65,7 @@
   // 判定できなければ上の行を仮に選び、ヘッダで選び直してもらう
   async function detectMyChar(w) {
     w.my = { icon: null, icons: null, isDoubles: false, row: 1, sure: true, show: true };
+    w.vsCard = null; w.who = null;
     if (!w.vs) return;
     const R = V.REGIONS, seek = V.makeSeeker(hv);
     await seek((w.vs.t0 + w.vs.t1) / 2);
@@ -74,14 +75,63 @@
       // バッジは自分側カードの内側(実測 y888〜958・x690〜808)だけを使い、顔が中央に来るようにする(ユーザー指摘 2026-09-05)
       w.my.icon = hlCropCanvas({ x: 698, y: 890, w: 96, h: 66 }, 120).toDataURL('image/png');
     } else {
-      // ダブルスのアイコン枠(118x64)は右寄りにキャラが入る → 正方形に寄せて切り抜く
-      const sq = r => ({ x: r.x + r.w - r.h - 4, y: r.y, w: r.h + 4, h: r.h });
-      w.my.icons = [hlCropCanvas(sq(R.dIconL1), 120).toDataURL('image/png'), hlCropCanvas(sq(R.dIconL2), 120).toDataURL('image/png')];
+      // ダブルスのアイコン枠(118x64)の中でキャラの顔は左寄り〜中央にある（2026-09-21 実測 6試合: パタパタ x28〜77・
+      // キャサリン 0〜55・クリボー 15〜100・マリオ 20〜90・ノコノコ 10〜95。右端 ~20px はラケットや羽だけ）。
+      // 旧実装は「右寄り」と決め打ちして右端の正方形(x50〜118)を切っていたため、パタパタの顔が半分・キャサリンは顔が消えていた
+      // （ユーザー指摘 2026-09-21）。左端 ~12px はランク表示(S+/S-)が食い込むので外し、x12〜112 の 100x64 を使う
+      const face = r => ({ x: r.x + 12, y: r.y, w: 100, h: r.h });
+      w.my.icons = [hlCropCanvas(face(R.dIconL1), 120).toDataURL('image/png'), hlCropCanvas(face(R.dIconL2), 120).toDataURL('image/png')];
       w.my.sigs = [V.nameSig(V.cropRegion(hv, R.dNameL1)), V.nameSig(V.cropRegion(hv, R.dNameL2))]; // 選び直したとき学習に使う
       const mr = (typeof myRowFromSigs === 'function') ? myRowFromSigs(w.my.sigs[0], w.my.sigs[1]) : null;
       w.my.row = mr ? mr.row : 1; w.my.sure = !!mr;
       w.my.icon = w.my.icons[w.my.row - 1];
     }
+    // 対戦相手（同じ VS 画面から）。一覧の試合ヘッダとファイル名で「この試合は誰とだったか」が分かるように（ユーザー要望 2026-09-21）
+    try { readWho(w); } catch (e) { hlLog('[警告] 対戦相手を読めませんでした: ' + (e && e.message || e)); }
+  }
+  // VS カード（名前＋アイコン）の画像と、読めた名前・キャラ。動画には名前を入れない（バッジは自分のキャラだけ）ので、
+  // ここで読んだ名前は一覧の表示とファイル名にだけ使う。
+  // 名前の読み取りは戦績CSV解析と同じ2段（確定済みの名前画像との照合 nameFromSig → 文字辞書 ocrName・index.html）。
+  // どちらも「読めなければ空」で、誤った名前を出すより空を選ぶ。キャラは辞書照合（0.8未満は不採用）
+  function readWho(w) {
+    const R = V.REGIONS, dbl = w.my.isDoubles;
+    // VS画面のカード全体（シングルス: 名前 y895〜980・アイコン y898〜986 / ダブルス: 2行 y852〜990）を1枚で
+    w.vsCard = hlCropCanvas({ x: 268, y: 845, w: 1384, h: 152 }, 720).toDataURL('image/jpeg', 0.85);
+    const name = reg => {
+      const band = V.nameBand(V.cropRegion(hv, reg)), sig = V.sigFromBand(band);
+      const hit = (typeof nameFromSig === 'function' && nameFromSig(sig)) || (typeof ocrName === 'function' && ocrName(band));
+      return hit && hit.name ? String(hit.name) : '';
+    };
+    const canon = n => (window.Characters && Characters.canon) ? Characters.canon(n) : n;
+    const charS = reg => { const m = V.matchIconCard(V.iconVec(V.cropRegion(hv, reg), 16, 16), TPL.vsIcons || [], { w: 16, rows: 11 }); return m.name && m.score >= 0.8 ? canon(m.name) : ''; };
+    const charD = reg => { const m = V.matchIconCardAround(hv, reg, 16, 12, TPL.dblIcons || [], { w: 16, rows: 12 }); return m && m.name && m.score >= 0.8 ? canon(m.name) : ''; };
+    w.who = dbl
+      ? { left: [{ name: name(R.dNameL1), char: charD(R.dIconL1) }, { name: name(R.dNameL2), char: charD(R.dIconL2) }],
+          opp: [{ name: name(R.dNameR1), char: charD(R.dIconR1) }, { name: name(R.dNameR2), char: charD(R.dIconR2) }] }
+      : { left: [], opp: [{ name: name(R.oppname), char: charS(R.oppicon) }] };
+  }
+  // 試合窓の相手/味方（表示・ファイル名用）。同じ録画の戦績CSV解析が済んでいれば、そこで確定した名前（手修正込み）を優先する。
+  // 戻り値: { opp: [{name,char}], partner: {name,char}|null, label: 'ずしちゃん・あおもりだいちAED' }
+  // label は読めた名前だけ（キャラ名で代用しない: 「vsクリボー」が人の名前に見える）。1人でも読めれば読めたぶんだけ入れる
+  function whoOf(w) {
+    if (!w || !w.who) return { opp: [], partner: null, label: '' };
+    const opp = w.who.opp.map(o => ({ ...o }));
+    const partner = w.who.left.length ? { ...w.who.left[2 - (w.my.row || 1)] } : null;
+    const csv = (typeof matches !== 'undefined' && HL.file && w.vs) ? matches.find(m => m.video === HL.file.name && m._vsT0 != null && Math.abs(m._vsT0 - w.vs.t0) < 3) : null;
+    if (csv) {
+      const put = (o, nm, ch) => { if (nm) o.name = String(nm); if (ch && !o.char) o.char = String(ch); };
+      if (opp[0]) put(opp[0], csv.oppName, csv.oppChar);
+      if (opp[1]) put(opp[1], csv.opp2Name, csv.opp2Char);
+      if (partner) put(partner, csv.partnerName, csv.partnerChar);
+    }
+    const label = opp.map(o => o.name).filter(Boolean).join('・');
+    return { opp, partner, label };
+  }
+  // ファイル名に入れる相手（safeName 済み・空なら入れない）。「_vs相手1・相手2」
+  function vsTag(w) {
+    if (!$('hlOppName').checked) return '';
+    const s = safeName(whoOf(w).label).slice(0, 40);
+    return s ? `_vs${s}` : '';
   }
   const loadImg = src => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
   // バッジ（透過PNG）: 「自分：」＋キャラ画像。outH（出力の高さ）に合わせた大きさで描く
@@ -203,7 +253,7 @@
     else body = `<b class="${cls} hlbig">${esc(p.scoreAfter)}</b>`;
     return `<span class="hlscore" title="${esc(p.scoreBefore)} → ${esc(p.scoreAfter)}">${body}</span>`;
   }
-  const whoHtml = p => `<span class="${p.winner === 'me' ? 'hlme' : 'hlopp'}">${p.winner === 'me' ? '自分の得点' : '相手の得点'}</span>`;
+  const winnerHtml = p => `<span class="${p.winner === 'me' ? 'hlme' : 'hlopp'}">${p.winner === 'me' ? '自分の得点' : '相手の得点'}</span>`;
 
   // ---- 一覧 ----
   const TYPE_LABEL = { short: '得点前', full: 'ラリー全体', match: '試合ごと' };
@@ -221,6 +271,7 @@
         <div class="hlmh"><b>試合 ${m}</b><span class="sub">${fmtT(arr[0].hudOn)} 〜 ${fmtT(arr[arr.length - 1].hudOff)} ・ ${arr.length}ポイント${type === 'match' ? `（この試合のクリップ: ${n}ラリー・約${secs.toFixed(0)}秒）` : ''}</span>
           ${myCharHtml(arr[0])}
           <button data-act="mall" data-m="${m}">この試合を全部選ぶ</button><button data-act="mnone" data-m="${m}">選択解除</button></div>
+        ${whoHtml(arr[0])}
         <div class="hlrows">${arr.map(row).join('')}</div>
       </div>`; }).join('');
     // 保存形式の文言（区間の種類で変わる）
@@ -228,12 +279,12 @@
       $('hlExportEach').textContent = '試合ごとに保存（1試合1本）';
       $('hlExportJoined').textContent = '全試合を1本に繋げて保存';
       $('hlPerMatchWrap').style.display = 'none';
-      $('hlNameHint').textContent = 'チェックしたラリーをつなぎ、ポイント間のスコアバナーは抜きます。ファイル名: 録画名_試合n.mp4 ／ 録画名_全試合.mp4';
+      $('hlNameHint').textContent = 'チェックしたラリーをつなぎ、ポイント間のスコアバナーは抜きます。ファイル名: 録画名_試合n_vs相手名.mp4 ／ 録画名_全試合.mp4（相手名は読めたときだけ・ファイル名にだけ入り、動画には入りません）';
     } else {
       $('hlExportEach').textContent = '区間ごとに保存（1本ずつ）';
       $('hlExportJoined').textContent = '1本に繋げて保存';
       $('hlPerMatchWrap').style.display = '';
-      $('hlNameHint').textContent = 'ファイル名: 録画名_試合n_Pk_スコア_自分/相手.mp4 ／ 繋げたもの: 録画名_試合n_ダイジェスト.mp4（試合ごと）または 録画名_ダイジェスト.mp4。つなぎ目あり＝重ねるぶん各区間が少し短くなり、再エンコードで時間がかかります';
+      $('hlNameHint').textContent = 'ファイル名: 録画名_試合n_vs相手名_Pk_スコア_自分/相手.mp4 ／ 繋げたもの: 録画名_試合n_vs相手名_ダイジェスト.mp4（試合ごと）または 録画名_ダイジェスト.mp4（相手名は読めたときだけ・ファイル名にだけ入り、動画には入りません）。つなぎ目あり＝重ねるぶん各区間が少し短くなり、再エンコードで時間がかかります';
     }
   }
   function myCharHtml(p) {
@@ -246,6 +297,17 @@
     } else body = `<img src="${my.icon}">`;
     return `<span class="hlmy">自分のキャラ:${body}<label><input type="checkbox" data-act="myshow" data-w="${p.win}"${my.show !== false ? ' checked' : ''}>表示</label></span>`;
   }
+  // 対戦相手の行: VS画面のカード画像（名前＋アイコン・読み取りに依存しない）＋読めた名前。
+  // 「この試合は誰とだったか」を一覧でぱっと見分かるように（ユーザー要望 2026-09-21）。動画には入れない
+  function whoHtml(p) {
+    const w = HL.windows[p.win]; if (!w || !w.vsCard) return '';
+    const who = whoOf(w);
+    // 名前が読めた人は太字、読めなかった人はキャラ名（読めなければ「?」）。名前とキャラ名を混同しないよう見た目を分ける
+    const one = o => o.name ? `<b>${esc(o.name)}</b>` : `<span title="名前は未読み取り（戦績CSVで確定した名前は次回から読めます）">${esc(o.char ? String(o.char).split(':')[0] : '?')}<small>(キャラ)</small></span>`;
+    const opp = who.opp.length ? `相手: ${who.opp.map(one).join(' ・ ')}` : '';
+    const pt = who.partner ? `　味方: ${one(who.partner)}` : '';
+    return `<div class="hlwho"><img src="${w.vsCard}" title="VS画面（この試合の対戦相手）"><span class="sub">${opp}${pt}</span></div>`;
+  }
   function row(p) {
     const type = hlType();
     const r = ranges(p)[rangeKey()];
@@ -254,7 +316,7 @@
       <label class="hlchk"><input type="checkbox" data-act="inc" ${p.include ? 'checked' : ''}></label>
       <img src="${p.thumb || ''}" data-act="edit" title="クリックで区間を調整">
       <div class="hlpinfo">
-        <div><b>P${p.k}</b> ${whoHtml(p)} <span class="sub">→</span> ${scoreHtml(p)}</div>
+        <div><b>P${p.k}</b> ${winnerHtml(p)} <span class="sub">→</span> ${scoreHtml(p)}</div>
         <div class="sub">ラリー ${(p.hudOff - p.hudOn).toFixed(1)}秒（${fmtT(p.hudOn)} 〜 ${fmtT(p.hudOff)}）</div>
         <div class="sub">${type === 'match' ? 'このラリー' : TYPE_LABEL[type]}: ${fmtT(r.s)} 〜 ${fmtT(r.e)}（${(r.e - r.s).toFixed(1)}秒）${edited}</div>
       </div>
@@ -317,7 +379,8 @@
       full: { ...r.full }, short: { ...r.short },
       T0: Math.max(0, p.hudOn - 3), T1: Math.min(Number.isFinite(hv.duration) ? hv.duration : Infinity, (p.gapEnd ?? p.hudOff + 3) + 0.5),
     };
-    $('hlEdTitle').innerHTML = `<span class="hledt">試合 ${p.match}・P${p.k}</span> ${whoHtml(p)} <span class="sub">→</span> ${scoreHtml(p)} <span class="sub" style="margin-left:14px">${p.idx + 1} / ${HL.points.length}</span>`;
+    const vsLabel = whoOf(HL.windows[p.win]).label;
+    $('hlEdTitle').innerHTML = `<span class="hledt">試合 ${p.match}・P${p.k}</span> ${winnerHtml(p)} <span class="sub">→</span> ${scoreHtml(p)}${vsLabel ? ` <span class="sub" style="margin-left:10px">vs ${esc(vsLabel)}</span>` : ''} <span class="sub" style="margin-left:14px">${p.idx + 1} / ${HL.points.length}</span>`;
     $('hlEdPrev').disabled = p.idx <= 0; $('hlEdNext').disabled = p.idx >= HL.points.length - 1;
     $('hlEdInc').checked = !!p.include;
     $('hlmodal').style.display = 'flex';
@@ -486,9 +549,10 @@
     const type = $('hlTrans').value, duration = Math.max(0.2, Math.min(2, +$('hlTransSec').value || 0.3));
     return type === 'none' ? null : { type, duration };
   }
-  for (const id of ['hlTrans', 'hlTransSec', 'hlBadge', 'hlBadgeMode']) $(id).addEventListener('change', () => {
+  for (const id of ['hlTrans', 'hlTransSec', 'hlBadge', 'hlBadgeMode', 'hlOppName']) $(id).addEventListener('change', () => {
     SETTINGS.hlTrans = { type: $('hlTrans').value, duration: +$('hlTransSec').value || 0.3 };
     SETTINGS.hlBadge = { on: $('hlBadge').checked, mode: $('hlBadgeMode').value };
+    SETTINGS.hlOppName = $('hlOppName').checked;
     window.api.saveUserData('settings', SETTINGS);
   });
 
@@ -540,7 +604,7 @@
           if (g.changed) { hlLog(`試合${p.match} P${p.k}: 名前が映るフレームを避けて ${fmtT(s)}〜${fmtT(e)} → ${fmtT(g.s)}〜${fmtT(g.e)} に詰めました`); s = g.s; e = g.e; }
         }
         if (e - s < 0.5) { hlLog(`試合${p.match} P${p.k}: 区間が短すぎるため飛ばしました`); continue; }
-        const name = `${base}_試合${p.match}_P${String(p.k).padStart(2, '0')}_${safeName(p.scoreAfter)}_${p.winner === 'me' ? '自分' : '相手'}${type === 'full' ? '_ラリー全体' : ''}.mp4`;
+        const name = `${base}_試合${p.match}${vsTag(HL.windows[p.win])}_P${String(p.k).padStart(2, '0')}_${safeName(p.scoreAfter)}_${p.winner === 'me' ? '自分' : '相手'}${type === 'full' ? '_ラリー全体' : ''}.mp4`;
         cuts.push({ p, s, e, out: (tmp || HL.outDir) + '\\' + name });
         if (HL.cancel) break;
       }
@@ -550,7 +614,7 @@
         if (perMatch) {
           const by = new Map();
           for (const c of cuts) { if (!by.has(c.p.match)) by.set(c.p.match, []); by.get(c.p.match).push(c); }
-          for (const [m, arr] of by) groups.push({ out: `${HL.outDir}\\${base}_試合${m}${type === 'match' ? '' : '_ダイジェスト'}.mp4`, cuts: arr });
+          for (const [m, arr] of by) groups.push({ out: `${HL.outDir}\\${base}_試合${m}${vsTag(HL.windows[arr[0].p.win])}${type === 'match' ? '' : '_ダイジェスト'}.mp4`, cuts: arr });
         } else {
           groups.push({ out: `${HL.outDir}\\${base}_${type === 'match' ? '全試合' : 'ダイジェスト'}.mp4`, cuts });
         }
@@ -613,8 +677,9 @@
     if (SETTINGS.hlOutDir) { HL.outDir = SETTINGS.hlOutDir; $('hlOutDir').textContent = SETTINGS.hlOutDir; }
     if (SETTINGS.hlTrans) { $('hlTrans').value = SETTINGS.hlTrans.type || 'fade'; $('hlTransSec').value = SETTINGS.hlTrans.duration || 0.3; }
     if (SETTINGS.hlBadge) { $('hlBadge').checked = SETTINGS.hlBadge.on !== false; $('hlBadgeMode').value = SETTINGS.hlBadge.mode || '3'; }
+    $('hlOppName').checked = SETTINGS.hlOppName !== false;
   });
 
   window.HL = HL;
-  HL._render = hlRender; HL._open = hlOpenEditor; HL._badge = makeBadge; // 表示確認用（ヘッドレスChromeでのスクショ）
+  HL._render = hlRender; HL._open = hlOpenEditor; HL._badge = makeBadge; HL._who = whoOf; HL._vsTag = vsTag; // 表示確認用（ヘッドレスChromeでのスクショ）
 })();
