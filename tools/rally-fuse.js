@@ -107,25 +107,11 @@ window.RallyFuse = (() => {
   function fuse({ shots = [], events = [], track = [], camAt = null, t0 = -Infinity, t1 = Infinity, markers = [] } = {}) {
     track = purgeStatic(track);
     let hits = shots.map(s => ({ t: +(s.t0 - LEAD).toFixed(3), side: s.side, cls: s.cls, src: 'trail',
-                                 from: s.tail ? { X: s.tail.X, Z: s.tail.Z } : null, frames: s.frames, n: s.n, nMax: s.nMax, disp: s.disp, S: s.Smed,
+                                 from: s.tail ? { X: s.tail.X, Z: s.tail.Z } : null, n: s.n, nMax: s.nMax, disp: s.disp, S: s.Smed,
                                  // 先端 y の 2 番目に小さい値（先頭に紛れた外れ blob 1 個に引っ張られない。砂 413.5: テントの縞 ty=16 で lob に化けた）
                                  tyMin: s.frames && s.frames.length ? (ys => ys.length >= 2 ? ys[1] : ys[0])(s.frames.map(f => f.ty != null ? f.ty : f.cy).sort((a, b) => a - b)) : null }))
                     .sort((a, b) => a.t - b.t);
-    // 背景 run の除去（砂 0911: ロブでカメラが上を向くと観客席のテント・煉瓦・備品が run になる）。
-    // 「尾の |Z| > 16 を捨てる」は不可: 相手がベースラインの後ろに立つとラケットの高さの視差で本物の打点も Z 22 になる（0911 p1 49.1 のサーブ・50.6 の返球）。
-    // 静止物はカメラの縦移動（奥ベースラインの y の変化）と同じだけ動くので、run の重心の縦移動との残差が小さければ背景。
-    // 閾値: 0908 GT 一致の最小 |残差| は 55（p8 225.93・カメラ静止 dcam 0）なので、カメラが 20px 以上動いたときだけ |残差| < 20 を落とす
-    if (camAt && typeof Court !== "undefined") {
-      const yFar = t => { const c = camAt(t); return c && c.ok ? Court.toScreen(0, Court.Z_BASE, c).y / 2 : null; };
-      hits = hits.filter(h => {
-        const fr = h.frames; if (!fr || fr.length < 2) return true;
-        const a = fr[0], b = fr[fr.length - 1], y0 = yFar(a.t), y1 = yFar(b.t); if (y0 == null || y1 == null) return true;
-        const dcam = y1 - y0, res = (b.cy - a.cy) - dcam;
-        if (Math.abs(dcam) >= 20 && Math.abs(res) < 20) { h.bg = { dcam: +dcam.toFixed(0), res: +res.toFixed(0) }; return false; }
-        return true;
-      });
-    }
-    for (const h of hits) delete h.frames;   // 出力 JSON を肥大させない
+    // 背景 run（カメラと一緒に動く静止物）の除去と先頭の切り落としは trail.js summarize（yFarAt）へ移した（2026-09-21）
     const FAM = { topspin: 'warm', lob: 'warm', slice: 'blue', flat: 'purple', drop: 'white', unknown: 'any' };
     // 打点と打点は 0.3 秒以上離れる（ネットを越える時間）。近すぎる2本は blob の大きい方だけ残す
     // 近すぎる2本の解決: (1) 直前に採った打点と同じ側の方を落とす（側は交替する） (2) 種別が unknown の方を落とす (3) blob の小さい方を落とす
