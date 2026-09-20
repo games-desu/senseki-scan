@@ -392,7 +392,7 @@ window.Trail = (() => {
 
   // ---- ショット（トレイルの時間的な連なり）----
   // frames: [{t, blobs:[...]}] 時刻順。同色・同側・近接（コマ間の移動 <= 150px×コマ差）で繋ぐ。
-  function runs(frames, { fps = 60, maxGap = 6, minFrames = 4 } = {}) {
+  function runs(frames, { fps = 60, maxGap = 6, minFrames = 4, yFarAt = null } = {}) {
     const open = [], done = [];
     const close = r => { if (r.frames.length >= minFrames) done.push(r); };
     for (const f of frames) {
@@ -433,11 +433,11 @@ window.Trail = (() => {
     }
     open.forEach(close);
     done.sort((a, b) => a.t0 - b.t0);
-    return done.map(r => summarize(r, fps));
+    return done.map(r => summarize(r, fps, yFarAt));
   }
 
   // 色は打点から 4〜10 コマ後の中央値で決める（固定点で色相が流れるため・shot-color H項）
-  function summarize(r, fps) {
+  function summarize(r, fps, yFarAt = null) {
     let fr = r.frames;
     // 打点の再アンカー: run の先頭にチャージ中のオーラ（小さく、その場でゆらぐ blob）が繋がっていることがある
     // （0908 芝 55.85: オーラ6コマ→トレイル。votes の窓がオーラに掛かり 'unknown' で選手扱いに落ちた）。
@@ -472,6 +472,20 @@ window.Trail = (() => {
     if (pre + 1 >= 5 && fr.length - (pre + 1) >= 3) { r.trimPre = pre + 1; fr = fr.slice(pre + 1); }
     // 先頭に 3 コマ以上続く「ごく小さい blob（run 最大の 15% 未満）」は別物の切れ端（0908b p4 相手ロブの前の 769/217/884/499/224/139）。
     // 本物のトレイルは 1〜2 コマで育つ（279→1224→4696）ので 3 コマ以上の条件で当たらない
+    // カメラ補正した静止（砂 0911 p1 51.37: テントの縁 7 コマ（y 29→49・ドリーで流れる）→ 本物の橙トレイル、が 1 本の run になり打点が 0.5 秒早く出た上に
+    // 併合で背景断片に吸われた）。奥ベースラインの y の変化（カメラの縦移動）を引いた重心 y が先頭の 16px 以内に留まる先頭部分は静止物として切る。
+    // 大きさの条件は near と同じ（ロブの頂点は補正後もほぼ動かないが blob が大きい）。run 全体が静止でカメラが 20px 以上動いていれば背景（shots で捨てる）
+    if (yFarAt && fr.length >= 5) {
+      const comp = f => { const y = yFarAt(f.t); return y == null ? null : f.b.cy - y; };
+      const c0 = comp(fr[0]);
+      if (c0 != null) {
+        let k = 0;
+        while (k + 1 < fr.length) { const c = comp(fr[k + 1]); if (c == null || Math.abs(c - c0) > 16 || fr[k + 1].b.n >= 0.8 * nMaxAll) break; k++; }   // 0.8: テントの縁は 1479/2874=0.51 で 0.5 だと切れなかった（0911 p1 51.37）。ロブの頂点は 0.6〜0.8
+        const dcam = (yFarAt(fr[fr.length - 1].t) || 0) - (yFarAt(fr[0].t) || 0);
+        if (k + 1 >= fr.length && Math.abs(dcam) >= 20) r.camStatic = +dcam.toFixed(0);
+        else if (k + 1 >= 5 && fr.length - (k + 1) >= 3) { r.trimPre = (r.trimPre || 0) + k + 1; r.camTrim = k + 1; fr = fr.slice(k + 1); }
+      }
+    }
     let tiny = 0; while (tiny < fr.length && fr[tiny].b.n < 0.15 * nMaxAll) tiny++;
     if (tiny >= 3 && fr.length - tiny >= 3) { r.trimPre = (r.trimPre || 0) + tiny; fr = fr.slice(tiny); }
     let suf = 0; while (suf + 1 < fr.length && near(fr[fr.length - 2 - suf], fr[fr.length - 1 - suf])) suf++;
@@ -530,7 +544,7 @@ window.Trail = (() => {
              Htip: median(use.map(f => f.b.Htip).filter(v => v != null)),
              Htail: median(use.map(f => f.b.Htail).filter(v => v != null)),
              Smed: median(use.map(f => f.b.Smed).filter(v => v != null)),
-             trimPre: r.trimPre || 0, trimSuf: r.trimSuf || 0,
+             trimPre: r.trimPre || 0, trimSuf: r.trimSuf || 0, camStatic: r.camStatic || 0, camTrim: r.camTrim || 0,
              nMax: Math.max(...fr.map(f => f.b.n)), cZ0: first.cZ, frames: fr.map(f => ({ t: f.t, cx: f.b.cx, cy: f.b.cy, ty: f.b.tip.y, n: f.b.n, cls: f.b.cls, side: f.b.side })) };
   }
 
@@ -553,6 +567,7 @@ window.Trail = (() => {
     const sideOk = r => r.cZ0 == null || (r.side === 'me' ? (r.cZ0 < 5 || r.cZpre < 5) : (r.cZ0 > -5 || r.cZpre > -5));
     const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minN && r.t0 >= tStart + 0.3 && r.dir && r.spd >= minSpd * sc && r.dur <= maxDur
                                        && sideOk(r)
+                                       && !r.camStatic                    // カメラと一緒に動くだけの静止物（砂の観客席・テント）
                                        && !(r.provFrac >= 0.8)          // 仮カメラのズーム中だけの run（0908 芝 52.37: サーブ画の blob が"相手の打点"になった）
                                        && !(r.side === 'me' && r.nMax < 500)   // 手前（自分側）のトレイルは大きく映る（GT の自分の打点は全部 600 以上・本物のドロップ 1024〜4383）。ヨッシーの白い切れ端 319 を落とす
                                        && !(r.straight != null && r.straight < 0.6)   // y が往復する run は走る選手（0908 クレイ 227.93 マリオ 0.14・本物は 0.85 以上）

@@ -143,7 +143,8 @@ async function analyze(opts) {
   const ranked = BallTrack.pickBall(chains, { net });
   const segs = BallTrack.ballSegments(ranked);
   const events = segs.length ? BallTrack.classifyEvents(segs, camAt) : [];
-  const trailRuns = opts.trail ? Trail.runs(trailLog, { fps: fps / trailEvery }) : null;
+  const yFarAt = t => { const c = camAt(t); return c && c.ok ? Court.toScreen(0, Court.Z_BASE, c).y / Trail.SC : null; };   // 奥ベースラインの画面 y（カメラの縦移動の物差し）
+  const trailRuns = opts.trail ? Trail.runs(trailLog, { fps: fps / trailEvery, yFarAt }) : null;
   const shots = trailRuns ? Trail.shots(trailRuns, { tStart: t0 }) : null;
   const track = []; segs.forEach(s => s.pts.forEach(p => track.push(p))); track.sort((a, b) => a.t - b.t);
   const markers = opts.trail ? Star.track(starLog) : [];
