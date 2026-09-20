@@ -111,6 +111,13 @@ window.RallyFuse = (() => {
                                  // 先端 y の 2 番目に小さい値（先頭に紛れた外れ blob 1 個に引っ張られない。砂 413.5: テントの縞 ty=16 で lob に化けた）
                                  tyMin: s.frames && s.frames.length ? (ys => ys.length >= 2 ? ys[1] : ys[0])(s.frames.map(f => f.ty != null ? f.ty : f.cy).sort((a, b) => a - b)) : null }))
                     .sort((a, b) => a.t - b.t);
+    // 尾が奥ベースラインの 4m 以上後ろ（|Z| > 16）の run は観客席・テント・煉瓦（砂 0911: 134 打中 56 打・ロブでカメラが上を向くと背景が run になる）。
+    // ポイント最初の打点（サーブ）だけは除外: サーバーはベースラインの後ろに立ち、0908 の相手サーブが Z 17.2 / 23.6 で本物だった
+    const BG_Z = 16;
+    // サーブ扱い＝相手側で最初の候補（重複解決前のリストでは自分のチャージのオーラが先に立つ: 0908 p0 52.7・p16 412.63。i===0 や「先頭から 0.6 秒」ではサーブが落ちた）。
+    // 自分のサーブは Z≈−12（カメラ側）で元から閾値内
+    const firstOpp = hits.find(h => h.side === "opp");
+    hits = hits.filter(h => h === firstOpp || !h.from || Math.abs(h.from.Z) <= BG_Z);
     const FAM = { topspin: 'warm', lob: 'warm', slice: 'blue', flat: 'purple', drop: 'white', unknown: 'any' };
     // 打点と打点は 0.3 秒以上離れる（ネットを越える時間）。近すぎる2本は blob の大きい方だけ残す
     // 近すぎる2本の解決: (1) 直前に採った打点と同じ側の方を落とす（側は交替する） (2) 種別が unknown の方を落とす (3) blob の小さい方を落とす
