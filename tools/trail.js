@@ -488,6 +488,13 @@ window.Trail = (() => {
     }
     let tiny = 0; while (tiny < fr.length && fr[tiny].b.n < 0.15 * nMaxAll) tiny++;
     if (tiny >= 3 && fr.length - tiny >= 3) { r.trimPre = (r.trimPre || 0) + tiny; fr = fr.slice(tiny); }
+    // 同じ切れ端が先頭でなく「大きい静止物 → ごく小さい切れ端 3 コマ以上 → 本物」の並びで来ることがある（砂 0911 p1 51.37: テントの縁 1479/1378/1446 →
+    // 63/165/159/193/257 → 51.87 から本物の橙トレイル。打点が 0.5 秒早く出て GT 52.0 に届かなかった）。先頭 10 コマ以内で終わる 3 コマ以上の切れ端の直後を出現とみなす
+    {
+      let cut = 0, run = 0;
+      for (let i = 0; i < Math.min(fr.length, 10); i++) { if (fr[i].b.n < 0.15 * nMaxAll) { run++; if (run >= 3) cut = i + 1; } else run = 0; }
+      if (cut > 0 && fr.length - cut >= 3) { r.trimPre = (r.trimPre || 0) + cut; r.tinyCut = cut; fr = fr.slice(cut); }
+    }
     let suf = 0; while (suf + 1 < fr.length && near(fr[fr.length - 2 - suf], fr[fr.length - 1 - suf])) suf++;
     if (suf + 1 >= 5 && fr.length - (suf + 1) >= 3) { r.trimSuf = (r.trimSuf || 0) + suf + 1; fr = fr.slice(0, fr.length - (suf + 1)); }
     // 「速く動いた後にその場で止まる」末尾（1 コマ 6px 以下が 4 コマ以上・大きさ不問）は走って止まった選手（0908b ヨッシーの赤い甲羅: 413→384 と動いて 319 付近で静止）。
