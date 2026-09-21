@@ -985,6 +985,13 @@ async function harvestTemplates() {
       if (m.edited && m.edited[key] && m._iconVecs && m._iconVecs[key]) push(iconSet, Characters.canon(m[key]), m._iconVecs[key]);
     }
     if (m.edited && m.edited.court && m._courtVec) push('courts', String(m.court).trim(), m._courtVec);
+    // 部門（mode）の手修正: 読み違えていた側の手札だけを修正後のラベルで足す（当たっていた側は増やさない）。
+    // 英語版の "With Fever Rackets"（あり）や未収穫ランク色のパネルを、利用者の手元で育てられるようにする（2026-09-22）
+    if (m.edited && m.edited.mode && m._modeVecs && /^(classic|fever)_(singles|doubles)$/.test(m.mode)) {
+      const l1 = /doubles/.test(m.mode) ? 'ダブルス' : 'シングルス', l2 = /^fever/.test(m.mode) ? 'あり' : 'なし';
+      if (l1 !== m._modeVecs.read1) push('mode1', l1, m._modeVecs.mode1);
+      if (l2 !== m._modeVecs.read2) push('mode2', l2, m._modeVecs.mode2);
+    }
   }
   if (Object.keys(sets).length) {
     const r = await window.api.appendUserTemplates(sets);
@@ -1470,14 +1477,22 @@ async function analyze() {
     m.crops.ratingBefore = regionJpeg({ x: 1030, y: 543, w: 255, h: 80 }, 180); // 証拠: レート変動前(数字にフォーカス)
     m.crops.mode1 = regionJpeg({ x: 648, y: 289, w: 220, h: 72 }, 120);  // 証拠: 部門ボード(シングルス/ダブルス・小型表示)
     m.crops.mode2 = regionJpeg({ x: 995, y: 293, w: 295, h: 58 }, 140);  // 証拠: フィーバーラケット あり/なし(余白詰め)
-    const md1 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode1), 24, 8), TPL.mode1);
-    const md2 = V.matchIcon(V.iconVec(V.cropRegion(video, R.mode2), 32, 8), TPL.mode2);
+    const m1v = V.iconVec(V.cropRegion(video, R.mode1), 24, 8), m2v = V.iconVec(V.cropRegion(video, R.mode2), 32, 8);
+    const md1 = V.matchIcon(m1v, TPL.mode1);
+    const md2 = V.matchIcon(m2v, TPL.mode2);
+    // 教えるサイクル用: 部門を手修正して確定したら、この2枚を修正後のラベルで辞書に足す（harvestTemplates）
+    m._modeVecs = { mode1: Array.from(m1v), mode2: Array.from(m2v), read1: md1.name, read2: md2.name };
     // ボードが読めなければ VS画面の見た目（m.isDoubles）に合わせる。既定でダブルスにすると
     // 「部門はダブルスなのに欄はシングルス」という食い違った状態のまま出てしまう
     const singles = modeSaysDoubles != null ? !modeSaysDoubles : !m.isDoubles;
     const classic = md2.name === 'なし' && md2.score > 0.85;
     m.mode = (classic ? 'classic_' : 'fever_') + (singles ? 'singles' : 'doubles');
     if (md1.score < 0.85 || md2.score < 0.85) m.flags.mode = true;
+    // なし/あり の手札は文字が小さくパネルの地が支配的で、反対ラベル同士でも ncc 0.99 で並ぶ（同梱辞書で実測）。
+    // つまり片方のラベルしか手札が無い見た目（別言語・別デザイン）では、未収穫の側が勝った手札に黙って化ける
+    // （英語版: "With Fever Rackets" 未収穫のうちは "No Fever Rackets"=なし が勝つ）。勝った手札と 0.9 以上で並ぶ
+    // 反対ラベルの手札が辞書に無ければ要確認にする。反対側が揃えば（同梱でも手修正の収穫でも）自動で外れる（2026-09-22）
+    if (md2.tpl && !TPL.mode2.some(t => t.name !== md2.name && V.ncc(md2.tpl.v, t.v) >= 0.9)) m.flags.mode = true;
     // パネル表示中を全走査して「最初の安定値=変動前・最後の安定値=変動後」を読む
     // （ランク付きパネルは1枚の中でカウント演出があり、静止時間もスキップ操作次第のため）
     const { before, after } = await V.readRatingPair(video, g.rating.t0, g.rating.t1, TPL.ratingFont);
