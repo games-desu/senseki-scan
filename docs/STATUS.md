@@ -1,10 +1,29 @@
-# SENSEKI SCAN 実装ステータス（2026-09-21時点）
+# SENSEKI SCAN 実装ステータス（2026-09-22時点）
 
 次セッションへの引き継ぎ用サマリー。**このファイルを最初に読めば全体像が掴める**ように保つ。
 分野別の詳細は各ドキュメントへ（末尾の索引）。
 
 ## 1. 本体アプリ（app/・Electron）
-**バージョン: v1.0.10公開済み（2026-09-21 05:4x・https://github.com/games-desu/senseki-scan/releases/tag/v1.0.10・Latest・verify-release ローカル/リモートOK・ハイライト生成のダブルスバッジの顔切れ修正＋対戦相手の表示/ファイル名・docs/release-notes-1.0.10.md）／ v1.0.9公開済み（2026-09-10・レート連鎖が画面読みを上書きしていた件＋ゲーム画面が小さい録画への案内・docs/release-notes-1.0.9.md）／ v1.0.8公開済み（2026-09-10 01:5x・https://github.com/games-desu/senseki-scan/releases/tag/v1.0.8・verify-release ローカル/リモートOK・ぴんやさん報告2件＝レート変動後が変動前のまま／ミラー戦で相手ヘイホーが青判定・docs/release-notes-1.0.8.md）／ v1.0.7公開済み（2026-09-09 00:0x・https://github.com/games-desu/senseki-scan/releases/tag/v1.0.7・verify-release ローカル/リモートOK・docs/release-notes-1.0.7.md・フィーバーダブルス対応＝4人ぶんのラケット＋勝敗パネル棄却の修正＋回線アイコンで自分の行）／ v1.0.6公開済み（2026-09-08・ダブルスがシングルス扱いになる不具合＝部門ボード優先＋名前帯での判定）／ v1.0.5公開済み（2026-09-07・VSカード窓の位置ずれ修正＝両側とも巨体キャラの試合の取り逃し）／ v1.0.4公開済み（2026-09-07・CSVコピーの手応え＋キャサリン自分側の手札）／ v1.0.1公開済み（2026-09-06 02:5x・FVゲージside帰属の根本修正＋トランジション既定0.3秒＋配信元 games-desu・Latest）／ v1.0.0公開済み（2026-09-05 19:4x 発行し直し・初公開は 1.0.0 表記にしたいというユーザー要望で、1.0.1の内容を 1.0.0 として再ビルド→ v1.0.1 と旧 v1.0.0 のリリース/タグは削除。verify-release 両側OK・Latest）／ v0.3.16公開済み（2026-09-02・バナーのリボン判定を色非依存に＋ゲーム画面の位置指定。v0.3.15=ダブルス解析のクラッシュ修正）**
+**バージョン: v1.0.11準備中（2026-09-22・英語版画面の対応＝英語の手札を同梱辞書へ＋なし/ありの片側だけの見た目は要確認＋部門の教えるサイクル・docs/release-notes-1.0.11.md・ビルド/発行は未実施）／ v1.0.10公開済み（2026-09-21 05:4x・https://github.com/games-desu/senseki-scan/releases/tag/v1.0.10・Latest・verify-release ローカル/リモートOK・ハイライト生成のダブルスバッジの顔切れ修正＋対戦相手の表示/ファイル名・docs/release-notes-1.0.10.md）／ v1.0.9公開済み（2026-09-10・レート連鎖が画面読みを上書きしていた件＋ゲーム画面が小さい録画への案内・docs/release-notes-1.0.9.md）／ v1.0.8公開済み（2026-09-10 01:5x・https://github.com/games-desu/senseki-scan/releases/tag/v1.0.8・verify-release ローカル/リモートOK・ぴんやさん報告2件＝レート変動後が変動前のまま／ミラー戦で相手ヘイホーが青判定・docs/release-notes-1.0.8.md）／ v1.0.7公開済み（2026-09-09 00:0x・https://github.com/games-desu/senseki-scan/releases/tag/v1.0.7・verify-release ローカル/リモートOK・docs/release-notes-1.0.7.md・フィーバーダブルス対応＝4人ぶんのラケット＋勝敗パネル棄却の修正＋回線アイコンで自分の行）／ v1.0.6公開済み（2026-09-08・ダブルスがシングルス扱いになる不具合＝部門ボード優先＋名前帯での判定）／ v1.0.5公開済み（2026-09-07・VSカード窓の位置ずれ修正＝両側とも巨体キャラの試合の取り逃し）／ v1.0.4公開済み（2026-09-07・CSVコピーの手応え＋キャサリン自分側の手札）／ v1.0.1公開済み（2026-09-06 02:5x・FVゲージside帰属の根本修正＋トランジション既定0.3秒＋配信元 games-desu・Latest）／ v1.0.0公開済み（2026-09-05 19:4x 発行し直し・初公開は 1.0.0 表記にしたいというユーザー要望で、1.0.1の内容を 1.0.0 として再ビルド→ v1.0.1 と旧 v1.0.0 のリリース/タグは削除。verify-release 両側OK・Latest）／ v0.3.16公開済み（2026-09-02・バナーのリボン判定を色非依存に＋ゲーム画面の位置指定。v0.3.15=ダブルス解析のクラッシュ修正）**
+
+### v1.0.11（2026-09-22・docs/release-notes-1.0.11.md）：英語版のゲーム画面で0試合になる件（AuntStarr さん報告）
+米国の利用者 AuntStarr さん提供の英語版録画2本（`samples/user-0921-auntstarr-en.mp4` 18-08-35 Academy Court (Brick) 7-0／`user-0921-auntstarr-en2.mp4` 18-32-50 Stadium Court (Grass) 7-5・ともに 720p30・OBS・S+ 5,356）。
+**症状**: vs/winner/rating の窓はすべて検出できているのに `gateRatings` が部門ボード照合 <0.85 でレート窓を棄却 → 0試合。英語 "Singles" は日本語の手札と **0.52**（ダブルス0.522／シングルス0.518）。
+"No Fever Rackets" は なし/あり どちらとも 0.76、"Academy Court (Brick)" は アカデミー カーペット 0.57。キャラ（ボスパックン0.989・デイジー0.996）・レート数字（"5,356" カンマ込み・after conf0.887）・勝敗数字・回線は言語非依存でそのまま読めた。
+**解像度は原因ではない**（[注意] 1280px は注意喚起）。ただし 720p ではレート読みが緩和モード（weak）になり要確認が付く（値は 5356→5357 と正しい）。
+
+修正3点（vision.js 1行＋index.html 2箇所＋辞書）:
+1. **英語の手札を同梱辞書へ**（ラベルは日本語のまま・`lang:en` を付けて追記）: mode1 "Singles"→シングルス×2、mode2 "No Fever Rackets"→なし×2、courts アカデミー ブロック／スタジアム グラス。
+   収穫は `tools/headless-eval.js`（新規・本番 index.html でスニペットを走らせる姉妹ツール）＋ `samples/frames/harvest-en-text.js`、追記は `samples/frames/merge-en-text.js`。異ラベル最大一致 0.52/0.77/0.72 で日本語に影響なし
+2. **なし/あり の片側しか手札が無い見た目は要確認**: 同梱の日本語辞書で なし↔あり が ncc **0.989〜0.992** で並ぶ（文字が小さくパネルの地が支配的）＝英語は "With Fever Rackets" 未収穫のうち "No Fever Rackets" に黙って化ける。
+   勝った手札（`V.matchIcon` の戻り値に `tpl` を追加）と 0.9 以上で並ぶ反対ラベルが辞書に無ければ `flags.mode`。反対側が揃えば（同梱でも手修正の収穫でも）自動で外れる
+3. **部門（mode）の教えるサイクル**: `m._modeVecs`（mode1/mode2 の画像＋読んだラベル）を持ち、`harvestTemplates` で mode を手修正した試合の**読み違えていた側だけ**を修正後ラベルで利用者辞書へ（headless-eval で classic→fever＝あり+1／→doubles＝ダブルス+1・重複なしを確認）
+
+**検証**: 提供2本 0→1試合ずつ・内容は画面と一致（要確認: mode＝上記2・レート前後＝720p）。日本語回帰7本（15-18-15 / 21-24-23 / 14-52-01 / 22-45-12 / 23-18-25 / 00-12-13 / user-0906-1159 rect 9,67,936,527）で CSV・flags・警告ログが**完全一致**（baseline は git worktree HEAD＋旧辞書、scratchpad/regress.sh）。砂コート対策の偽レート窓棄却（user-0906-1159 の140秒）も従来どおり。
+
+**英語版で未対応**: ダブルス（"Doubles" 未収穫＝従来どおり0試合。教えるサイクルでも直せない＝同梱辞書で直すしかない）／フィーバーあり（読めるが要確認・手修正で自分の辞書が育つ）／コート14種／ラケットバナー30種／UIの英語化。
+英語のダブルス・フィーバーの録画が1本ずつあれば同梱に足せる → AuntStarr さんに依頼。**mode1 の手札はパネル色（ランク）にも依存**（同梱: シングルス×ピンク12・ダブルス×ピンク2・×グレー1。グレー↔ピンクは 0.59）＝英語も日本語も未収穫ランク色は0試合になりうる既知の制約。
+色非依存のゲート（暗インクの形だけで見る等）は砂コート素材 `2026-08-20 10-44-35.mp4` が手元に無く検証できないので据え置き。
 
 ### v1.0.10（2026-09-21・docs/release-notes-1.0.10.md）：ハイライト生成 — ダブルスのバッジで顔が切れる＋「誰との試合か」を一覧とファイル名で
 ユーザー自身のダブルス録画（`2026-09-21 04-08-15.mp4`・6試合・ごみ箱に移動済み）のダイジェスト6本で気づいた件。触ったのは `app/renderer/hl-ui.js` と index.html（CSS＋チェック1つ）だけ。戦績CSV側は不変。
@@ -667,6 +686,7 @@ return b.box.x1 >= 1400 && y1 <= bot && y1 + 80 >= top;     // 967 <= 965 が fa
 - 退避のやり方: 2GB超は Compress-Archive 不可 → C:/Windows/System32/tar.exe -a -cf Archive/NAME.zip NAME.mp4（mp4は圧縮されないので容器扱い・9本10.8GBで約3分）
 
 ### 残タスク
+- **英語版対応の続き（2026-09-22〜）**: 英語の「Doubles」「With Fever Rackets」と残りコート14種の手札を同梱辞書へ（AuntStarr さんに英語のダブルス/フィーバー録画を依頼中・届いたら `tools/headless-eval.js` ＋ `samples/frames/harvest-en-text.js` → `merge-en-text.js` にラベルを足して実行）。ラケットバナー30種・UIの英語化は後回し
 - ~~v1.0.0のビルド&発行~~ → **2026-09-05 公開済み**（https://github.com/games-desu/senseki-scan/releases/tag/v1.0.0）。教訓: package.json の改番はビルド開始前に済ませる（改番中にビルドが走り0.4.0版ができた→再ビルド）
 - **辞書収穫作戦(進行中)**: ユーザーがdocs/harvest-checklist.mdを見ながらランクマ外で録画→samples/へ→Claudeが目視収穫してチェックリスト更新・コミット(確立済み運用2026-08-30)。
   **2026-09-05 ほぼ完了**: 残りはノコノコ:黄(VS/パネル)のみ。色違い僅差のフラグは立てない方針(ユーザー判断)・背景除外は実装済み
@@ -705,6 +725,7 @@ return b.box.x1 >= 1400 && y1 <= bot && y1 + 80 >= top;     // 967 <= 965 が fa
 ### 辞書（app/assets/templates.json = samples/frames/templates.json）
 vsIcons 93 / dblIcons 54 / panelIcons 76 / panelFont 90 / ratingFont 214（新旧書体・0-9全桁）/
 courts 47 / racketBanners 77 / myname 5 / mode 28 / albumBar 2
+（2026-09-22: 英語の手札を追加＝mode1 17・mode2 16・courts 60。英語のものは `lang:'en'` 付き）
 
 ### 検証実績（GT=SENSEKI FEVER登録データとの突き合わせ）
 | 検証 | 結果 |

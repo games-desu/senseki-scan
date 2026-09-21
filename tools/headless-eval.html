@@ -1,0 +1,57 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>headless-eval</title>
+<!--
+  headless-eval.js から headless Chrome で開く駆動ページ。
+  同一オリジンの iframe に app/renderer/index.html を読み込み、動画をメイン video 要素に載せ、辞書を読んだうえで
+  /__snippet のスクリプトを (w, V, TPL, video, seekTo, log) 付きの async 関数として実行し、戻り値を /__result へ POST する。
+  query: name=<表示用ファイル名> rect=<rx,ry,rw,rh 割合> (省略=全画面)
+-->
+<script>
+const q = new URLSearchParams(location.search);
+const post = body => fetch('/__result', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const progress = (stage, extra) => fetch('/__progress', { method: 'POST', body: JSON.stringify({ stage, ...extra }) }).catch(() => {});
+window.addEventListener('error', e => progress('error', { msg: String(e.message) }));
+(async () => {
+  const settings = { autoName: true };
+  if (q.get('rect')) {
+    const [rx, ry, rw, rh] = q.get('rect').split(',').map(Number);
+    settings.gameRect = { rx, ry, rw, rh };
+  }
+  localStorage.setItem('sc_settings', JSON.stringify(settings));
+  const f = document.createElement('iframe');
+  f.style.cssText = 'width:1400px;height:900px;border:0';
+  f.src = '../app/renderer/index.html';
+  (document.body || document.documentElement).appendChild(f);
+  await new Promise(r => f.addEventListener('load', r, { once: true }));
+  const w = f.contentWindow;
+  progress('iframe loaded');
+  for (let i = 0; i < 100 && !(w.analyzeFile && w.Vision); i++) await sleep(100);
+  try {
+    const r = await fetch('/__video');
+    const blob = await r.blob();
+    progress('video fetched', { size: blob.size });
+    const video = w.eval('video');
+    video.src = URL.createObjectURL(blob);
+    await new Promise((res, rej) => {
+      video.addEventListener('loadedmetadata', res, { once: true });
+      video.addEventListener('error', () => rej(new Error('video load failed')), { once: true });
+    });
+    await w.eval('loadTemplates()');
+    await w.eval('userDataReady');
+    // 「ゲーム画面の位置」は index.html が設定読込時に V.setSourceRect する。読めていなければここで反映
+    if (settings.gameRect && !w.Vision.getSourceRect()) w.Vision.setSourceRect(settings.gameRect);
+    const V = w.Vision, TPL = w.eval('TPL');
+    const seekTo = V.makeSeeker(video);
+    const log = s => progress('log', { msg: String(s) });
+    const code = await (await fetch('/__snippet')).text();
+    const fn = new w.Function('w', 'V', 'TPL', 'video', 'seekTo', 'log', 'return (async () => {\n' + code + '\n})();');
+    const t0 = performance.now();
+    const value = await fn(w, V, TPL, video, seekTo, log);
+    await post({ ok: true, sec: +((performance.now() - t0) / 1000).toFixed(1), value });
+  } catch (e) {
+    await post({ ok: false, error: String(e && e.stack || e) });
+  }
+})();
+</script>

@@ -704,11 +704,12 @@ window.Vision = (() => {
   // 辞書のベクトルは全体のまま保存しているので再収穫は不要。
   // 実測(2026-09-05・辞書305本の総当たり): 自分自身を除いたtop1正解 248→278/298・別キャラ間の最大一致 0.873→0.849。
   // 実フレーム160アイコン: 正解 149→155・score<0.8 のフラグ 1→0。外れは全部色違い同士(構造的に区別不能)
+  // tpl: 勝った手札そのもの（index.html が「反対ラベルの手札が同じ見た目の系列に揃っているか」を見るのに使う・2026-09-22）
   function matchIcon(v, lib, len) {
     let best = null;
     for (const t of lib) {
       const s = ncc(v, t.v, len);
-      if (!best || s > best.score) best = { name: t.name, score: s };
+      if (!best || s > best.score) best = { name: t.name, score: s, tpl: t };
     }
     return best;
   }
