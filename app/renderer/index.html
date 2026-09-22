@@ -150,6 +150,7 @@
   .onb-step .n { flex:none; width:26px; height:26px; border-radius:50%; border:1px solid var(--accent-dark); color:var(--accent); font-size:13px; font-weight:bold; display:flex; align-items:center; justify-content:center; }
   .onb-step b { display:block; font-size:13px; margin-bottom:2px; }
   .onb-step p { color:var(--sub); font-size:12px; line-height:1.6; }
+  .onb-step p b { display:inline; font-size:inherit; margin:0; color:var(--text); } /* 本文中の強調は行を割らない（見出しの b とは別） */
   .onb-foot { display:flex; align-items:center; gap:12px; margin-top:16px; }
   .onb-foot .note { color:var(--sub); font-size:11px; }
   /* ゲーム画面の位置指定 */
@@ -216,7 +217,7 @@
 </style>
 </head>
 <body>
-<h1><span class="rule"></span>SENSEKI SCAN <span id="ver" class="sub"></span><button id="helpBtn" style="margin-left:auto; font-size:12px; padding:5px 12px">使い方</button><button id="bugBtn" style="margin-left:8px; font-size:12px; padding:5px 12px">バグ報告</button></h1>
+<h1><span class="rule"></span>SENSEKI SCAN <span id="ver" class="sub"></span><button id="langBtn" style="margin-left:auto; font-size:12px; padding:5px 12px" title="Language / 言語">English</button><button id="helpBtn" style="margin-left:8px; font-size:12px; padding:5px 12px">使い方</button><button id="bugBtn" style="margin-left:8px; font-size:12px; padding:5px 12px">バグ報告</button></h1>
 <p class="sub">マリオテニスフィーバーの対戦録画から戦績を読み取り、SENSEKI FEVER「CSV一括登録」に渡せるCSVを作ります。解析はすべてこのPC内で完結し、動画は送信されません。</p>
 <div class="panel main" id="scanPanel">
   <div class="secttl"><span class="secnum">1</span><b>戦績を抽出する</b><span class="sub">録画を入れるだけ。解析が終わったら内容を確認してCSVを保存します（全部門を自動識別・複数ファイルまとめてOK）</span></div>
@@ -502,6 +503,7 @@
   </div>
 </div>
 
+<script src="i18n.js"></script>
 <script src="vision.js"></script>
 <script src="rally.js"></script>
 <script src="highlight.js"></script>
@@ -594,6 +596,9 @@ async function loadUserData() {
   CHARS = { glyphs: [], ...(await window.api.loadUserData('chars-user') || {}) };
   MYSIG = { sigs: [], ...(await window.api.loadUserData('myname-user') || {}) };
   $('setAutoName').checked = !!SETTINGS.autoName;
+  // 言語: 設定にあればそれを（無ければ OS の言語＝i18n.js が起動時に決めた値のまま）
+  if (SETTINGS.lang && SETTINGS.lang !== I18N.lang) I18N.setLang(SETTINGS.lang);
+  updateLangBtn();
   applyGameRect();
 }
 const userDataReady = loadUserData().catch(() => {});
@@ -601,6 +606,15 @@ const userDataReady = loadUserData().catch(() => {});
 // ---- 初回ガイド（初回起動時のみ自動表示・「使い方」でいつでも再表示） ----
 const showOnboard = () => { $('onboard').style.display = 'flex'; };
 $('helpBtn').addEventListener('click', showOnboard);
+// ---- 言語切替（右上）。表示は言語に依存する部分を描き直す。既に出ているログはそのまま ----
+function updateLangBtn() { $('langBtn').textContent = I18N.lang === 'en' ? '日本語' : 'English'; }
+$('langBtn').addEventListener('click', () => {
+  const next = I18N.lang === 'en' ? 'ja' : 'en';
+  SETTINGS.lang = next; window.api.saveUserData('settings', SETTINGS);
+  I18N.setLang(next);
+});
+I18N.onChange(() => { updateLangBtn(); applyGameRect(); COMBO_SRC = null; render(); renderQueue(); if (LB) $('lbPlay').textContent = LB.timer ? t('停止 (Space)') : t('自動再生 (Space)'); });
+updateLangBtn();
 $('onbClose').addEventListener('click', () => {
   $('onboard').style.display = 'none';
   if (!SETTINGS.onboarded) { SETTINGS.onboarded = true; window.api.saveUserData('settings', SETTINGS); }
@@ -615,11 +629,11 @@ $('setAutoName').addEventListener('change', () => {
 // 配信録画はゲームが画面いっぱいとは限らない。フレーム内のゲーム画面を割合(0〜1)で覚えておき、
 // vision 側の切り出しを全部そこ基準にする。割合なので同じレイアウトなら解像度が違っても使い回せる。
 const RM = { video: null, url: null, sel: null, drag: null, dispW: 0, dispH: 0 };
-const fmtRect = r => `左${(r.rx * 100).toFixed(1)}% / 上${(r.ry * 100).toFixed(1)}% / 幅${(r.rw * 100).toFixed(1)}% / 高${(r.rh * 100).toFixed(1)}%`;
+const fmtRect = r => t('左{0}% / 上{1}% / 幅{2}% / 高{3}%', (r.rx * 100).toFixed(1), (r.ry * 100).toFixed(1), (r.rw * 100).toFixed(1), (r.rh * 100).toFixed(1));
 function applyGameRect() {
   V.setSourceRect(SETTINGS.gameRect || null);
   const r = V.getSourceRect();
-  $('gameRectLabel').textContent = r ? fmtRect(r) : '全画面（既定）';
+  $('gameRectLabel').textContent = r ? fmtRect(r) : t('全画面（既定）');
   $('gameRectWarn').style.display = 'none';
 }
 function rmSeek(t) {
@@ -661,9 +675,9 @@ function rmRenderSel() {
   $('rectY').value = Math.round(s.ry * v.videoHeight);
   $('rectW').value = pw; $('rectH').value = ph;
   const ar = (pw / ph).toFixed(3);
-  const warn = pw < 1280 ? `<br><span style="color:var(--warn)">ゲーム画面が横${pw}px＝1280px未満です。文字が小さくなるぶん認識精度が落ちます</span>` : '';
-  const arWarn = Math.abs(pw / ph - 16 / 9) > 0.02 ? '<br><span style="color:var(--warn)">16:9から外れています（ゲーム画面は必ず16:9です）</span>' : '';
-  $('rectInfo').innerHTML = `${fmtRect(s)}<br>実ピクセル ${pw} x ${ph}（縦横比 ${ar} / 16:9=1.778）${arWarn}${warn}`;
+  const warn = pw < 1280 ? `<br><span style="color:var(--warn)">${t('ゲーム画面が横{0}px＝1280px未満です。文字が小さくなるぶん認識精度が落ちます', pw)}</span>` : '';
+  const arWarn = Math.abs(pw / ph - 16 / 9) > 0.02 ? `<br><span style="color:var(--warn)">${t('16:9から外れています（ゲーム画面は必ず16:9です）')}</span>` : '';
+  $('rectInfo').innerHTML = t('{0}<br>実ピクセル {1} x {2}（縦横比 {3} / 16:9=1.778）', fmtRect(s), pw, ph, ar) + arWarn + warn;
 }
 function rmSetSel(s) { RM.sel = s; rmRenderSel(); }
 async function rmLoadFile(file) {
@@ -673,7 +687,7 @@ async function rmLoadFile(file) {
   RM.video.src = RM.url;
   await new Promise((res, rej) => {
     RM.video.addEventListener('loadeddata', res, { once: true });
-    RM.video.addEventListener('error', () => rej(new Error('読み込めませんでした')), { once: true });
+    RM.video.addEventListener('error', () => rej(new Error(t('読み込めませんでした'))), { once: true });
   });
   $('rectBody').style.display = 'block';
   await rmSeek(RM.video.duration * 0.3);
@@ -719,22 +733,22 @@ async function rmAutoDetect() {
   };
   const X = spanOf(col, W), Y = spanOf(row, H);
   await rmSeek(t0); rmDrawFrame();
-  if (!X || !Y) { $('rectAutoMsg').textContent = '検出できませんでした。手動で範囲を指定してください'; return; }
+  if (!X || !Y) { $('rectAutoMsg').textContent = t('検出できませんでした。手動で範囲を指定してください'); return; }
   const px = { x: X[0], y: Y[0], w: X[1] - X[0] + 1, h: Y[1] - Y[0] + 1 };
   rmSetSel({ rx: px.x / W, ry: px.y / H, rw: px.w / W, rh: px.h / H });
   const off = Math.abs(px.w / px.h - 16 / 9) / (16 / 9);
-  $('rectAutoMsg').textContent = `検出: ${px.x},${px.y} ${px.w}x${px.h}` +
-    (off > 0.01 ? '（16:9から外れています。数値欄で直してください）' : '');
+  $('rectAutoMsg').textContent = t('検出: {0},{1} {2}x{3}', px.x, px.y, px.w, px.h) +
+    (off > 0.01 ? t('（16:9から外れています。数値欄で直してください）') : '');
 }
 $('gameRectBtn').addEventListener('click', async () => {
   $('rectmodal').style.display = 'flex';
   $('rectAutoMsg').textContent = '';
   RM.sel = SETTINGS.gameRect ? { ...SETTINGS.gameRect } : { rx: 0, ry: 0, rw: 1, rh: 1 };
-  if (LAST_FILE) { try { await rmLoadFile(LAST_FILE); } catch (e) { log('位置指定: ' + e.message); } }
+  if (LAST_FILE) { try { await rmLoadFile(LAST_FILE); } catch (e) { log(t('位置指定: ') + e.message); } }
 });
 $('rectFile').addEventListener('change', async e => {
   const f = e.target.files[0];
-  if (f) { try { await rmLoadFile(f); } catch (err) { alert('この動画を読み込めませんでした'); } }
+  if (f) { try { await rmLoadFile(f); } catch (err) { alert(t('この動画を読み込めませんでした')); } }
 });
 $('rectSeek').addEventListener('input', async () => {
   if (!RM.video) return;
@@ -744,8 +758,8 @@ $('rectSeek').addEventListener('input', async () => {
 $('rectSnap').addEventListener('change', () => { if (RM.sel) rmSetSel(rmSnap169(RM.sel)); });
 $('rectAuto').addEventListener('click', async () => {
   if (!RM.video) return;
-  $('rectAutoMsg').textContent = '検出中…';
-  try { await rmAutoDetect(); } catch (e) { $('rectAutoMsg').textContent = '検出に失敗しました'; }
+  $('rectAutoMsg').textContent = t('検出中…');
+  try { await rmAutoDetect(); } catch (e) { $('rectAutoMsg').textContent = t('検出に失敗しました'); }
 });
 $('rectFull').addEventListener('click', () => rmSetSel({ rx: 0, ry: 0, rw: 1, rh: 1 }));
 const rmApplyNum = () => {
@@ -768,7 +782,7 @@ $('rectOk').addEventListener('click', () => {
   window.api.saveUserData('settings', SETTINGS);
   applyGameRect();
   $('rectmodal').style.display = 'none';
-  log('ゲーム画面の位置: ' + (V.getSourceRect() ? fmtRect(V.getSourceRect()) : '全画面') + '（次に読み込むファイルから反映されます）');
+  log(t('ゲーム画面の位置: {0}（次に読み込むファイルから反映されます）', V.getSourceRect() ? fmtRect(V.getSourceRect()) : t('全画面')));
 });
 // ドラッグで範囲選択
 $('rectCanvas').addEventListener('pointerdown', e => {
@@ -846,7 +860,7 @@ function applyMyRow(m, row) {
 // 自分の行に合わせて 自分/味方/相手1/相手2 の欄へ振り分ける。「自分の行」を選び直しても動画を読み直さずに振り直せる
 const RK_FIELDS = { me: 'myRacket', partner: 'partnerRacket', opp: 'oppRacket', opp2: 'opp2Racket' };
 // 表示するラケット欄（side, ラベル）: シングルス=自分/相手・ダブルス=自分/味方/相手1/相手2
-const rkSides = m => m.isDoubles ? [['me', '自分'], ['partner', '味方'], ['opp', '相手1'], ['opp2', '相手2']] : [['me', '自分'], ['opp', '相手']];
+const rkSides = m => m.isDoubles ? [['me', t('自分')], ['partner', t('味方')], ['opp', t('相手1')], ['opp2', t('相手2')]] : [['me', t('自分')], ['opp', t('相手')]];
 function applyRacketRows(m) {
   const rk = m._rk; if (!rk) return;
   const row = (m._dbl && m._dbl.row) || 1;
@@ -877,7 +891,7 @@ function chooseMyRow(m, row) {
     const mr = myRowFromSigs(o._dbl.sigs[0], o._dbl.sigs[1]); if (!mr) continue;
     applyMyRow(o, mr.row); o._dbl.decided = true; o.flags.myRow = false; n++;
   }
-  log(`m${m.n}: 自分の行を${row === 1 ? '上' : '下'}に設定（自分の名前として学習）${n ? `。他の${n}試合にも当てはめました` : ''}`);
+  log(t('m{0}: 自分の行を{1}に設定（自分の名前として学習）{2}', m.n, t(row === 1 ? '上' : '下'), n ? t('。他の{0}試合にも当てはめました', n) : ''));
   render();
 }
 
@@ -959,7 +973,7 @@ function harvestNames() {
   if (glyphsAdded) {
     window.api.saveUserData('chars-user', CHARS);
     const kinds = new Set(CHARS.glyphs.map(g => g.c)).size;
-    log(`文字辞書: +${glyphsAdded}枚 → 計${CHARS.glyphs.length}枚 / ${kinds}文字（次回から初対戦の相手名も読めます）`);
+    log(t('文字辞書: +{0}枚 → 計{1}枚 / {2}文字（次回から初対戦の相手名も読めます）', glyphsAdded, CHARS.glyphs.length, kinds));
   }
 }
 
@@ -995,7 +1009,7 @@ async function harvestTemplates() {
   }
   if (Object.keys(sets).length) {
     const r = await window.api.appendUserTemplates(sets);
-    if (r.ok) log('修正内容をユーザー辞書に追加: ' + Object.entries(sets).map(([k, a]) => `${k}+${a.length}`).join(' ') + ' → 次回から自動認識に使われます');
+    if (r.ok) log(t('修正内容をユーザー辞書に追加: {0} → 次回から自動認識に使われます', Object.entries(sets).map(([k, a]) => `${k}+${a.length}`).join(' ')));
     COMBO_SRC = null;
   }
 }
@@ -1023,27 +1037,27 @@ function renderStartPanel() {
   const names = [...new Set(matches.map(m => m.video))].filter(n => VIDEO_START[n]);
   const el = $('startPanel');
   if (!names.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
-  const srcLabel = { name: 'ファイル名の日時から', mtime: 'ファイルの更新日時から推定（ダウンロードした動画だと合いません）', manual: '手入力' };
+  const srcLabel = { name: t('ファイル名の日時から'), mtime: t('ファイルの更新日時から推定（ダウンロードした動画だと合いません）'), manual: t('手入力') };
   const toLocal = d => d && !isNaN(d.getTime()) ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
   el.style.display = 'block';
-  el.innerHTML = '<div class="sub" style="margin-bottom:6px">録画の開始日時（各試合の日時はここに試合開始位置を足したもの。違っていたら直して「適用」）</div>' + names.map(n => {
+  el.innerHTML = `<div class="sub" style="margin-bottom:6px">${t('録画の開始日時（各試合の日時はここに試合開始位置を足したもの。違っていたら直して「適用」）')}</div>` + names.map(n => {
     const v = VIDEO_START[n];
-    const warn = v.source === 'mtime' ? ' <span style="color:var(--warn)">要確認</span>' : '';
-    return `<div class="startrow" data-video="${esc(n)}"><b>${esc(n)}</b><input type="datetime-local" value="${toLocal(v.start)}" step="60"><button data-act="apply">適用</button><span class="sub" style="margin:0">${srcLabel[v.source] || '不明'}${warn}</span></div>`;
+    const warn = v.source === 'mtime' ? ` <span style="color:var(--warn)">${t('要確認')}</span>` : '';
+    return `<div class="startrow" data-video="${esc(n)}"><b>${esc(n)}</b><input type="datetime-local" value="${toLocal(v.start)}" step="60"><button data-act="apply">${t('適用')}</button><span class="sub" style="margin:0">${srcLabel[v.source] || t('不明')}${warn}</span></div>`;
   }).join('');
 }
 $('startPanel').addEventListener('click', e => {
   const b = e.target.closest('button[data-act=apply]'); if (!b) return;
   const row = b.closest('.startrow'), name = row.dataset.video, inp = row.querySelector('input');
   const d = inp.value ? new Date(inp.value) : null;
-  if (!d || isNaN(d.getTime())) { alert('日時を入力してください'); return; }
+  if (!d || isNaN(d.getTime())) { alert(t('日時を入力してください')); return; }
   VIDEO_START[name].start = d; VIDEO_START[name].source = 'manual';
   for (const m of matches) {
     if (m.video !== name || m._vsT0 == null) continue;
     m.playedAt = fmtDT(new Date(d.getTime() + m._vsT0 * 1000));
     m.flags.playedAt = false; (m.edited ??= {}).playedAt = true;
   }
-  log(`${name}: 録画の開始日時を ${fmtDT(d)} に変更（この動画の全試合の日時を作り直しました）`);
+  log(t('{0}: 録画の開始日時を {1} に変更（この動画の全試合の日時を作り直しました）', name, fmtDT(d)));
   render();
 });
 const fmtDT = d => {
@@ -1162,7 +1176,7 @@ async function gateRatings(video, events, log) {
   }
   if (rejectedRatings.length) {
     const head = rejectedRatings.slice(0, 8).map(t => t.toFixed(0)).join('/');
-    log(`[警告] 部門ボード照合が低いレート窓を${rejectedRatings.length}件棄却しました(${head}${rejectedRatings.length > 8 ? '…' : ''}秒)。メニュー/試合中の誤検出なら正常ですが、未対応の新パネル様式の場合は試合が消えます。直後の試合が欠けていたら録画を添えて報告してください`);
+    log(t('[警告] 部門ボード照合が低いレート窓を{0}件棄却しました({1}秒)。メニュー/試合中の誤検出なら正常ですが、未対応の新パネル様式の場合は試合が消えます。直後の試合が欠けていたら録画を添えて報告してください', rejectedRatings.length, head + (rejectedRatings.length > 8 ? '…' : '')));
   }
 }
 
@@ -1173,18 +1187,17 @@ async function analyze() {
   $('logPanel').style.display = 'block';
   $('logToggle').style.display = 'none';
   const t0 = performance.now();
-  const events = await V.scan(video, { albumTpl: TPL.albumBar || [], onProgress: (t, dur) =>
-    setProgress(`全編スキャン中… ${t.toFixed(0)}/${dur.toFixed(0)}秒`, t / dur * 0.7) });
+  const events = await V.scan(video, { albumTpl: TPL.albumBar || [], onProgress: (tt, dur) =>
+    setProgress(t('全編スキャン中… {0}/{1}秒', tt.toFixed(0), dur.toFixed(0)), tt / dur * 0.7) });
   log(`scan ${((performance.now() - t0) / 1000).toFixed(1)}s: ` + events.map(e => `${e.type}@${e.t0.toFixed(0)}-${e.t1.toFixed(0)}`).join(' '));
   // ゲームが画面いっぱいでない配信録画は、位置指定なしだと何も当たらない → 気づけるようにする
   if (!events.some(e => e.type === 'vs')) {
-    log('[警告] VS画面を1件も検出できませんでした。配信レイアウトなどでゲームが画面いっぱいに映っていない録画は、'
-      + '「ゲーム画面の位置」で範囲を指定してから読み込み直してください'
-      + (V.getSourceRect() ? '（現在の指定: ' + fmtRect(V.getSourceRect()) + '。この指定が合っているかも確認してください）' : ''));
+    log(t('[警告] VS画面を1件も検出できませんでした。配信レイアウトなどでゲームが画面いっぱいに映っていない録画は、「ゲーム画面の位置」で範囲を指定してから読み込み直してください{0}',
+      V.getSourceRect() ? t('（現在の指定: {0}。この指定が合っているかも確認してください）', fmtRect(V.getSourceRect())) : ''));
   }
   const albumWins = events.filter(e => e.type === 'album');
   if (albumWins.length) {
-    log('アルバム/ホーム画面の再生を検出し解析対象から除外: ' + albumWins.map(w => w.t0.toFixed(0) + '〜' + w.t1.toFixed(0) + '秒').join(' / '));
+    log(t('アルバム/ホーム画面の再生を検出し解析対象から除外: {0}', albumWins.map(w => t('{0}〜{1}秒', w.t0.toFixed(0), w.t1.toFixed(0))).join(' / ')));
   }
   await gateRatings(video, events, log);
   // ハイライト生成の「直近の録画で作る」が再利用するシーン結果は、偽レート検出を除去した後のものを保存する
@@ -1194,7 +1207,7 @@ async function analyze() {
   // レートパネルの色はランクで変わるため、未収穫ランクの試合は成立しない。取り逃しを可視化する
   const vsCount = events.filter(e => e.type === 'vs').length;
   if (vsCount > grouped.length) {
-    log(`[警告] VS画面${vsCount}回に対し成立した試合が${grouped.length}件です。レート画面を検出できなかった試合がある可能性があります（未対応のランク色など）。該当区間の録画を添えて報告してください。`);
+    log(t('[警告] VS画面{0}回に対し成立した試合が{1}件です。レート画面を検出できなかった試合がある可能性があります（未対応のランク色など）。該当区間の録画を添えて報告してください。', vsCount, grouped.length));
   }
   // 孤児rating検出: どの試合にも紐づかなかったレート画面は「VS画面を取り逃した試合」の確実な証拠。
   // 旧実装の「ratingCount > grouped+1」はちょうど1試合欠けたとき(8>8)に沈黙するオフバイワンがあり、
@@ -1207,11 +1220,11 @@ async function analyze() {
   const orphanRatings = ratingEvents.filter(e => !attachedRatings.has(e) &&
     !ratingEvents.some(r => r !== e && r.t1 <= e.t0 && e.t0 - r.t1 < 60));
   for (const o of orphanRatings) {
-    log(`[警告] ${o.t0.toFixed(0)}秒のレート画面がどの試合にも紐づきません。直前のVS画面を検出できず試合を1件取り逃した可能性が高いです。該当区間の録画を添えて報告してください。`);
+    log(t('[警告] {0}秒のレート画面がどの試合にも紐づきません。直前のVS画面を検出できず試合を1件取り逃した可能性が高いです。該当区間の録画を添えて報告してください。', o.t0.toFixed(0)));
   }
   const winnerCount = events.filter(e => e.type === 'winner').length;
   if (winnerCount > grouped.length + 1) {
-    log(`[警告] 勝敗画面らしきものを${winnerCount}回検出しました（試合${grouped.length}件）。編集カット等で画面が欠けた試合がある可能性があります。`);
+    log(t('[警告] 勝敗画面らしきものを{0}回検出しました（試合{1}件）。編集カット等で画面が欠けた試合がある可能性があります。', winnerCount, grouped.length));
   }
 
   // winner窓が拾えなかった試合はレート窓の直前を細かく再走査
@@ -1232,7 +1245,7 @@ async function analyze() {
   const st = parseStartTime(fileInfo.name, fileInfo.lastModified, video.duration);
   const startTime = st.date;
   VIDEO_START[fileInfo.name] = { start: st.date, source: st.source, duration: video.duration };
-  if (st.source !== 'name') log(`[警告] 録画の開始日時をファイル名から読めず、${st.source === 'mtime' ? 'ファイルの更新日時から推定しました' : '決められませんでした'}。YouTube等からダウンロードした動画は合わないので、結果の上の「録画の開始日時」で直してください（試合の日時は要確認にしています）`);
+  if (st.source !== 'name') log(t('[警告] 録画の開始日時をファイル名から読めず、{0}。YouTube等からダウンロードした動画は合わないので、結果の上の「録画の開始日時」で直してください（試合の日時は要確認にしています）', t(st.source === 'mtime' ? 'ファイルの更新日時から推定しました' : '決められませんでした')));
   const videoMatches = []; // この動画ぶん（バッチではmatchesへ追記される）
   // 勝敗パネル処理。後段の再探索パスからも呼ぶため関数化(2026-08-29)
   const processWinner = async (m, g) => {
@@ -1368,7 +1381,7 @@ async function analyze() {
 
   for (let i = 0; i < grouped.length; i++) {
     const g = grouped[i];
-    setProgress(`${fileInfo.name}: 試合 ${i + 1}/${grouped.length} を解析中…`, 0.7 + 0.3 * i / grouped.length);
+    setProgress(t('{0}: 試合 {1}/{2} を解析中…', fileInfo.name, i + 1, grouped.length), 0.7 + 0.3 * i / grouped.length);
     const m = { n: matches.length + videoMatches.length + 1, video: fileInfo.name, flags: {}, crops: {} };
 
     // --- 部門ボード（シングルス/ダブルス）を先に読む ---
@@ -1402,7 +1415,7 @@ async function analyze() {
     const dblPix = V.detectDoublesVs(video); // VS画面の見た目からの判定（vision.js・hl-ui.js と共用）
     m.isDoubles = modeSaysDoubles != null ? modeSaysDoubles : dblPix;
     if (modeSaysDoubles != null && modeSaysDoubles !== dblPix) {
-      log(`m${m.n}: VS画面は${dblPix ? 'ダブルス' : 'シングルス'}に見えますが部門ボードは${modeSaysDoubles ? 'ダブルス' : 'シングルス'}です。ボードを優先します`);
+      log(t('m{0}: VS画面は{1}に見えますが部門ボードは{2}です。ボードを優先します', m.n, t(dblPix ? 'ダブルス' : 'シングルス'), t(modeSaysDoubles ? 'ダブルス' : 'シングルス')));
     }
     if (!m.isDoubles) {
       const myVec = V.iconVec(V.cropRegion(video, R.myicon), 16, 16);
@@ -1463,7 +1476,7 @@ async function analyze() {
       applyMyRow(m, m._dbl.row);
       if (!mr) {
         m.flags.myRow = true; m.flags.myChar = true; m.flags.partnerChar = true;
-        log(`m${m.n}: ダブルスの自分の行を判定できません（自分の名前が未学習）。カードの「自分の行」で上か下かを選んでください（選ぶと学習して他の試合にも当てはめます）`);
+        log(t('m{0}: ダブルスの自分の行を判定できません（自分の名前が未学習）。カードの「自分の行」で上か下かを選んでください（選ぶと学習して他の試合にも当てはめます）', m.n));
       }
     }
     m.playedAt = startTime ? fmtDT(new Date(startTime.getTime() + g.vs.t0 * 1000)) : '';
@@ -1517,7 +1530,7 @@ async function analyze() {
       m.ratingBefore = m.ratingAfter; m.ratingAfter = null;
       m.flags.ratingAfter = true;
       m._ratingRead = { before: m.ratingBefore, after: null, lone: true };
-      log(`m${m.n}: レートパネルはカウント前(${m.ratingBefore})しか読めていません。変動前として扱い、変動後は要確認にします`);
+      log(t('m{0}: レートパネルはカウント前({1})しか読めていません。変動前として扱い、変動後は要確認にします', m.n, m.ratingBefore));
     }
     if (prevChain != null && m.playedAt && prevChain.playedAt &&
         (new Date(m.playedAt) - new Date(prevChain.playedAt)) < 60 * 60000) {
@@ -1573,7 +1586,7 @@ async function analyze() {
     // 4本のゲージで「誰の発動か」まで個人に帰属する（実戦 22-45-12 m1: 8バナー全件が発動者のゲージに一致）。
     // 帰属キーは L1/L2/R1/R2。自分/味方の割り当ては自分の行に依存するので applyRacketRows で行う
     if (m.mode === 'fever_singles' || m.mode === 'fever_doubles') {
-      setProgress(`試合 ${i + 1}: フィーバーラケットを解析中…`, null);
+      setProgress(t('試合 {0}: フィーバーラケットを解析中…', i + 1), null);
       const dbl = m.mode === 'fever_doubles';
       const bOpt = dbl ? { gauges: { L1: R.fvL, L2: R.fvL2, R1: R.fvR, R2: R.fvR2 },
                            borders: [R.fvBorderL, R.fvBorderR, R.fvBorderL2, R.fvBorderR2] } : {};
@@ -1677,7 +1690,7 @@ async function analyze() {
         m._rkPrev = prevMy();
         m._rkUnsure = unsure(Object.values(m._rk));
         applyRacketRows(m);
-        log(`m${m.n}: ラケット 自分=${m.myRacket ?? '?'} 味方=${m.partnerRacket ?? '?'} 相手1=${m.oppRacket ?? '?'} 相手2=${m.opp2Racket ?? '?'} (バナー${m.racketEvents.length}件・自分の行=${m._dbl && m._dbl.row === 2 ? '下' : '上'})`);
+        log(t('m{0}: ラケット 自分={1} 味方={2} 相手1={3} 相手2={4} (バナー{5}件・自分の行={6})', m.n, I18N.disp('racket', m.myRacket ?? '?'), I18N.disp('racket', m.partnerRacket ?? '?'), I18N.disp('racket', m.oppRacket ?? '?'), I18N.disp('racket', m.opp2Racket ?? '?'), m.racketEvents.length, t(m._dbl && m._dbl.row === 2 ? '下' : '上')));
       } else {
         m.myRacket = decide(names.me);
         m.oppRacket = decide(names.opp);
@@ -1685,7 +1698,7 @@ async function analyze() {
         if (!m.oppRacket || m.oppRacket === 'ハテナラケット') m.flags.oppRacket = true;
         if (!m.myRacket) { const p = prevMy(); if (p) { m.myRacket = p; (m.auto ??= {}).myRacket = true; } }
         if (unsure([m.myRacket, m.oppRacket])) { m.flags.myRacket = true; m.flags.oppRacket = true; }
-        log(`m${m.n}: ラケット 自分=${m.myRacket ?? '?'} 相手=${m.oppRacket ?? '?'} (バナー${m.racketEvents.length}件)`);
+        log(t('m{0}: ラケット 自分={1} 相手={2} (バナー{3}件)', m.n, I18N.disp('racket', m.myRacket ?? '?'), I18N.disp('racket', m.oppRacket ?? '?'), m.racketEvents.length));
       }
     }
 
@@ -1693,7 +1706,7 @@ async function analyze() {
     // リアルタイムに変動するため平均を取る。HUD非表示の瞬間(ok=false)はサンプルから除外。
     // 任意項目なので読めなくてもフラグは立てない（空欄のまま）
     {
-      setProgress(`試合 ${i + 1}: 回線を確認中…`, null);
+      setProgress(t('試合 {0}: 回線を確認中…', i + 1), null);
       const ct0 = g.vs.t1 + 8, ct1 = ((g.winner && g.winner.t0) || g.rating.t0) - 5;
       const vals = [];
       // 2.5秒に1回サンプリング(ユーザー要望2026-08-29: 7点では少なく正しく判定できない)。
@@ -1704,7 +1717,7 @@ async function analyze() {
       const dblConn = m.mode === 'fever_doubles';
       const rowHits = [0, 0];
       for (let sIdx = 0; sIdx < nS; sIdx++) {
-        if (sIdx % 10 === 0) setProgress(`試合 ${i + 1}: 回線を確認中… ${sIdx}/${nS}`, null);
+        if (sIdx % 10 === 0) setProgress(t('試合 {0}: 回線を確認中… {1}/{2}', i + 1, sIdx, nS), null);
         await seekTo(ct0 + (ct1 - ct0) * (sIdx + 0.5) / nS);
         const cr = dblConn ? V.readConnectionDoubles(video) : V.readConnection(video, m.mode);
         if (cr.ok) {
@@ -1729,7 +1742,7 @@ async function analyze() {
         if (row) {
           applyMyRow(m, row); m._dbl.decided = true; m._dbl.byConn = true; m.flags.myRow = false; (m.auto ??= {}).myRow = true;
           learnMySig(m._dbl.sigs[row - 1]);
-          log(`m${m.n}: 回線アイコンの位置(HUDの${row === 1 ? '上' : '下'}の行)から自分の行を${row === 1 ? '上' : '下'}と判定し、自分の名前として学習しました`);
+          log(t('m{0}: 回線アイコンの位置(HUDの{1}の行)から自分の行を{1}と判定し、自分の名前として学習しました', m.n, t(row === 1 ? '上' : '下')));
         }
       }
       if (m.connCrops) m.connCrops.sort((a, b) => a.level - b.level);
@@ -1748,7 +1761,7 @@ async function analyze() {
     resolveWinnerByRating(m);
 
     videoMatches.push(m);
-    log(`m${m.n}: ${m.playedAt} ${m.mode} ${m.myChar} vs ${m.oppChar} ${m.myScore}-${m.oppScore} ${m.result} R${m.ratingBefore}→${m.ratingAfter} @${m.court}`);
+    log(`m${m.n}: ${m.playedAt} ${m.mode} ${I18N.disp('char', m.myChar)} vs ${I18N.disp('char', m.oppChar)} ${m.myScore}-${m.oppScore} ${m.result} R${m.ratingBefore}→${m.ratingAfter} @${I18N.disp('court', m.court)}`);
   }
   // 勝敗画面の後段再探索: 高ビットレート動画では抽出中の持続的なデコーダ負荷でステイルフレームが
   // 続き、実在する勝敗画面を取り逃すことがある(2026-08-29・48Mbps FHDで3試合同時に発生。
@@ -1756,11 +1769,11 @@ async function analyze() {
   for (let i = 0; i < grouped.length && i < videoMatches.length; i++) {
     const m = videoMatches[i];
     if (!m || m.crops.winnerPanel || m.myScore != null || m.result) continue;
-    setProgress(`勝敗画面を再探索中… (試合 ${m.n})`, null);
+    setProgress(t('勝敗画面を再探索中… (試合 {0})', m.n), null);
     await processWinner(m, grouped[i]);
     resolveWinnerByRating(m);
-    if (m.myScore != null || m.result) log(`m${m.n}: 再探索で勝敗を取得 ${m.myScore ?? '?'}-${m.oppScore ?? '?'} ${m.result || ''}`);
-    else log(`m${m.n}: 再探索でも勝敗画面が見つかりませんでした`);
+    if (m.myScore != null || m.result) log(t('m{0}: 再探索で勝敗を取得 {1}-{2} {3}', m.n, m.myScore ?? '?', m.oppScore ?? '?', m.result || ''));
+    else log(t('m{0}: 再探索でも勝敗画面が見つかりませんでした', m.n));
   }
   // レート連鎖検証: 同一動画内の「同一部門」では前試合のafter = 次試合のbefore。
   // fever/クラシックのシングルス/ダブルスは別レートなので部門をまたいで連鎖してはいけない
@@ -1780,7 +1793,7 @@ async function analyze() {
         (!prev.result || (prev.result === 'win') === (readBefore > prev.ratingBefore))) {
       prev.ratingAfter = readBefore; (prev.auto ??= {}).ratingAfter = true;
       prev.ratingSuspect = false;
-      log(`m${prev.n}: レート後を次試合のbefore(${readBefore})で補完`);
+      log(t('m{0}: レート後を次試合のbefore({1})で補完', prev.n, readBefore));
     }
     if (prev.ratingAfter == null) continue;
     // 画面がしっかり読めているのに連鎖と食い違うときは、**画面を優先する**。
@@ -1795,12 +1808,11 @@ async function analyze() {
     } else if (screenSolid && cur.ratingBefore === rr.before) {
       cur.flags.ratingBefore = true;   // 画面を残したまま「どちらか確かめて」と出す
       prev.flags.ratingAfter = true;
-      log(`m${cur.n}: 画面のレート前(${rr.before})と前試合のafter(${prev.ratingAfter})が違います。` +
-          `画面の値を残しました（連続した試合でないか、どちらかの読み違いです）`);
+      log(t('m{0}: 画面のレート前({1})と前試合のafter({2})が違います。画面の値を残しました（連続した試合でないか、どちらかの読み違いです）', cur.n, rr.before, prev.ratingAfter));
     } else if (cur.ratingBefore == null || cur.flags.ratingBefore) {
       cur.ratingBefore = prev.ratingAfter;
       if (!prev.flags.ratingAfter) delete cur.flags.ratingBefore;
-      log(`m${cur.n}: レート前を前試合のafter(${prev.ratingAfter})で補完`);
+      log(t('m{0}: レート前を前試合のafter({1})で補完', cur.n, prev.ratingAfter));
     } else {
       cur.flags.ratingBefore = true;
       prev.flags.ratingAfter = true;
@@ -1863,17 +1875,19 @@ function snapshotOrig(m) {
 function field(m, key, label, value, opts = {}) {
   const cls = (m.edited && m.edited[key] ? ' edited' : (m.flags[key] ? ' flag' : '')) + (opts.cls ? ' ' + opts.cls : '');
   const id = `f_${m.n}_${key}`;
-  const auto = m.auto && m.auto[key] ? '<span class="autofix">[自動補正]</span>'
-    : m.autoName && m.autoName[key] ? '<span class="autofix">[自動入力]</span>' : '';
+  const auto = m.auto && m.auto[key] ? `<span class="autofix">${t('[自動補正]')}</span>`
+    : m.autoName && m.autoName[key] ? `<span class="autofix">${t('[自動入力]')}</span>` : '';
   const cropList = opts.crops ? opts.crops.filter(Boolean) : (opts.crop ? [opts.crop] : []);
   const imgS = cropList.map(c => `<img class="${opts.crops ? 'fieldcrop' : 'namecrop'}" src="${c}" data-zoom>`).join('');
   if (opts.select) {
-    const options = opts.select.map(o => `<option value="${o}" ${String(o) === String(value) ? 'selected' : ''}>${o}</option>`).join('');
+    const options = opts.select.map(o => `<option value="${o}" ${String(o) === String(value) ? 'selected' : ''}>${I18N.disp(key === 'mode' ? 'mode' : 'raw', o)}</option>`).join('');
     return `<div class="field${cls}"><label>${label}${auto}</label>${imgS}<select id="${id}" data-n="${m.n}" data-key="${key}">${options}</select></div>`;
   }
   const img = imgS + (opts.extra || '');
   const combo = opts.combo ? ` data-combo="${opts.combo}" autocomplete="off" spellcheck="false"` : '';
-  return `<div class="field${cls}"><label>${label}${auto}</label>${img}<input id="${id}" data-n="${m.n}" data-key="${key}" value="${value ?? ''}" placeholder="${opts.ph ?? ''}"${combo}></div>`;
+  // キャラ/コート/ラケットは画面では英語表記（CSV の値＝m[key] は日本語の正準値のまま。onFieldInput で戻す）
+  const shown = opts.combo && opts.combo !== 'name' ? I18N.disp(opts.combo, value) : value;
+  return `<div class="field${cls}"><label>${label}${auto}</label>${img}<input id="${id}" data-n="${m.n}" data-key="${key}" value="${shown ?? ''}" placeholder="${opts.ph ?? ''}"${combo}></div>`;
 }
 
 // 入力された名前を、名前画像が一致する（nameSigScore>=0.90）他試合の未入力/自動入力欄へ転記する。
@@ -1898,7 +1912,7 @@ function propagateName(src, key) {
       if (inp) {
         inp.value = name;
         const lb = inp.closest('.field').querySelector('label');
-        if (lb && !lb.querySelector('.autofix')) lb.insertAdjacentHTML('beforeend', '<span class="autofix">[自動入力]</span>');
+        if (lb && !lb.querySelector('.autofix')) lb.insertAdjacentHTML('beforeend', `<span class="autofix">${t('[自動入力]')}</span>`);
       }
     }
   }
@@ -1922,7 +1936,7 @@ function seqPlayers(m, arr) {
   return arr.filter(c => c.seq).map(c => {
     const key = m.n + ':' + c.evIdx;
     SEQ_REG[key] = c.seq;
-    return `<img class="seqplay" data-zoom data-seq="${key}" src="${c.seq[0]}" title="発動前後の様子(自動再生・クリックで拡大)">`;
+    return `<img class="seqplay" data-zoom data-seq="${key}" src="${c.seq[0]}" title="${t('発動前後の様子(自動再生・クリックで拡大)')}">`;
   }).join('');
 }
 // ---- 拡大表示: 同じグループの画像を矢印で行き来できる ----
@@ -1936,7 +1950,7 @@ function openLightbox(items, idx, opts = {}) {
   const multi = items.length > 1;
   $('lbPrev').style.display = $('lbNext').style.display = multi ? 'flex' : 'none';
   $('lbPlay').style.display = (opts.seq && multi) ? 'inline-block' : 'none';
-  $('lbPlay').textContent = '自動再生 (Space)';
+  $('lbPlay').textContent = t('自動再生 (Space)');
   $('lightbox').style.display = 'flex';
   lbShow();
 }
@@ -1956,7 +1970,7 @@ function lbPlay(on) {
   if (!LB) return;
   if (LB.timer) { clearInterval(LB.timer); LB.timer = null; }
   if (on) LB.timer = setInterval(() => lbStep(1), 400);
-  $('lbPlay').textContent = LB.timer ? '停止 (Space)' : '自動再生 (Space)';
+  $('lbPlay').textContent = LB.timer ? t('停止 (Space)') : t('自動再生 (Space)');
 }
 function closeLightbox() {
   if (LB && LB.timer) clearInterval(LB.timer);
@@ -1968,7 +1982,7 @@ function imgLabel(el) {
   const fc = el.closest('figure') && el.closest('figure').querySelector('figcaption');
   if (fc) return fc.textContent.trim();
   const lb = el.closest('.field') && el.closest('.field').querySelector('label');
-  return lb ? lb.textContent.replace('[自動補正]', '').replace('[自動入力]', '').trim() : '';
+  return lb ? lb.textContent.replace(t('[自動補正]'), '').replace(t('[自動入力]'), '').trim() : '';
 }
 
 setInterval(() => {
@@ -2017,38 +2031,38 @@ function racketCrops(m, side) {
 // ダブルス: 左列のどちらが自分かを選ぶ（名前画像＋キャラで見比べる）。判定できていなければ赤枠
 function myRowHtml(m) {
   const d = m._dbl; if (!m.isDoubles || !d) return '';
-  const btn = r => `<button class="rowbtn${d.row === r ? ' on' : ''}" data-myrow="${r}" data-n="${m.n}"><span>${r === 1 ? '上の行が自分' : '下の行が自分'}</span><img src="${d.names[r - 1].crop}"></button>`;
-  return `<div class="field myrow${m.flags.myRow ? ' flag' : ''}"><label>自分の行（左列のどちらが自分か）${d.decided ? '' : '<span class="autofix">[未判定]</span>'}</label><div class="rowbtns">${btn(1)}${btn(2)}</div></div>`;
+  const btn = r => `<button class="rowbtn${d.row === r ? ' on' : ''}" data-myrow="${r}" data-n="${m.n}"><span>${t(r === 1 ? '上の行が自分' : '下の行が自分')}</span><img src="${d.names[r - 1].crop}"></button>`;
+  return `<div class="field myrow${m.flags.myRow ? ' flag' : ''}"><label>${t('自分の行（左列のどちらが自分か）')}${d.decided ? '' : `<span class="autofix">${t('[未判定]')}</span>`}</label><div class="rowbtns">${btn(1)}${btn(2)}</div></div>`;
 }
 
 function matchCard(m) {
   return `
       <div class="stage">
-        ${evi('対戦カード（コート/キャラ/名前）', m.crops.vsFrame)}${(m.connCrops || []).map(c => evi('回線 ' + c.level, c.img, 'small')).join('')}
-        ${evi('最終スコア', m.crops.winnerPanel, 'small')}
-        ${evi('レート変動前', m.crops.ratingBefore)}
-        ${evi('レート変動後', m.crops.ratingAfter)}
-        ${rkSides(m).map(([side, lab]) => racketCrops(m, side).map((c, i) => evi(c.unknown ? '発動バナー(帰属不明)' : 'ラケット発動 (' + lab + (i ? '・種類' + (i + 1) : '') + ')', c.crop)).join('')).join('')}
+        ${evi(t('対戦カード（コート/キャラ/名前）'), m.crops.vsFrame)}${(m.connCrops || []).map(c => evi(t('回線 {0}', c.level), c.img, 'small')).join('')}
+        ${evi(t('最終スコア'), m.crops.winnerPanel, 'small')}
+        ${evi(t('レート変動前'), m.crops.ratingBefore)}
+        ${evi(t('レート変動後'), m.crops.ratingAfter)}
+        ${rkSides(m).map(([side, lab]) => racketCrops(m, side).map((c, i) => evi(c.unknown ? t('発動バナー(帰属不明)') : t('ラケット発動 ({0})', lab + (i ? t('・種類{0}', i + 1) : '')), c.crop)).join('')).join('')}
       </div>
       <div class="grid">
         ${myRowHtml(m)}
-        ${field(m, 'playedAt', '日時 (played_at)', m.playedAt)}
+        ${field(m, 'playedAt', t('日時 (played_at)'), m.playedAt)}
         ${field(m, 'mode', 'mode', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'] })}
-        ${field(m, 'myChar', '自分キャラ', m.myChar, { combo: 'char' })}
-        ${m.isDoubles ? field(m, 'partnerChar', '味方キャラ', m.partnerChar, { combo: 'char' }) : ''}
-        ${m.isDoubles ? field(m, 'partnerName', '味方の名前（画像を見て入力）', m.partnerName ?? '', { crop: m.crops.partnername, ph: '任意', combo: 'name' }) : ''}
-        ${field(m, 'oppChar', '相手1キャラ', m.oppChar, { combo: 'char' })}
-        ${field(m, 'oppName', '相手1の名前（画像を見て入力）', m.oppName ?? '', { crop: m.crops.oppname, ph: '任意', combo: 'name' })}
-        ${m.isDoubles ? field(m, 'opp2Char', '相手2キャラ', m.opp2Char, { combo: 'char' }) : ''}
-        ${m.isDoubles ? field(m, 'opp2Name', '相手2の名前（画像を見て入力）', m.opp2Name ?? '', { crop: m.crops.opp2name, ph: '任意', combo: 'name' }) : ''}
-        ${m.mode && m.mode.startsWith('fever') ? rkSides(m).map(([side, lab]) => field(m, RK_FIELDS[side], lab + 'ラケット', m[RK_FIELDS[side]] ?? '', { crop: racketCrop(m, side), ph: side === 'me' ? '例: トゲゾーラケット' : '任意', combo: 'racket' })).join('') : ''}
-        ${field(m, 'court', 'コート', m.court, { combo: 'court' })}
-        ${field(m, 'myScore', '自分スコア', m.myScore)}
-        ${field(m, 'oppScore', '相手スコア', m.oppScore)}
+        ${field(m, 'myChar', t('自分キャラ'), m.myChar, { combo: 'char' })}
+        ${m.isDoubles ? field(m, 'partnerChar', t('味方キャラ'), m.partnerChar, { combo: 'char' }) : ''}
+        ${m.isDoubles ? field(m, 'partnerName', t('味方の名前（画像を見て入力）'), m.partnerName ?? '', { crop: m.crops.partnername, ph: t('任意'), combo: 'name' }) : ''}
+        ${field(m, 'oppChar', t('相手1キャラ'), m.oppChar, { combo: 'char' })}
+        ${field(m, 'oppName', t('相手1の名前（画像を見て入力）'), m.oppName ?? '', { crop: m.crops.oppname, ph: t('任意'), combo: 'name' })}
+        ${m.isDoubles ? field(m, 'opp2Char', t('相手2キャラ'), m.opp2Char, { combo: 'char' }) : ''}
+        ${m.isDoubles ? field(m, 'opp2Name', t('相手2の名前（画像を見て入力）'), m.opp2Name ?? '', { crop: m.crops.opp2name, ph: t('任意'), combo: 'name' }) : ''}
+        ${m.mode && m.mode.startsWith('fever') ? rkSides(m).map(([side, lab]) => field(m, RK_FIELDS[side], t('{0}ラケット', lab), m[RK_FIELDS[side]] ?? '', { crop: racketCrop(m, side), ph: side === 'me' ? t('例: トゲゾーラケット') : t('任意'), combo: 'racket' })).join('') : ''}
+        ${field(m, 'court', t('コート'), m.court, { combo: 'court' })}
+        ${field(m, 'myScore', t('自分スコア'), m.myScore)}
+        ${field(m, 'oppScore', t('相手スコア'), m.oppScore)}
         ${field(m, 'result', 'result', m.result, { select: ['win', 'loss'] })}
-        ${field(m, 'ratingBefore', 'レート前', m.ratingBefore)}
-        ${field(m, 'ratingAfter', 'レート後', m.ratingAfter)}
-        ${field(m, 'connection', '回線 (0〜4)', m.connection ?? '')}
+        ${field(m, 'ratingBefore', t('レート前'), m.ratingBefore)}
+        ${field(m, 'ratingAfter', t('レート後'), m.ratingAfter)}
+        ${field(m, 'connection', t('回線 (0〜4)'), m.connection ?? '')}
       </div>`;
 }
 
@@ -2061,40 +2075,40 @@ const FIELD_LABELS = { playedAt: '日時', mode: 'mode', myRow: '自分の行', 
 // 行構成: [日時|mode|コート|回線|全景] [キャラ] [名前] [ラケット] [スコア自分/相手/result] [レート前後]
 function matchCardPaired(m) {
   const isFever = m.mode && m.mode.startsWith('fever');
-  const rkLabel = (base, arr) => arr.some(c => c.unknown) ? base + '（画像は帰属不明バナー）' : base;
+  const rkLabel = (base, arr) => arr.some(c => c.unknown) ? t('{0}（画像は帰属不明バナー）', base) : base;
   const rkFields = rkSides(m).map(([side, lab]) => {
     const arr = racketCrops(m, side);
-    return field(m, RK_FIELDS[side], rkLabel(lab + 'ラケット', arr), m[RK_FIELDS[side]] ?? '',
-      { combo: 'racket', ph: side === 'me' ? '例: トゲゾーラケット' : '任意', crops: arr.map(c => c.crop), extra: seqPlayers(m, arr) });
+    return field(m, RK_FIELDS[side], rkLabel(t('{0}ラケット', lab), arr), m[RK_FIELDS[side]] ?? '',
+      { combo: 'racket', ph: side === 'me' ? t('例: トゲゾーラケット') : t('任意'), crops: arr.map(c => c.crop), extra: seqPlayers(m, arr) });
   }).join('');
   return `
     <div class="fgrid">
-      ${field(m, 'playedAt', '日時 (played_at)', m.playedAt, { crops: [m.crops.vsFrame] })}
-      ${field(m, 'mode', '部門 (mode)', m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'], crops: [m.crops.mode1, m.crops.mode2] })}
-      ${field(m, 'court', 'コート', m.court, { combo: 'court', crops: [m.crops.court] })}
-      ${field(m, 'connection', '回線 (0〜4)', m.connection ?? '', { crops: (m.connCrops || []).map(c => c.img), cls: 'conninline' })}
+      ${field(m, 'playedAt', t('日時 (played_at)'), m.playedAt, { crops: [m.crops.vsFrame] })}
+      ${field(m, 'mode', t('部門 (mode)'), m.mode, { select: ['classic_singles', 'classic_doubles', 'fever_singles', 'fever_doubles'], crops: [m.crops.mode1, m.crops.mode2] })}
+      ${field(m, 'court', t('コート'), m.court, { combo: 'court', crops: [m.crops.court] })}
+      ${field(m, 'connection', t('回線 (0〜4)'), m.connection ?? '', { crops: (m.connCrops || []).map(c => c.img), cls: 'conninline' })}
     </div>
     ${m.isDoubles ? '<div class="fgrid">' + myRowHtml(m) + '</div>' : ''}
     <div class="fgrid">
-      ${field(m, 'myChar', '自分キャラ', m.myChar, { combo: 'char', crops: [m.crops.myiconZ] })}
-      ${m.isDoubles ? field(m, 'partnerChar', '味方キャラ', m.partnerChar, { combo: 'char', crops: [m.crops.pticonZ] }) : ''}
-      ${field(m, 'oppChar', '相手1キャラ', m.oppChar, { combo: 'char', crops: [m.crops.oppiconZ] })}
-      ${m.isDoubles ? field(m, 'opp2Char', '相手2キャラ', m.opp2Char, { combo: 'char', crops: [m.crops.opp2iconZ] }) : ''}
+      ${field(m, 'myChar', t('自分キャラ'), m.myChar, { combo: 'char', crops: [m.crops.myiconZ] })}
+      ${m.isDoubles ? field(m, 'partnerChar', t('味方キャラ'), m.partnerChar, { combo: 'char', crops: [m.crops.pticonZ] }) : ''}
+      ${field(m, 'oppChar', t('相手1キャラ'), m.oppChar, { combo: 'char', crops: [m.crops.oppiconZ] })}
+      ${m.isDoubles ? field(m, 'opp2Char', t('相手2キャラ'), m.opp2Char, { combo: 'char', crops: [m.crops.opp2iconZ] }) : ''}
     </div>
     <div class="fgrid">
-      ${m.isDoubles ? field(m, 'partnerName', '味方の名前（任意）', m.partnerName ?? '', { crop: m.crops.partnername, ph: '任意', combo: 'name' }) : ''}
-      ${field(m, 'oppName', '相手1の名前（任意）', m.oppName ?? '', { crop: m.crops.oppname, ph: '任意', combo: 'name' })}
-      ${m.isDoubles ? field(m, 'opp2Name', '相手2の名前（任意）', m.opp2Name ?? '', { crop: m.crops.opp2name, ph: '任意', combo: 'name' }) : ''}
+      ${m.isDoubles ? field(m, 'partnerName', t('味方の名前（任意）'), m.partnerName ?? '', { crop: m.crops.partnername, ph: t('任意'), combo: 'name' }) : ''}
+      ${field(m, 'oppName', t('相手1の名前（任意）'), m.oppName ?? '', { crop: m.crops.oppname, ph: t('任意'), combo: 'name' })}
+      ${m.isDoubles ? field(m, 'opp2Name', t('相手2の名前（任意）'), m.opp2Name ?? '', { crop: m.crops.opp2name, ph: t('任意'), combo: 'name' }) : ''}
     </div>
     ${isFever ? `<div class="fgrid">${rkFields}</div>` : ''}
     <div class="fgrid">
-      ${field(m, 'myScore', '自分スコア', m.myScore, { crops: [m.crops.scoreMine || m.crops.winnerPanel] })}
-      ${field(m, 'oppScore', '相手スコア', m.oppScore, { crops: [m.crops.scoreOpp] })}
+      ${field(m, 'myScore', t('自分スコア'), m.myScore, { crops: [m.crops.scoreMine || m.crops.winnerPanel] })}
+      ${field(m, 'oppScore', t('相手スコア'), m.oppScore, { crops: [m.crops.scoreOpp] })}
       ${field(m, 'result', 'result', m.result, { select: ['win', 'loss'] })}
     </div>
     <div class="fgrid">
-      ${field(m, 'ratingBefore', 'レート前', m.ratingBefore, { crops: [m.crops.ratingBefore] })}
-      ${field(m, 'ratingAfter', 'レート後', m.ratingAfter, { crops: [m.crops.ratingAfter] })}
+      ${field(m, 'ratingBefore', t('レート前'), m.ratingBefore, { crops: [m.crops.ratingBefore] })}
+      ${field(m, 'ratingAfter', t('レート後'), m.ratingAfter, { crops: [m.crops.ratingAfter] })}
     </div>`;
 }
 
@@ -2115,7 +2129,7 @@ function renderList() {
   $('review').innerHTML = '';
   $('results').innerHTML = matches.map(m => `
     <div class="match">
-      <h3>試合 ${m.n} <span style="color:var(--sub);font-weight:normal">｜ ${m.video ?? ''} ｜ 赤枠＝要確認・青枠＝手修正済み・画像クリックで拡大</span></h3>
+      <h3>${t('試合 {0}', m.n)} <span style="color:var(--sub);font-weight:normal">${t('｜ {0} ｜ 赤枠＝要確認・青枠＝手修正済み・画像クリックで拡大', m.video ?? '')}</span></h3>
       ${matchCard(m)}
     </div>`).join('');
   bindMatchEvents($('results'));
@@ -2132,23 +2146,23 @@ function renderReview() {
   const dots = matches.map((mm, i) => {
     const warn = Object.keys(mm.flags).some(k => mm.flags[k]);
     const cls = i === reviewIdx ? 'cur' : warn ? 'warn' : i < reviewIdx ? 'done' : '';
-    return `<i class="${cls}" data-jump="${i}" title="試合 ${i + 1}"></i>`;
+    return `<i class="${cls}" data-jump="${i}" title="${t('試合 {0}', i + 1)}"></i>`;
   }).join('');
   $('review').innerHTML = `
     <div class="match single">
       <div class="revnav">
-        <button id="revPrev" ${reviewIdx === 0 ? 'disabled' : ''}>← 前へ (←)</button>
-        <span class="pos">試合 ${reviewIdx + 1} / ${matches.length}</span>
-        <button id="revNext" class="primary" ${last ? 'disabled' : ''}>${last ? '最後の試合です' : '確認OK・次へ (Enter / →)'}</button>
+        <button id="revPrev" ${reviewIdx === 0 ? 'disabled' : ''}>${t('← 前へ (←)')}</button>
+        <span class="pos">${t('試合 {0} / {1}', reviewIdx + 1, matches.length)}</span>
+        <button id="revNext" class="primary" ${last ? 'disabled' : ''}>${t(last ? '最後の試合です' : '確認OK・次へ (Enter / →)')}</button>
         <div class="dots">${dots}</div>
         <span class="sub" style="margin-left:auto;margin-bottom:0">${m.video ?? ''}</span>
       </div>
       <div class="chips">
         ${flagKeys.length
-          ? `<span class="chip warn">要確認 ${flagKeys.length}件: ${flagKeys.map(k => FIELD_LABELS[k] || k).join(' ／ ')}</span>`
-          : '<span class="chip ok">要確認なし</span>'}
-        ${editKeys.length ? `<span class="chip ok">手修正 ${editKeys.length}件</span>` : ''}
-        <span class="chip">赤枠=要確認 ／ 青枠=手修正 ／ 画像クリックで拡大</span>
+          ? `<span class="chip warn">${t('要確認 {0}件: {1}', flagKeys.length, flagKeys.map(k => t(FIELD_LABELS[k] || k)).join(t(' ／ ')))}</span>`
+          : `<span class="chip ok">${t('要確認なし')}</span>`}
+        ${editKeys.length ? `<span class="chip ok">${t('手修正 {0}件', editKeys.length)}</span>` : ''}
+        <span class="chip">${t('赤枠=要確認 ／ 青枠=手修正 ／ 画像クリックで拡大')}</span>
       </div>
       ${matchCardPaired(m)}
     </div>`;
@@ -2162,8 +2176,8 @@ function bindMatchEvents(root) {
   root.querySelectorAll('img[data-zoom]').forEach(img => img.addEventListener('click', () => {
     const seq = img.dataset.seq ? SEQ_REG[img.dataset.seq] : null;
     if (seq) { // パラパラ再生: 今映っているコマから開始して前後へ送れる
-      const dt = i => (SEQ_DT[i] == null ? '' : ' (発動' + (SEQ_DT[i] > 0 ? '+' : '') + SEQ_DT[i] + '秒)');
-      openLightbox(seq.map((src, i) => ({ src, label: '発動前後のコマ' + dt(i) })), img._i ?? 0, { seq: true });
+      const dt = i => (SEQ_DT[i] == null ? '' : t(' (発動{0}秒)', (SEQ_DT[i] > 0 ? '+' : '') + SEQ_DT[i]));
+      openLightbox(seq.map((src, i) => ({ src, label: t('発動前後のコマ') + dt(i) })), img._i ?? 0, { seq: true });
       return;
     }
     // 静止画: 同じ試合カード内の根拠画像をまとめて見比べられるようにする
@@ -2181,7 +2195,7 @@ function onFieldInput(el) {
   const m = matches.find(x => x.n === +el.dataset.n);
   if (!m) return;
   const key = el.dataset.key;
-  m[key] = el.value;
+  m[key] = el.dataset.combo && el.dataset.combo !== 'name' ? I18N.canon(el.dataset.combo, el.value) : el.value;
   // 自動入力された名前を手で直した→自動入力マークを外す（修正後の名前がテンプレ収穫対象になる）
   if (m.autoName && m.autoName[key]) {
     delete m.autoName[key];
@@ -2248,7 +2262,7 @@ function openCombo(input) {
   } else {
     if (!TPL) return;
     if (!COMBO_SRC) COMBO_SRC = comboSources();
-    options = COMBO_SRC[input.dataset.combo] || [];
+    options = I18N.dispList(input.dataset.combo, COMBO_SRC[input.dataset.combo] || []);
   }
   combo = { input, options, filtered: options, idx: -1, typed: false };
   filterCombo();
@@ -2265,7 +2279,7 @@ function renderCombo() {
   const cur = input.value;
   comboEl.innerHTML = filtered.length
     ? filtered.map((o, i) => `<button type="button" data-i="${i}" class="${i === idx ? 'focus' : ''}${o === cur ? ' current' : ''}">${o}</button>`).join('')
-    : '<div class="empty">候補なし（手入力もできます）</div>';
+    : `<div class="empty">${t('候補なし（手入力もできます）')}</div>`;
   const r = input.getBoundingClientRect();
   comboEl.style.display = 'block';
   comboEl.style.left = (r.left + scrollX) + 'px';
@@ -2367,7 +2381,7 @@ async function doExportCsv() {
   const defName = `senseki_capture_${today.getFullYear()}${p2(today.getMonth() + 1)}${p2(today.getDate())}.csv`;
   const r = await window.api.saveCsv(defName, buildCsvText());
   if (r.ok) {
-    setProgress(`CSVを保存しました: ${r.path}`, 1);
+    setProgress(t('CSVを保存しました: {0}', r.path), 1);
     harvestNames(); // 確定した相手名を履歴＋名前テンプレへ（次回の自動入力に使う）
     await harvestTemplates(); // 修正されたキャラ/コートをユーザー辞書へ（教えるサイクル）
   }
@@ -2403,7 +2417,7 @@ async function copyTextRobust(text) {
   document.body.appendChild(ta); ta.select();
   let okc = false; try { okc = document.execCommand('copy'); } catch {}
   ta.remove();
-  if (!okc) throw new Error('クリップボードに書き込めませんでした');
+  if (!okc) throw new Error(t('クリップボードに書き込めませんでした'));
 }
 async function doCopyCsv(ev) {
   const btn = ev && ev.currentTarget;
@@ -2411,15 +2425,15 @@ async function doCopyCsv(ev) {
   try {
     await copyTextRobust(text);
   } catch (e) {
-    const msg = 'コピーに失敗しました: ' + (e && e.message || e);
+    const msg = t('コピーに失敗しました: ') + (e && e.message || e);
     setProgress(msg, null);
-    showToast('<b>' + msg + '</b>代わりに「CSVを保存」でファイルにしてください', { error: true, ms: 6000 });
+    showToast(t('<b>{0}</b>代わりに「CSVを保存」でファイルにしてください', msg), { error: true, ms: 6000 });
     return;
   }
   const n = matches.length;
-  flashButton(btn, 'コピーしました');
-  showToast('<b>CSVをコピーしました（' + n + '試合）</b>SENSEKI FEVERの一括登録ページで「クリップボードから読み込む」を押してください');
-  setProgress('CSVをコピーしました。SENSEKI FEVERの一括登録ページで「クリップボードから読み込む」を押してください', 1);
+  flashButton(btn, t('コピーしました'));
+  showToast(t('<b>CSVをコピーしました（{0}試合）</b>SENSEKI FEVERの一括登録ページで「クリップボードから読み込む」を押してください', n));
+  setProgress(t('CSVをコピーしました。SENSEKI FEVERの一括登録ページで「クリップボードから読み込む」を押してください'), 1);
   harvestNames();
   await harvestTemplates();
 }
@@ -2430,7 +2444,7 @@ $('copyCsvTop').addEventListener('click', doCopyCsv);
 $('openFever').addEventListener('click', () => window.api.openExternal('https://mario-tennis-records.vercel.app/matches/import'));
 $('resetAll').addEventListener('click', () => {
   if (!matches.length) return;
-  if (!confirm('読み込んだ解析結果をすべてクリアします。よろしいですか？（CSV未保存の内容は失われます）')) return;
+  if (!confirm(t('読み込んだ解析結果をすべてクリアします。よろしいですか？（CSV未保存の内容は失われます）'))) return;
   matches = [];
   RATE_CHAIN = {};
   reviewIdx = 0;
@@ -2463,7 +2477,7 @@ function enqueue(fileList) {
 
 function renderQueue() {
   $('queuePanel').style.display = fileQueue.length || processing ? 'block' : 'none';
-  $('queue').textContent = fileQueue.length ? `待機中: ${fileQueue.map(f => f.name).join(' / ')}` : '';
+  $('queue').textContent = fileQueue.length ? t('待機中: {0}', fileQueue.map(f => f.name).join(' / ')) : '';
 }
 
 async function processQueue() {
@@ -2479,9 +2493,9 @@ async function processQueue() {
   }
   processing = false;
   renderQueue();
-  setProgress(`完了: 全${matches.length}試合を検出しました。内容を確認してCSVを保存してください`, 1);
+  setProgress(t('完了: 全{0}試合を検出しました。内容を確認してCSVを保存してください', matches.length), 1);
   // 完了後もドロップ枠が「解析中」のままにならないように（追加の録画は引き続き受け付ける）
-  $('dropMsg').textContent = `解析済み: ${matches.length}試合（追加の録画はここへドロップ・「クリア」で最初から）`;
+  $('dropMsg').textContent = t('解析済み: {0}試合（追加の録画はここへドロップ・「クリア」で最初から）', matches.length);
   // 完了後はログ・バーを畳んで確認画面を広く使う（「ログ」ボタンで再表示）
   $('bar').style.display = 'none';
   $('logPanel').style.display = 'none';
@@ -2493,29 +2507,27 @@ async function analyzeFile(f) {
   document.dispatchEvent(new Event('sc-lastfile')); // hl-ui.js の「直近の録画で作る」表示を更新（ポーリング廃止）
   fileInfo = { name: f.name, lastModified: f.lastModified };
   drop.classList.add('loaded');
-  $('dropMsg').textContent = '解析中: ' + f.name + '（追加のファイルはここへドロップ）';
+  $('dropMsg').textContent = t('解析中: {0}（追加のファイルはここへドロップ）', f.name);
   const url = URL.createObjectURL(f);
   try {
     video.src = url;
     await new Promise((res, rej) => {
       video.addEventListener('loadedmetadata', res, { once: true });
-      video.addEventListener('error', () => rej(new Error('動画を読み込めませんでした')), { once: true });
+      video.addEventListener('error', () => rej(new Error(t('動画を読み込めませんでした'))), { once: true });
     });
     if (!TPL) await loadTemplates();
     await userDataReady; // 設定と名前テンプレ（自動入力に使う）
     const gr = V.getSourceRect();
     {
       const s = V.srcRect(video);
-      if (gr) log(`ゲーム画面の位置: ${fmtRect(gr)} → 実ピクセル ${s.w}x${s.h}`);
+      if (gr) log(t('ゲーム画面の位置: {0} → 実ピクセル {1}x{2}', fmtRect(gr), s.w, s.h));
       // 横幅がフルHDより小さいほど、レートの4桁など細かい文字の確信度が下がる。
       // 閾値は緩めず（誤読を招くため）、代わりに「大きく録ってください」と案内する。
       // 1536 = 1920の8割。実例: 1404px の録画でレートの確信度が 0.62 前後まで落ちた（2026-09-10）
       if (s.w < 1280) {
-        log(`[警告] ゲーム画面の横幅が ${s.w}px です（1280px未満）。文字が小さく、認識精度が落ちます。`);
+        log(t('[警告] ゲーム画面の横幅が {0}px です（1280px未満）。文字が小さく、認識精度が落ちます。', s.w));
       } else if (s.w < 1536) {
-        log(`[注意] ゲーム画面の横幅が ${s.w}px で、フルHD(1920px)の8割未満です。` +
-            `レートの数字が小さくなり、読み取りの確信度が下がります（要確認が増えます）。` +
-            `配信レイアウトごと録るより、ゲーム画面を大きく録るほうが安定します。`);
+        log(t('[注意] ゲーム画面の横幅が {0}px で、フルHD(1920px)の8割未満です。レートの数字が小さくなり、読み取りの確信度が下がります（要確認が増えます）。配信レイアウトごと録るより、ゲーム画面を大きく録るほうが安定します。', s.w));
       }
     }
     await analyze();
@@ -2544,30 +2556,30 @@ $('bugContact').addEventListener('click', () => window.api.openExternal('https:/
 $('bugSave').addEventListener('click', async () => {
   const ver = await window.api.appVersion();
   const rep = [];
-  rep.push('SENSEKI SCAN バグレポート');
+  rep.push(t('SENSEKI SCAN バグレポート'));
   rep.push('version: v' + ver);
-  rep.push('日時: ' + new Date().toLocaleString('ja-JP'));
-  rep.push('環境: ' + navigator.userAgent);
+  rep.push(t('日時: ') + new Date().toLocaleString(I18N.lang === 'en' ? 'en-US' : 'ja-JP'));
+  rep.push(t('環境: ') + navigator.userAgent + ' lang=' + I18N.lang);
   rep.push('');
-  rep.push('== 試合サマリー ==');
+  rep.push(t('== 試合サマリー =='));
   for (const m of matches) {
     const fl = Object.keys(m.flags || {}).filter(k => m.flags[k]).join('/');
     rep.push('m' + m.n + ' ' + (m.playedAt || '?') + ' ' + (m.mode || '?') + ' score=' + (m.myScore ?? '?') + '-' + (m.oppScore ?? '?') + ' ' + (m.result || '?') + ' rate=' + (m.ratingBefore ?? '?') + '→' + (m.ratingAfter ?? '?') + (fl ? ' flags=' + fl : ''));
   }
   rep.push('');
-  rep.push('== 解析ログ ==');
+  rep.push(t('== 解析ログ =='));
   for (const l of window.A.log) rep.push(l);
   const today = new Date();
   const p2 = n => String(n).padStart(2, '0');
   const name = 'senseki-scan-report_' + today.getFullYear() + p2(today.getMonth() + 1) + p2(today.getDate()) + '.txt';
   const r = await window.api.saveText(name, rep.join('\r\n'));
-  if (r.ok) setProgress('レポートを保存しました: ' + r.path, null);
+  if (r.ok) setProgress(t('レポートを保存しました: {0}', r.path), null);
 });
 window.api.appVersion().then(v => { $('ver').textContent = 'v' + v; });
 if (window.api.onUpdateDownloaded) {
   window.api.onUpdateDownloaded(v => {
     $('progPanel').style.display = 'block';
-    log(`[更新] 新しいバージョン v${v} をダウンロードしました。アプリを閉じると自動で更新されます`);
+    log(t('[更新] 新しいバージョン v{0} をダウンロードしました。アプリを閉じると自動で更新されます', v));
   });
 }
 </script>

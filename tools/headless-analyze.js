@@ -22,6 +22,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--port') opt.port = +args[++i];
   else if (a === '--timeout') opt.timeout = +args[++i];
   else if (a === '--chrome') opt.chrome = args[++i];
+  else if (a === '--lang') opt.lang = args[++i]; // 画面の言語（ja|en・既定 ja）
   else if (a === '--debug') opt.debug = true; // Chrome のコンソール出力を表示
   else positional.push(a);
 }
@@ -88,7 +89,7 @@ function finish() {
 
 server.listen(opt.port, () => {
   const st = fs.statSync(video);
-  const q = new URLSearchParams({ name: path.basename(video), lm: String(Math.round(st.mtimeMs)) });
+  const q = new URLSearchParams({ name: path.basename(video), ...(opt.lang ? { lang: opt.lang } : {}), lm: String(Math.round(st.mtimeMs)) });
   if (opt.rect) {
     // 実ピクセル → 割合。動画の実サイズは ffmpeg 無しでは取れないので、割合そのものも受け付ける（1以下ならそのまま）
     const [x, y, w, h] = opt.rect.split(',').map(Number);

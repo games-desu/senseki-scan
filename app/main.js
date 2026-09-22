@@ -7,6 +7,29 @@ const { autoUpdater } = require('electron-updater');
 
 let win;
 
+// ---- メインプロセス側の文言（ダイアログ）。言語は renderer と同じ settings.lang、無ければ OS の言語（日本語以外は英語） ----
+// renderer の i18n.js と同じ「日本語をキーにする」方式。settings.json は save-user-data で書かれるたびに読み直す
+let LANG = null;
+function lang() {
+  if (LANG) return LANG;
+  try {
+    const st = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8'));
+    if (st.lang === 'en' || st.lang === 'ja') return (LANG = st.lang);
+  } catch {}
+  return (LANG = String(app.getLocale() || 'ja').toLowerCase().startsWith('ja') ? 'ja' : 'en');
+}
+const MAIN_EN = {
+  'アップデート': 'Update',
+  '新しいバージョン v{0} があります（現在 v{1}）': 'Version v{0} is available (you have v{1})',
+  '更新内容:\n': "What's new:\n",
+  '今すぐ更新': 'Update now', 'あとで': 'Later', 'このバージョンをスキップ': 'Skip this version', '詳しい説明を見る': 'Release notes',
+  '更新のダウンロードに失敗しました': 'Failed to download the update',
+  'v{0} のダウンロードが完了しました': 'v{0} has been downloaded',
+  '再起動して更新': 'Restart and update', 'アプリ終了時に適用': 'Apply when the app closes',
+  'CSVを保存': 'Save CSV', 'レポートを保存': 'Save report', 'テキスト': 'Text', 'ハイライトの保存先フォルダ': 'Folder for highlight videos',
+};
+const tm = (key, ...args) => (lang() === 'en' && MAIN_EN[key] != null ? MAIN_EN[key] : key).replace(/\{(\d+)\}/g, (m, i) => args[i] === undefined ? m : String(args[i]));
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1360,
@@ -53,17 +76,17 @@ app.whenReady().then(() => {
     const releaseUrl = 'https://github.com/games-desu/senseki-scan/releases/tag/v' + info.version;
     const { response } = await dialog.showMessageBox(win, {
       type: 'info',
-      title: 'アップデート',
-      message: `新しいバージョン v${info.version} があります（現在 v${app.getVersion()}）`,
-      detail: notes ? '更新内容:\n' + notes : undefined,
-      buttons: ['今すぐ更新', 'あとで', 'このバージョンをスキップ', '詳しい説明を見る'],
+      title: tm('アップデート'),
+      message: tm('新しいバージョン v{0} があります（現在 v{1}）', info.version, app.getVersion()),
+      detail: notes ? tm('更新内容:\n') + notes : undefined,
+      buttons: [tm('今すぐ更新'), tm('あとで'), tm('このバージョンをスキップ'), tm('詳しい説明を見る')],
       defaultId: 0,
       cancelId: 1,
       noLink: true,
     });
     if (response === 0) {
       autoUpdater.downloadUpdate().catch(e => {
-        dialog.showMessageBox(win, { type: 'error', title: 'アップデート', message: '更新のダウンロードに失敗しました', detail: String(e && e.message || e) });
+        dialog.showMessageBox(win, { type: 'error', title: tm('アップデート'), message: tm('更新のダウンロードに失敗しました'), detail: String(e && e.message || e) });
       });
     } else if (response === 2) {
       fs.writeFileSync(updaterStatePath(), JSON.stringify({ skipVersion: info.version }));
@@ -74,9 +97,9 @@ app.whenReady().then(() => {
   autoUpdater.on('update-downloaded', async info => {
     const { response } = await dialog.showMessageBox(win, {
       type: 'info',
-      title: 'アップデート',
-      message: `v${info.version} のダウンロードが完了しました`,
-      buttons: ['再起動して更新', 'アプリ終了時に適用'],
+      title: tm('アップデート'),
+      message: tm('v{0} のダウンロードが完了しました', info.version),
+      buttons: [tm('再起動して更新'), tm('アプリ終了時に適用')],
       defaultId: 0,
       cancelId: 1,
       noLink: true,
@@ -131,12 +154,13 @@ ipcMain.handle('save-user-data', async (ev, key, data) => {
   if (!/^[a-z0-9-]+$/.test(key)) return { ok: false };
   const p = path.join(app.getPath('userData'), key + '.json');
   fs.writeFileSync(p, JSON.stringify(data));
+  if (key === 'settings') LANG = null; // 言語の切替を次のダイアログから反映
   return { ok: true, path: p };
 });
 
 ipcMain.handle('save-csv', async (ev, defaultName, content) => {
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
-    title: 'CSVを保存',
+    title: tm('CSVを保存'),
     defaultPath: defaultName,
     filters: [{ name: 'CSV', extensions: ['csv'] }],
   });
@@ -160,9 +184,9 @@ ipcMain.handle('open-external', (ev, url) => {
 // バグレポート等のテキスト保存
 ipcMain.handle('save-text', async (ev, defaultName, content) => {
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
-    title: 'レポートを保存',
+    title: tm('レポートを保存'),
     defaultPath: defaultName,
-    filters: [{ name: 'テキスト', extensions: ['txt'] }],
+    filters: [{ name: tm('テキスト'), extensions: ['txt'] }],
   });
   if (canceled || !filePath) return { ok: false };
   fs.writeFileSync(filePath, '﻿' + content, 'utf8');
@@ -180,7 +204,7 @@ ipcMain.handle('hl-ffmpeg-available', () => !!HLF.ffmpegPath());
 
 ipcMain.handle('hl-pick-dir', async (ev, defaultPath) => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-    title: 'ハイライトの保存先フォルダ',
+    title: tm('ハイライトの保存先フォルダ'),
     defaultPath: defaultPath || app.getPath('videos'),
     properties: ['openDirectory', 'createDirectory'],
   });

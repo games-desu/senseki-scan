@@ -36,7 +36,9 @@ const videoMatches = raw.map(r => ({
 }));
 
 const logs = [];
-vm.runInNewContext(body, { videoMatches, log: m => logs.push(m) });
+// t() は index.html の i18n（日本語キー＋{0} 差し込み）。ここでは日本語のまま差し込むだけ
+const t = (key, ...args) => key.replace(/\{(\d+)\}/g, (m, i) => args[i] === undefined ? m : String(args[i]));
+vm.runInNewContext(body, { videoMatches, log: m => logs.push(m), t });
 logs.forEach(l => console.log('  ' + l));
 for (const m of videoMatches) console.log(`m${m.n}: ${m.ratingBefore}→${m.ratingAfter}${m.ratingBefore === m.ratingAfter ? '  ★前後同値（誤り）' : ''}`);
 

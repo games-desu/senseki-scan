@@ -34,10 +34,10 @@
   function refreshUseLast() {
     const panel = $('hlPanel');
     $('hlUseLast').style.display = (LAST_FILE && !HL.busy) ? 'inline-block' : 'none';
-    if (LAST_FILE) $('hlUseLast').textContent = '直近の録画で作る（' + LAST_FILE.name + '）';
-    const hint = $('hlSumHint'); if (hint) hint.textContent = (LAST_FILE && !panel.open) ? '直近の録画（' + LAST_FILE.name + '）で作れます' : '';
+    if (LAST_FILE) $('hlUseLast').textContent = t('直近の録画で作る（{0}）', LAST_FILE.name);
+    const hint = $('hlSumHint'); if (hint) hint.textContent = (LAST_FILE && !panel.open) ? t('直近の録画（{0}）で作れます', LAST_FILE.name) : '';
   }
-  function hlLog(m) { const el = $('hlLog'); el.textContent += (el.textContent ? '\n' : '') + m; el.style.display = 'block'; el.scrollTop = 1e9; if (typeof log === 'function') log('[ハイライト] ' + m); }
+  function hlLog(m) { const el = $('hlLog'); el.textContent += (el.textContent ? '\n' : '') + m; el.style.display = 'block'; el.scrollTop = 1e9; if (typeof log === 'function') log(t('[ハイライト] ') + m); }
 
   // 切り抜き区間（手修正があればそれを優先）
   function ranges(p) {
@@ -87,7 +87,7 @@
       w.my.icon = w.my.icons[w.my.row - 1];
     }
     // 対戦相手（同じ VS 画面から）。一覧の試合ヘッダとファイル名で「この試合は誰とだったか」が分かるように（ユーザー要望 2026-09-21）
-    try { readWho(w); } catch (e) { hlLog('[警告] 対戦相手を読めませんでした: ' + (e && e.message || e)); }
+    try { readWho(w); } catch (e) { hlLog(t('[警告] 対戦相手を読めませんでした: {0}', e && e.message || e)); }
   }
   // VS カード（名前＋アイコン）の画像と、読めた名前・キャラ。動画には名前を入れない（バッジは自分のキャラだけ）ので、
   // ここで読んだ名前は一覧の表示とファイル名にだけ使う。
@@ -143,7 +143,7 @@
     const c = document.createElement('canvas'); let ctx = c.getContext('2d');
     const font = `bold ${Math.round(34 * k)}px "Yu Gothic UI","Meiryo","Segoe UI",sans-serif`;
     ctx.font = font;
-    const label = '自分：';
+    const label = t('自分：');
     const tw = ctx.measureText(label).width;
     c.width = Math.round(pad * 2 + tw + iconW); c.height = h;
     ctx = c.getContext('2d'); ctx.font = font; ctx.textBaseline = 'middle';
@@ -161,7 +161,7 @@
   // ---- 読み込み → 試合窓 → ポイント検出 ----
   async function hlLoad(file) {
     if (HL.busy) return;
-    if (typeof processing !== 'undefined' && processing) { hlProg('戦績CSVの解析が終わってからハイライトを作ってください', null); return; }
+    if (typeof processing !== 'undefined' && processing) { hlProg(t('戦績CSVの解析が終わってからハイライトを作ってください'), null); return; }
     HL.busy = true; HL.cancel = false; setBusy(true);
     $('hlCancel').style.display = 'inline-block';
     const t0 = performance.now();
@@ -173,7 +173,7 @@
       hv.muted = true; hv.src = HL.url;
       await new Promise((res, rej) => {
         hv.addEventListener('loadedmetadata', res, { once: true });
-        hv.addEventListener('error', () => rej(new Error('動画を読み込めませんでした')), { once: true });
+        hv.addEventListener('error', () => rej(new Error(t('動画を読み込めませんでした'))), { once: true });
       });
       $('hlBody').style.display = 'block';
       $('hlPanel').open = true; // 畳んだ見出しへのドロップで読み込んだときも中身が見えるように
@@ -183,24 +183,24 @@
       HL.points = []; HL.windows = [];
       if (!TPL) await loadTemplates();
       await userDataReady;
-      if (!HL.path) hlLog('[警告] 動画のファイルパスを取得できないため、書き出しはできません（区間の確認のみ）');
+      if (!HL.path) hlLog(t('[警告] 動画のファイルパスを取得できないため、書き出しはできません（区間の確認のみ）'));
 
       let events = SCENE_CACHE.get(HL.key);
       if (!events) {
-        events = await V.scan(hv, { albumTpl: TPL.albumBar || [], onProgress: (t, dur) => hlProg(`試合の位置を探しています… ${t.toFixed(0)}/${dur.toFixed(0)}秒`, t / dur * 0.3) });
+        events = await V.scan(hv, { albumTpl: TPL.albumBar || [], onProgress: (tt, dur) => hlProg(t('試合の位置を探しています… {0}/{1}秒', tt.toFixed(0), dur.toFixed(0)), tt / dur * 0.3) });
         await gateRatings(hv, events, () => {});
         SCENE_CACHE.set(HL.key, events);
-      } else hlLog('試合の位置は戦績CSVの解析結果を再利用しました');
+      } else hlLog(t('試合の位置は戦績CSVの解析結果を再利用しました'));
       if (HL.cancel) return;
       const wins = H.matchWindows(events, hv.duration);
       HL.windows = wins;
-      if (wins[0].fallback) hlLog('VS画面を検出できなかったため、動画全体から得点シーンを探します（時間がかかります。配信レイアウトの録画は「ゲーム画面の位置」を先に指定してください）');
+      if (wins[0].fallback) hlLog(t('VS画面を検出できなかったため、動画全体から得点シーンを探します（時間がかかります。配信レイアウトの録画は「ゲーム画面の位置」を先に指定してください）'));
       const totalSpan = wins.reduce((a, w) => a + Math.max(0, w.t1 - w.t0), 0) || 1;
       let done = 0;
       for (let wi = 0; wi < wins.length; wi++) {
         const w = wins[wi];
-        const { points } = await H.scanWindow(hv, w, { onProgress: t =>
-          hlProg(`得点シーンを探しています… 試合 ${wi + 1}/${wins.length}（${fmtT(t)}）`, 0.3 + 0.6 * (done + (t - w.t0)) / totalSpan) });
+        const { points } = await H.scanWindow(hv, w, { onProgress: tt =>
+          hlProg(t('得点シーンを探しています… 試合 {0}/{1}（{2}）', wi + 1, wins.length, fmtT(tt)), 0.3 + 0.6 * (done + (tt - w.t0)) / totalSpan) });
         done += Math.max(0, w.t1 - w.t0);
         for (const p of points) { p.win = wi; HL.points.push(p); }
         if (HL.cancel) break;
@@ -215,18 +215,18 @@
       const seek = V.makeSeeker(hv);
       for (let i = 0; i < HL.points.length; i++) {
         const p = HL.points[i];
-        hlProg(`サムネイルを作成中… ${i + 1}/${HL.points.length}`, 0.9 + 0.1 * (i + 1) / HL.points.length);
+        hlProg(t('サムネイルを作成中… {0}/{1}', i + 1, HL.points.length), 0.9 + 0.1 * (i + 1) / HL.points.length);
         await seek(Math.max(p.hudOn, p.hudOff - 0.7));
         p.thumb = hlJpeg(320);
       }
-      hlProg('自分のキャラを確認中…', 0.99);
+      hlProg(t('自分のキャラを確認中…'), 0.99);
       for (const w of wins) { try { await detectMyChar(w); } catch (e) { w.my = { icon: null }; } }
       applyIncludeFilter();
       hlRender();
       hlProg('', null);
       const me = HL.points.filter(p => p.winner === 'me').length;
-      hlLog(`${mno}試合・${HL.points.length}ポイントを検出（自分の得点 ${me}・相手の得点 ${HL.points.length - me}）… ${((performance.now() - t0) / 1000).toFixed(0)}秒`);
-      if (!HL.points.length) hlLog('[警告] 得点シーンが見つかりませんでした。ゲーム画面が画面いっぱいに映っているか（配信レイアウトなら「ゲーム画面の位置」）を確認してください');
+      hlLog(t('{0}試合・{1}ポイントを検出（自分の得点 {2}・相手の得点 {3}）… {4}秒', mno, HL.points.length, me, HL.points.length - me, ((performance.now() - t0) / 1000).toFixed(0)));
+      if (!HL.points.length) hlLog(t('[警告] 得点シーンが見つかりませんでした。ゲーム画面が画面いっぱいに映っているか（配信レイアウトなら「ゲーム画面の位置」）を確認してください'));
       $('hlFilterRow').style.display = HL.points.length ? 'flex' : 'none';
       $('hlExportBox').style.display = HL.points.length ? 'block' : 'none';
     } catch (e) {
@@ -249,53 +249,53 @@
     const m = /^(\d+) - (\d+)$/.exec(p.scoreAfter || '');
     let body;
     if (m) body = p.winner === 'me' ? `<b class="${cls} hlbig">${m[1]}</b> - ${m[2]}` : `${m[1]} - <b class="${cls} hlbig">${m[2]}</b>`;
-    else if (p.final) body = `<b class="${cls} hlbig">${p.winner === 'me' ? '勝ち' : '負け'}</b>（マッチ決定）`;
+    else if (p.final) body = `<b class="${cls} hlbig">${t(p.winner === 'me' ? '勝ち' : '負け')}</b>${t('（マッチ決定）')}`;
     else body = `<b class="${cls} hlbig">${esc(p.scoreAfter)}</b>`;
-    return `<span class="hlscore" title="${esc(p.scoreBefore)} → ${esc(p.scoreAfter)}">${body}</span>`;
+    return `<span class="hlscore" title="${esc(t(p.scoreBefore))} → ${esc(t(p.scoreAfter))}">${body}</span>`;
   }
-  const winnerHtml = p => `<span class="${p.winner === 'me' ? 'hlme' : 'hlopp'}">${p.winner === 'me' ? '自分の得点' : '相手の得点'}</span>`;
+  const winnerHtml = p => `<span class="${p.winner === 'me' ? 'hlme' : 'hlopp'}">${t(p.winner === 'me' ? '自分の得点' : '相手の得点')}</span>`;
 
   // ---- 一覧 ----
-  const TYPE_LABEL = { short: '得点前', full: 'ラリー全体', match: '試合ごと' };
+  const TYPE_LABEL = { short: '得点前', full: 'ラリー全体', match: '試合ごと' }; // 表示時に t() を通す
   function hlRender() {
     const type = hlType();
     const groups = new Map();
     for (const p of HL.points) { if (!groups.has(p.match)) groups.set(p.match, []); groups.get(p.match).push(p); }
     const sel = HL.points.filter(p => p.include).length;
-    $('hlSummary').textContent = HL.points.length ? `${groups.size}試合・${HL.points.length}ポイント（選択中 ${sel}）` : '';
+    $('hlSummary').textContent = HL.points.length ? t('{0}試合・{1}ポイント（選択中 {2}）', groups.size, HL.points.length, sel) : '';
     $('hlList').innerHTML = [...groups].map(([m, arr]) => {
       const n = arr.filter(p => p.include).length;
       const secs = arr.filter(p => p.include).reduce((a, p) => { const r = ranges(p)[rangeKey()]; return a + (r.e - r.s); }, 0);
       return `
       <div class="hlm">
-        <div class="hlmh"><b>試合 ${m}</b><span class="sub">${fmtT(arr[0].hudOn)} 〜 ${fmtT(arr[arr.length - 1].hudOff)} ・ ${arr.length}ポイント${type === 'match' ? `（この試合のクリップ: ${n}ラリー・約${secs.toFixed(0)}秒）` : ''}</span>
+        <div class="hlmh"><b>${t('試合 {0}', m)}</b><span class="sub">${t('{0} 〜 {1} ・ {2}ポイント', fmtT(arr[0].hudOn), fmtT(arr[arr.length - 1].hudOff), arr.length)}${type === 'match' ? t('（この試合のクリップ: {0}ラリー・約{1}秒）', n, secs.toFixed(0)) : ''}</span>
           ${myCharHtml(arr[0])}
-          <button data-act="mall" data-m="${m}">この試合を全部選ぶ</button><button data-act="mnone" data-m="${m}">選択解除</button></div>
+          <button data-act="mall" data-m="${m}">${t('この試合を全部選ぶ')}</button><button data-act="mnone" data-m="${m}">${t('選択解除')}</button></div>
         ${whoHtml(arr[0])}
         <div class="hlrows">${arr.map(row).join('')}</div>
       </div>`; }).join('');
     // 保存形式の文言（区間の種類で変わる）
     if (type === 'match') {
-      $('hlExportEach').textContent = '試合ごとに保存（1試合1本）';
-      $('hlExportJoined').textContent = '全試合を1本に繋げて保存';
+      $('hlExportEach').textContent = t('試合ごとに保存（1試合1本）');
+      $('hlExportJoined').textContent = t('全試合を1本に繋げて保存');
       $('hlPerMatchWrap').style.display = 'none';
-      $('hlNameHint').textContent = 'チェックしたラリーをつなぎ、ポイント間のスコアバナーは抜きます。ファイル名: 録画名_試合n_vs相手名.mp4 ／ 録画名_全試合.mp4（相手名は読めたときだけ・ファイル名にだけ入り、動画には入りません）';
+      $('hlNameHint').textContent = t('チェックしたラリーをつなぎ、ポイント間のスコアバナーは抜きます。ファイル名: 録画名_試合n_vs相手名.mp4 ／ 録画名_全試合.mp4（相手名は読めたときだけ・ファイル名にだけ入り、動画には入りません）');
     } else {
-      $('hlExportEach').textContent = '区間ごとに保存（1本ずつ）';
-      $('hlExportJoined').textContent = '1本に繋げて保存';
+      $('hlExportEach').textContent = t('区間ごとに保存（1本ずつ）');
+      $('hlExportJoined').textContent = t('1本に繋げて保存');
       $('hlPerMatchWrap').style.display = '';
-      $('hlNameHint').textContent = 'ファイル名: 録画名_試合n_vs相手名_Pk_スコア_自分/相手.mp4 ／ 繋げたもの: 録画名_試合n_vs相手名_ダイジェスト.mp4（試合ごと）または 録画名_ダイジェスト.mp4（相手名は読めたときだけ・ファイル名にだけ入り、動画には入りません）。つなぎ目あり＝重ねるぶん各区間が少し短くなり、再エンコードで時間がかかります';
+      $('hlNameHint').textContent = t('ファイル名: 録画名_試合n_vs相手名_Pk_スコア_自分/相手.mp4 ／ 繋げたもの: 録画名_試合n_vs相手名_ダイジェスト.mp4（試合ごと）または 録画名_ダイジェスト.mp4（相手名は読めたときだけ・ファイル名にだけ入り、動画には入りません）。つなぎ目あり＝重ねるぶん各区間が少し短くなり、再エンコードで時間がかかります');
     }
   }
   function myCharHtml(p) {
     const w = HL.windows[p.win]; const my = w && w.my;
-    if (!my || !(my.icon || my.icons)) return '<span class="hlmy">自分のキャラ: <span style="color:#f2a65a">VS画面が見つからず未取得</span></span>';
+    if (!my || !(my.icon || my.icons)) return `<span class="hlmy">${t('自分のキャラ: ')}<span style="color:#f2a65a">${t('VS画面が見つからず未取得')}</span></span>`;
     let body;
     if (my.isDoubles && my.icons) {
-      body = my.icons.map((ic, i) => `<label title="自分はこちら"><input type="radio" name="hlrow${p.win}" data-act="myrow" data-w="${p.win}" value="${i + 1}"${my.row === i + 1 ? ' checked' : ''}><img src="${ic}"></label>`).join('')
-           + (my.sure ? '' : '<span style="color:#f2a65a">ダブルス: 自分の行を判定できず。自分のキャラを選んでください</span>');
+      body = my.icons.map((ic, i) => `<label title="${t('自分はこちら')}"><input type="radio" name="hlrow${p.win}" data-act="myrow" data-w="${p.win}" value="${i + 1}"${my.row === i + 1 ? ' checked' : ''}><img src="${ic}"></label>`).join('')
+           + (my.sure ? '' : `<span style="color:#f2a65a">${t('ダブルス: 自分の行を判定できず。自分のキャラを選んでください')}</span>`);
     } else body = `<img src="${my.icon}">`;
-    return `<span class="hlmy">自分のキャラ:${body}<label><input type="checkbox" data-act="myshow" data-w="${p.win}"${my.show !== false ? ' checked' : ''}>表示</label></span>`;
+    return `<span class="hlmy">${t('自分のキャラ: ')}${body}<label><input type="checkbox" data-act="myshow" data-w="${p.win}"${my.show !== false ? ' checked' : ''}>${t('表示')}</label></span>`;
   }
   // 対戦相手の行: VS画面のカード画像（名前＋アイコン・読み取りに依存しない）＋読めた名前。
   // 「この試合は誰とだったか」を一覧でぱっと見分かるように（ユーザー要望 2026-09-21）。動画には入れない
@@ -303,24 +303,24 @@
     const w = HL.windows[p.win]; if (!w || !w.vsCard) return '';
     const who = whoOf(w);
     // 名前が読めた人は太字、読めなかった人はキャラ名（読めなければ「?」）。名前とキャラ名を混同しないよう見た目を分ける
-    const one = o => o.name ? `<b>${esc(o.name)}</b>` : `<span title="名前は未読み取り（戦績CSVで確定した名前は次回から読めます）">${esc(o.char ? String(o.char).split(':')[0] : '?')}<small>(キャラ)</small></span>`;
-    const opp = who.opp.length ? `相手: ${who.opp.map(one).join(' ・ ')}` : '';
-    const pt = who.partner ? `　味方: ${one(who.partner)}` : '';
-    return `<div class="hlwho"><img src="${w.vsCard}" title="VS画面（この試合の対戦相手）"><span class="sub">${opp}${pt}</span></div>`;
+    const one = o => o.name ? `<b>${esc(o.name)}</b>` : `<span title="${t('名前は未読み取り（戦績CSVで確定した名前は次回から読めます）')}">${esc(o.char ? I18N.disp('char', String(o.char).split(':')[0]) : '?')}<small>${t('(キャラ)')}</small></span>`;
+    const opp = who.opp.length ? `${t('相手: ')}${who.opp.map(one).join(' ・ ')}` : '';
+    const pt = who.partner ? `${t('　味方: ')}${one(who.partner)}` : '';
+    return `<div class="hlwho"><img src="${w.vsCard}" title="${t('VS画面（この試合の対戦相手）')}"><span class="sub">${opp}${pt}</span></div>`;
   }
   function row(p) {
     const type = hlType();
     const r = ranges(p)[rangeKey()];
-    const edited = (p.edit && p.edit[rangeKey()]) ? ' <span class="hledited">手修正</span>' : '';
+    const edited = (p.edit && p.edit[rangeKey()]) ? ` <span class="hledited">${t('手修正')}</span>` : '';
     return `<div class="hlp${p.include ? ' on' : ''}" data-i="${p.idx}">
       <label class="hlchk"><input type="checkbox" data-act="inc" ${p.include ? 'checked' : ''}></label>
-      <img src="${p.thumb || ''}" data-act="edit" title="クリックで区間を調整">
+      <img src="${p.thumb || ''}" data-act="edit" title="${t('クリックで区間を調整')}">
       <div class="hlpinfo">
         <div><b>P${p.k}</b> ${winnerHtml(p)} <span class="sub">→</span> ${scoreHtml(p)}</div>
-        <div class="sub">ラリー ${(p.hudOff - p.hudOn).toFixed(1)}秒（${fmtT(p.hudOn)} 〜 ${fmtT(p.hudOff)}）</div>
-        <div class="sub">${type === 'match' ? 'このラリー' : TYPE_LABEL[type]}: ${fmtT(r.s)} 〜 ${fmtT(r.e)}（${(r.e - r.s).toFixed(1)}秒）${edited}</div>
+        <div class="sub">${t('ラリー {0}秒（{1} 〜 {2}）', (p.hudOff - p.hudOn).toFixed(1), fmtT(p.hudOn), fmtT(p.hudOff))}</div>
+        <div class="sub">${t('{0}: {1} 〜 {2}（{3}秒）{4}', t(type === 'match' ? 'このラリー' : TYPE_LABEL[type]), fmtT(r.s), fmtT(r.e), (r.e - r.s).toFixed(1), edited)}</div>
       </div>
-      <button data-act="edit">区間を調整</button>
+      <button data-act="edit">${t('区間を調整')}</button>
     </div>`;
   }
   $('hlList').addEventListener('change', e => {
@@ -343,7 +343,7 @@
     }
     const rowEl = e.target.closest('.hlp'); if (!rowEl) return;
     const p = HL.points[+rowEl.dataset.i];
-    if (act === 'inc') { p.include = b.checked; rowEl.classList.toggle('on', p.include); const sel = HL.points.filter(q => q.include).length; $('hlSummary').textContent = $('hlSummary').textContent.replace(/選択中 \d+/, '選択中 ' + sel); return; }
+    if (act === 'inc') { p.include = b.checked; rowEl.classList.toggle('on', p.include); const sel = HL.points.filter(q => q.include).length; $('hlSummary').textContent = $('hlSummary').textContent.replace(new RegExp(t('選択中 {0}', '\\d+')), t('選択中 {0}', sel)); return; }
     if (act === 'edit') hlOpenEditor(p, rangeKey());
   });
   $('hlOnlyMe').addEventListener('change', () => { applyIncludeFilter(); hlRender(); });
@@ -380,7 +380,7 @@
       T0: Math.max(0, p.hudOn - 3), T1: Math.min(Number.isFinite(hv.duration) ? hv.duration : Infinity, (p.gapEnd ?? p.hudOff + 3) + 0.5),
     };
     const vsLabel = whoOf(HL.windows[p.win]).label;
-    $('hlEdTitle').innerHTML = `<span class="hledt">試合 ${p.match}・P${p.k}</span> ${winnerHtml(p)} <span class="sub">→</span> ${scoreHtml(p)}${vsLabel ? ` <span class="sub" style="margin-left:10px">vs ${esc(vsLabel)}</span>` : ''} <span class="sub" style="margin-left:14px">${p.idx + 1} / ${HL.points.length}</span>`;
+    $('hlEdTitle').innerHTML = `<span class="hledt">${t('試合 {0}・P{1}', p.match, p.k)}</span> ${winnerHtml(p)} <span class="sub">→</span> ${scoreHtml(p)}${vsLabel ? ` <span class="sub" style="margin-left:10px">vs ${esc(vsLabel)}</span>` : ''} <span class="sub" style="margin-left:14px">${p.idx + 1} / ${HL.points.length}</span>`;
     $('hlEdPrev').disabled = p.idx <= 0; $('hlEdNext').disabled = p.idx >= HL.points.length - 1;
     $('hlEdInc').checked = !!p.include;
     $('hlmodal').style.display = 'flex';
@@ -424,14 +424,14 @@
     $('hlTlSel').style.left = xOf(c.s); $('hlTlSel').style.width = ((c.e - c.s) / (E().T1 - E().T0) * 100).toFixed(2) + '%';
     $('hlHS').style.left = xOf(c.s); $('hlHE').style.left = xOf(c.e);
     $('hlS').value = c.s.toFixed(2); $('hlE').value = c.e.toFixed(2);
-    $('hlLen').textContent = (c.e - c.s).toFixed(1) + '秒';
+    $('hlLen').textContent = t('{0}秒', (c.e - c.s).toFixed(1));
     const p = E().p;
     const late = c.e > H.nameLimit(p);
     const early = p.fresh && c.s < p.hudOn + H.INTRO_LEAD - 0.05;
     $('hlEdWarn').style.display = (late || early) ? 'block' : 'none';
     $('hlEdWarn').textContent = late
-      ? '[警告] 終了が赤い区間に入っています。' + (p.final ? '勝敗画面' : 'ポイント間のスコアバナー') + 'にプレイヤー名が映ります。「名前が映る区間を自動で除外」がONなら書き出し時に手前へ詰めます'
-      : (early ? '[警告] 開始が試合開始直後の赤い区間に入っています。VS画面の残像にプレイヤー名がうっすら映ることがあります' : '');
+      ? t('[警告] 終了が赤い区間に入っています。{0}にプレイヤー名が映ります。「名前が映る区間を自動で除外」がONなら書き出し時に手前へ詰めます', t(p.final ? '勝敗画面' : 'ポイント間のスコアバナー'))
+      : (early ? t('[警告] 開始が試合開始直後の赤い区間に入っています。VS画面の残像にプレイヤー名がうっすら映ることがあります') : '');
   }
   function setRange(s, e) {
     const c = cur();
@@ -535,12 +535,12 @@
     if (d) { HL.outDir = d; SETTINGS.hlOutDir = d; window.api.saveUserData('settings', SETTINGS); $('hlOutDir').textContent = d; }
   });
   $('hlOpenDir').addEventListener('click', () => { if (HL.outDir) window.api.hlOpenPath(HL.outDir); });
-  $('hlCancel').addEventListener('click', () => { HL.cancel = true; if (HL.curJob) window.api.hlCancel(HL.curJob); hlProg('中止しています…', null); });
+  $('hlCancel').addEventListener('click', () => { HL.cancel = true; if (HL.curJob) window.api.hlCancel(HL.curJob); hlProg(t('中止しています…'), null); });
   if (window.api.onHlProgress) {
     window.api.onHlProgress(info => {
       if (!HL.busy || info.jobId !== HL.curJob || !HL.jobTotal) return;
       const r = Math.min(1, info.t / (info.duration || 1));
-      const label = HL.joining ? `繋げています… ${HL.joining}${info.note ? '（' + info.note + '本）' : '（' + (r * 100).toFixed(0) + '%）'}` : `書き出し中… ${HL.jobDone + 1}/${HL.jobTotal}（${(r * 100).toFixed(0)}%）`;
+      const label = HL.joining ? t('繋げています… {0}{1}', HL.joining, info.note ? t('（{0}本）', info.note) : t('（{0}%）', (r * 100).toFixed(0))) : t('書き出し中… {0}/{1}（{2}%）', HL.jobDone + 1, HL.jobTotal, (r * 100).toFixed(0));
       hlProg(label, (HL.jobDone + r) / HL.jobTotal);
     });
   }
@@ -559,14 +559,14 @@
   // fmt: 'each'（区間ごとに1本ずつ）/ 'joined'（1本に繋げる）。区間の種類が 'match' のときは「区間＝試合」
   async function hlExport(fmt) {
     if (HL.busy) return;
-    if (!HL.path) { hlLog('[警告] 動画のファイルパスが取得できないため書き出せません'); return; }
-    if (!(await window.api.hlFfmpegAvailable())) { hlLog('[警告] 同梱の ffmpeg が見つかりません。アプリを再インストールしてください'); return; }
+    if (!HL.path) { hlLog(t('[警告] 動画のファイルパスが取得できないため書き出せません')); return; }
+    if (!(await window.api.hlFfmpegAvailable())) { hlLog(t('[警告] 同梱の ffmpeg が見つかりません。アプリを再インストールしてください')); return; }
     const sel = HL.points.filter(p => p.include);
-    if (!sel.length) { hlLog('区間が1つも選ばれていません'); return; }
+    if (!sel.length) { hlLog(t('区間が1つも選ばれていません')); return; }
     if (!(await ensureOutDir())) return;
     HL.busy = true; HL.cancel = false; HL.jobDone = 0; HL.jobTotal = 0; setBusy(true);
     $('hlCancel').style.display = 'inline-block';
-    hlProg(`区間を確認中… 0/${sel.length}`, 0);
+    hlProg(t('区間を確認中… {0}/{1}', 0, sel.length), 0);
     const type = hlType(), key = rangeKey();
     const guard = $('hlGuard').checked, maxH = $('hlScale').checked ? 1080 : null;
     const perMatch = type === 'match' ? (fmt === 'each') : $('hlPerMatch').checked;
@@ -585,7 +585,7 @@
           const png = await makeBadge(my, outH);
           const p = png ? await window.api.hlSavePng(`badge-${Date.now()}-${wi}`, png) : null;
           if (p) badges.set(wi, { path: p, seconds: badgeSec });
-        } catch (e) { hlLog('[警告] キャラ表示の画像を作れませんでした: ' + (e && e.message || e)); }
+        } catch (e) { hlLog(t('[警告] キャラ表示の画像を作れませんでした: {0}', e && e.message || e)); }
       }
     }
     // 区間ごとにそのままファイルにするか（each かつ match 以外）、一時フォルダに切ってから繋げるか
@@ -598,13 +598,13 @@
       for (let i = 0; i < sel.length; i++) {
         const p = sel[i];
         let { s, e } = ranges(p)[key];
-        hlProg(`区間を確認中… ${i + 1}/${sel.length}`, null);
+        hlProg(t('区間を確認中… {0}/{1}', i + 1, sel.length), null);
         if (guard) {
           const g = await H.guardRange(hv, s, e, { interior: !!(p.edit && p.edit[key]) });
-          if (g.changed) { hlLog(`試合${p.match} P${p.k}: 名前が映るフレームを避けて ${fmtT(s)}〜${fmtT(e)} → ${fmtT(g.s)}〜${fmtT(g.e)} に詰めました`); s = g.s; e = g.e; }
+          if (g.changed) { hlLog(t('試合{0} P{1}: 名前が映るフレームを避けて {2}〜{3} → {4}〜{5} に詰めました', p.match, p.k, fmtT(s), fmtT(e), fmtT(g.s), fmtT(g.e))); s = g.s; e = g.e; }
         }
-        if (e - s < 0.5) { hlLog(`試合${p.match} P${p.k}: 区間が短すぎるため飛ばしました`); continue; }
-        const name = `${base}_試合${p.match}${vsTag(HL.windows[p.win])}_P${String(p.k).padStart(2, '0')}_${safeName(p.scoreAfter)}_${p.winner === 'me' ? '自分' : '相手'}${type === 'full' ? '_ラリー全体' : ''}.mp4`;
+        if (e - s < 0.5) { hlLog(t('試合{0} P{1}: 区間が短すぎるため飛ばしました', p.match, p.k)); continue; }
+        const name = `${base}${t('_試合{0}', p.match)}${vsTag(HL.windows[p.win])}_P${String(p.k).padStart(2, '0')}_${safeName(t(p.scoreAfter))}${t(p.winner === 'me' ? '_自分' : '_相手')}${type === 'full' ? t('_ラリー全体') : ''}.mp4`;
         cuts.push({ p, s, e, out: (tmp || HL.outDir) + '\\' + name });
         if (HL.cancel) break;
       }
@@ -614,9 +614,9 @@
         if (perMatch) {
           const by = new Map();
           for (const c of cuts) { if (!by.has(c.p.match)) by.set(c.p.match, []); by.get(c.p.match).push(c); }
-          for (const [m, arr] of by) groups.push({ out: `${HL.outDir}\\${base}_試合${m}${vsTag(HL.windows[arr[0].p.win])}${type === 'match' ? '' : '_ダイジェスト'}.mp4`, cuts: arr });
+          for (const [m, arr] of by) groups.push({ out: `${HL.outDir}\\${base}${t('_試合{0}', m)}${vsTag(HL.windows[arr[0].p.win])}${type === 'match' ? '' : t('_ダイジェスト')}.mp4`, cuts: arr });
         } else {
-          groups.push({ out: `${HL.outDir}\\${base}_${type === 'match' ? '全試合' : 'ダイジェスト'}.mp4`, cuts });
+          groups.push({ out: `${HL.outDir}\\${base}${t(type === 'match' ? '_全試合' : '_ダイジェスト')}.mp4`, cuts });
         }
       }
       // 3) 切り抜き（再エンコード・フレーム単位で正確）
@@ -624,11 +624,11 @@
       for (const c of cuts) {
         if (HL.cancel) break;
         HL.curJob = newJobId();
-        hlProg(`書き出し中… ${HL.jobDone + 1}/${HL.jobTotal}`, HL.jobDone / HL.jobTotal);
+        hlProg(t('書き出し中… {0}/{1}', HL.jobDone + 1, HL.jobTotal), HL.jobDone / HL.jobTotal);
         const r = await window.api.hlCut({ jobId: HL.curJob, input: HL.path, start: c.s, duration: +(c.e - c.s).toFixed(3), out: c.out, crop, maxH, badge: badges.get(c.p.win) || null });
         HL.jobDone++;
         if (r.ok) { c.ok = true; if (direct) outputs.push(c.out); }
-        else hlLog(`[警告] 書き出しに失敗: ${c.out}\n  ${r.error}`);
+        else hlLog(t('[警告] 書き出しに失敗: {0}\n  {1}', c.out, r.error));
       }
       // 4) 連結（再エンコードなし）
       for (const g of groups) {
@@ -637,16 +637,16 @@
         if (!files.length) continue;
         HL.curJob = newJobId();
         HL.joining = g.out.split('\\').pop();
-        hlProg(`繋げています… ${HL.joining}`, HL.jobDone / HL.jobTotal);
+        hlProg(t('繋げています… {0}', HL.joining), HL.jobDone / HL.jobTotal);
         const r = await window.api.hlConcat({ jobId: HL.curJob, files, out: g.out, transition: transitionOpt() });
         HL.joining = null;
         HL.jobDone++;
-        if (r.ok) outputs.push(g.out); else hlLog(`[警告] 連結に失敗: ${g.out}\n  ${r.error}`);
+        if (r.ok) outputs.push(g.out); else hlLog(t('[警告] 連結に失敗: {0}\n  {1}', g.out, r.error));
       }
       if (tmp) await window.api.hlRemove(cuts.filter(c => c.ok).map(c => c.out));
       hlProg('', null);
-      if (HL.cancel) hlLog('書き出しを中止しました');
-      hlLog(outputs.length ? `保存しました（${outputs.length}本）:\n  ` + outputs.join('\n  ') : '保存されたファイルはありません');
+      if (HL.cancel) hlLog(t('書き出しを中止しました'));
+      hlLog(outputs.length ? t('保存しました（{0}本）:\n  ', outputs.length) + outputs.join('\n  ') : t('保存されたファイルはありません'));
       if (outputs.length) $('hlOpenDir').style.display = 'inline-block';
     } catch (e) {
       hlProg('', null);
@@ -671,6 +671,8 @@
     if (f) hlLoad(f);
   });
   document.addEventListener('sc-lastfile', refreshUseLast);
+  // 言語切替: ボタンのヒントと一覧を描き直す（進捗・ログの既出分はそのまま）
+  I18N.onChange(() => { refreshUseLast(); if (HL.points.length) hlRender(); });
   panel.addEventListener('toggle', refreshUseLast);
   refreshUseLast();
   userDataReady.then(() => {
