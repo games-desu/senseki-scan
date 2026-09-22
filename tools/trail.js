@@ -589,7 +589,8 @@ window.Trail = (() => {
     const spdOf = r => Math.max(r.spd, r.spdEarly || 0);
     // コマ数の下限 5 は、速く（ゲートの 2 倍以上）まっすぐ（0.95 以上）大きく（nMax 1000 以上）動く 4 コマの断片だけ 4 に緩める
     // （砂 0911 p5 158.8 相手のトップスピンは 0.3 秒で自分側へ届き、追跡の途切れで 4 コマ×2 本に割れた: nMax 1303/2758・spd 12.5/20.3・直進度 1）
-    const minNOf = (r, sc) => (spdOf(r) >= 2 * minSpd * sc && r.straight >= 0.95 && r.nMax >= 1000) ? Math.min(minN, 4) : minN;
+    // 相手側だけ（自分側の 4 コマ断片はチャージの閃光: 芝 15-18-15 p8 208.47 nMax 5539・直進度 1・spd 16.8 が 0.3 秒早い偽打点になり同側補完まで誘発した）
+    const minNOf = (r, sc) => (r.side === 'opp' && spdOf(r) >= 2 * minSpd * sc && r.straight >= 0.95 && r.nMax >= 1000) ? Math.min(minN, 4) : minN;
     const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minNOf(r, sc) && r.t0 >= tStart + 0.3 && r.dir && spdOf(r) >= minSpd * sc && r.dur <= maxDur
                                        && sideOk(r)
                                        && !r.camStatic                    // カメラと一緒に動くだけの静止物（砂の観客席・テント）
