@@ -109,7 +109,8 @@ window.RallyFuse = (() => {
     let hits = shots.map(s => ({ t: +(s.t0 - LEAD).toFixed(3), side: s.side, cls: s.cls, src: 'trail',
                                  from: s.tail ? { X: s.tail.X, Z: s.tail.Z } : null, n: s.n, nMax: s.nMax, disp: s.disp, S: s.Smed,
                                  // 先端 y の 2 番目に小さい値（先頭に紛れた外れ blob 1 個に引っ張られない。砂 413.5: テントの縞 ty=16 で lob に化けた）
-                                 tyMin: s.frames && s.frames.length ? (ys => ys.length >= 2 ? ys[1] : ys[0])(s.frames.map(f => f.ty != null ? f.ty : f.cy).sort((a, b) => a - b)) : null }))
+                                 tyMin: s.frames && s.frames.length ? (ys => ys.length >= 2 ? ys[1] : ys[0])(s.frames.map(f => f.ty != null ? f.ty : f.cy).sort((a, b) => a - b)) : null,
+                                 _tys: s.frames ? s.frames.map(f => ({ t: f.t, y: f.ty != null ? f.ty : f.cy })) : null }))
                     .sort((a, b) => a.t - b.t);
     // 背景 run（カメラと一緒に動く静止物）の除去と先頭の切り落としは trail.js summarize（yFarAt）へ移した（2026-09-21）
     const FAM = { topspin: 'warm', lob: 'warm', slice: 'blue', flat: 'purple', drop: 'white', unknown: 'any' };
@@ -173,8 +174,11 @@ window.RallyFuse = (() => {
         if (cam && cam.ok) {
           const yFar = Court.toScreen(0, Court.Z_BASE, cam).y / 2;
           h.apex = +(mn.y - yFar).toFixed(0);
+          // 頂点の時刻が打点からどれだけ後か。ロブは 0.4 秒以上上がってから頂点、奥側の速い球はラケットの高さ分だけ上から出るので
+          // 「頂点」が打点直後の最初の追跡点になる（砂 0911 p5 158.87: 追跡 158.97 で −83・0.10 秒後→ lob に化けた）。0.2 秒未満は頂点と見なさない（芝 0908 p5 138.50 の自分のロブは track 由来の打点が遅く 0.24）
+          h.apexAt = +(mn.t - h.t).toFixed(2);
           // drop も含める: 砂では黄ロブが淡く読めて 'drop' になる。ドロップは高く上がらないので頂点で否定できる
-          if (h.apex <= -50 && (h.cls === 'topspin' || h.cls === 'lob' || h.cls === 'unknown' || h.cls === 'drop')) { if (h.cls !== 'lob') h.clsColor = h.cls; h.cls = 'lob'; }
+          if (h.apex <= -50 && h.apexAt >= 0.2 && (h.cls === 'topspin' || h.cls === 'lob' || h.cls === 'unknown' || h.cls === 'drop')) { if (h.cls !== 'lob') h.clsColor = h.cls; h.cls = 'lob'; }
         }
       }
       // トレイル自身の先端 y の最小（＝ボールが画面上でいちばん高く見えた位置）と奥ベースライン行の差。追跡が無いロブ（相手のロブ）の頂点判定に使う
@@ -184,11 +188,20 @@ window.RallyFuse = (() => {
         // 実測（0908 GT + 0908b p4/p5）: 相手のロブ −73〜−114／相手のトップスピン・フラット・スライス −19 以上／
         // 自分のロブ −65〜−68／自分のトップスピン −33 以上（1 本だけ −52）。サーブと最後の打点は除く
         const th = h.side === 'me' ? -60 : -50;
-        if (i > 0 && !last && h.apexTrail != null && h.apexTrail <= th && (h.cls === 'topspin' || h.cls === 'lob' || h.cls === 'unknown' || h.cls === 'drop')) {
+        // 頂点に「居る」コマ数。ロブは頂点で 0.4 秒漂う（0908b p4 192.20: 先端 y が閾値より上に 13 コマ）が、奥側の速い球はラケットの高さ分だけ
+        // ベースラインより上（砂 0911 p5 158.90: −130）から出てすぐ降りる（併合後 8 コマ中 4 コマ・160.50 は 1 コマ）。6 コマ以上（0.2 秒）のときだけロブ
+        // （0908b p4: 相手ロブ 192.17 は 13・自分のロブ 188.80 は 10・相手のトップスピン 191.20 は 4）
+        if (h._tys && cam && cam.ok) {
+          let dwell = 0;
+          for (const f of h._tys) { const c = camAt(f.t) || cam; if (!c || !c.ok) continue; if (f.y - Court.toScreen(0, Court.Z_BASE, c).y / 2 <= th) dwell++; }
+          h.apexDwell = dwell;
+        }
+        if (i > 0 && !last && h.apexTrail != null && h.apexTrail <= th && (h.apexDwell == null || h.apexDwell >= 6) && (h.cls === 'topspin' || h.cls === 'lob' || h.cls === 'unknown' || h.cls === 'drop')) {
           if (h.cls !== 'lob') h.clsColor = h.cls;
           h.cls = 'lob'; h.lobBy = 'trail';
         }
       }
+      delete h._tys;
       h.land = landingFromStar(markers, h.t, tNext, camAt, h.side) || landingFromTrack(track, h.t, tNext, camAt, h.side);
       if (h.land && h.land.Z != null) h.land.wrongSide = h.side === 'me' ? h.land.Z < -0.5 : h.land.Z > 0.5;
       h.serve = i === 0;
