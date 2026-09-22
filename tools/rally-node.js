@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { spawn } = require('child_process');
+const FarBall = require('./farball.js');
 
 const W = 960, H = 540, FRAME_BYTES = W * H * 4;
 
@@ -148,10 +149,16 @@ async function analyze(opts) {
   const shots = trailRuns ? Trail.shots(trailRuns, { tStart: t0 }) : null;
   const track = []; segs.forEach(s => s.pts.forEach(p => track.push(p))); track.sort((a, b) => a.t - b.t);
   const markers = opts.trail ? Star.track(starLog) : [];
+  // 奥側（相手コート）のボール追跡（フル解像度・tools/farball.js）: 折り返し/出現を 'hit' イベントとして追跡イベントに混ぜ、fuse の同側補完・空白補完に効かせる
+  let farBall = null;
+  if (opts.trail && opts.farBall !== false && cams.length) {
+    farBall = await FarBall.track({ video, t0, t1, fps, cams, Court, markers });
+    events.push(...farBall.events); events.sort((a, b) => a.t - b.t);
+  }
   const rally = shots ? RallyFuse.fuse({ shots, events, track, camAt, t0, t1, markers }).shots : null;
 
   return {
-    rally, shots, trailRuns, markers, trailLog: opts.trail ? trailLog : undefined,
+    rally, shots, trailRuns, markers, farBall, trailLog: opts.trail ? trailLog : undefined,
     video: path.basename(video), t0, t1, fps, variant: opts.variant || null,
     ms: Date.now() - started,
     nFrames: frameLog.length,
