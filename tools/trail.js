@@ -485,6 +485,15 @@ window.Trail = (() => {
         if (k + 1 >= fr.length && Math.abs(dcam) >= 20) r.camStatic = +dcam.toFixed(0);
         else if (k + 1 >= 5 && fr.length - (k + 1) >= 3) { r.trimPre = (r.trimPre || 0) + k + 1; r.camTrim = k + 1; fr = fr.slice(k + 1); }
       }
+      // 上の静止判定は大きさ保護（0.8）で止まるので、大きい静止物（砂 0911 の観客席テント: 157.23〜158.50 の 27 コマ・n 81〜1421・x が 338〜448 で揺れる）は素通りした。
+      // run 全体（12 コマ以上＝0.4 秒超）で補正後の重心 y の幅が 20px 以内なら大きさ・カメラ移動量を問わず静止物（farStay・shots で捨てる）。
+      // トレイルは消えるまで動き続ける。相手のロブの頂点の漂いは 0.4 秒で、その run は続けて降りてくる（0908b p4 192.20: 28 コマで幅 200 超）ので当たらない。
+      // 根拠: samples/rally/far-probe.js（0908 GT 一致 run で 12 コマ以上のものは全て幅 50 超・砂の 50.63/157.23 は幅 8/10）
+      if (fr.length >= 12) {
+        const cs = fr.map(comp).filter(c => c != null);
+        // 幅は 10〜90 パーセンタイルで測る（テント run の最後のコマが別物へ 55px 跳ぶ: 157.23 の 158.50 (428,103)）
+        if (cs.length >= 12) { const rng = pct(cs, 0.9) - pct(cs, 0.1); if (rng <= 20) r.farStay = +rng.toFixed(0); }
+      }
     }
     let tiny = 0; while (tiny < fr.length && fr[tiny].b.n < 0.15 * nMaxAll) tiny++;
     if (tiny >= 3 && fr.length - tiny >= 3) { r.trimPre = (r.trimPre || 0) + tiny; fr = fr.slice(tiny); }
@@ -555,7 +564,7 @@ window.Trail = (() => {
              Htip: median(use.map(f => f.b.Htip).filter(v => v != null)),
              Htail: median(use.map(f => f.b.Htail).filter(v => v != null)),
              Smed: median(use.map(f => f.b.Smed).filter(v => v != null)),
-             trimPre: r.trimPre || 0, trimSuf: r.trimSuf || 0, camStatic: r.camStatic || 0, camTrim: r.camTrim || 0,
+             trimPre: r.trimPre || 0, trimSuf: r.trimSuf || 0, camStatic: r.camStatic || 0, camTrim: r.camTrim || 0, farStay: r.farStay || 0,
              nMax: Math.max(...fr.map(f => f.b.n)), cZ0: first.cZ, frames: fr.map(f => ({ t: f.t, cx: f.b.cx, cy: f.b.cy, ty: f.b.tip.y, n: f.b.n, cls: f.b.cls, side: f.b.side })) };
   }
 
@@ -584,6 +593,7 @@ window.Trail = (() => {
     const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minNOf(r, sc) && r.t0 >= tStart + 0.3 && r.dir && spdOf(r) >= minSpd * sc && r.dur <= maxDur
                                        && sideOk(r)
                                        && !r.camStatic                    // カメラと一緒に動くだけの静止物（砂の観客席・テント）
+                                       && !r.farStay                      // run 全体で補正後の重心 y が動かない大きい静止物（砂のテント・summarize 参照）
                                        && !(r.provFrac >= 0.8)          // 仮カメラのズーム中だけの run（0908 芝 52.37: サーブ画の blob が"相手の打点"になった）
                                        && !(r.side === 'me' && r.nMax < 500)   // 手前（自分側）のトレイルは大きく映る（GT の自分の打点は全部 600 以上・本物のドロップ 1024〜4383）。ヨッシーの白い切れ端 319 を落とす
                                        && !(r.straight != null && r.straight < 0.6)   // y が往復する run は走る選手（0908 クレイ 227.93 マリオ 0.14・本物は 0.85 以上）
@@ -594,7 +604,12 @@ window.Trail = (() => {
     for (const r of keep) {
       const last = out[out.length - 1];
       const fam = (a, b) => FAMILY[a] === FAMILY[b] || FAMILY[a] === 'any' || FAMILY[b] === 'any';
+      // 併合の空間的な連続性（診断用に記録・先行断片の最後の重心と後続断片の最初の重心の距離）
+      const endF = last && last._end, stF = r.frames[0];
+      const jump = endF ? +Math.hypot(stF.cx - endF.cx, stF.cy - endF.cy).toFixed(0) : null;
       if (last && fam(last.cls, r.cls) && (last.dir === r.dir || !r.dir || !last.dir) && r.t0 - last.t1 <= mergeGap) {
+        (last.mergeLog = last.mergeLog || []).push({ t0: r.t0, gap: +(r.t0 - last.t1).toFixed(2), jump, nMax: r.nMax, cls: r.cls });
+        last._end = r.frames[r.frames.length - 1];
         // 先行断片が「4コマ以上あるのに後続の 1/5 未満」ならチャージ中のオーラ（0908 クレイ 225.4: nMax 834 → 本物 13343、
         // 砂 413.7: 723 → 7688）。時刻・種別・側などは後続（本物のトレイル）のものにする。本物が途中で切れた断片は 1〜2 コマ目で
         // 育ちきっているので 5 倍差にはならない（芝 56.267 で最大 4.6 倍）
@@ -603,8 +618,9 @@ window.Trail = (() => {
         else { last.t1 = t1; last.n = n; last.nMax = Math.max(last.nMax, r.nMax); last.merged = merged; }
         continue;
       }
-      out.push(Object.assign({}, r));
+      out.push(Object.assign({}, r, { _end: r.frames[r.frames.length - 1] }));
     }
+    for (const s of out) delete s._end;
     return out;
   }
 
