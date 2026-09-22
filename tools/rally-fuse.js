@@ -153,12 +153,19 @@ window.RallyFuse = (() => {
     // 打点の間隔が 2.2 秒を超える＝ボールが空中に居られる時間（深いロブでも 2 秒）を超えているので、間に打点を取りこぼしている。
     // 反対側の追跡 hit（qc ≥ 0.8）があれば 1 本補う（砂 0911 p5: 157.65 me → 160.47 opp の間に相手のロブ 158.78 opp qc 1.30 が埋もれていた。
     // 黄トレイルは砂に溶けて run にならないので track だけが手掛かり）。同側補完の後に見る（157.65 me 自体が同側補完で入るため、ループ内では空白が見えない）
+    // 2026-09-23: 1 本（qc 最大）でなく **側を交互に繋ぐ鎖**で埋める。砂 0911 p7 の 187.20 me → 191.34 opp（4.1 秒）には追跡 hit が
+    // 187.58 opp 1.14 → 188.13 me 0.92 → 190.05 opp 1.88 と並んでいて、qc 最大の 190.05（junk）だけが入り本物の 2 本が落ちていた。
+    // 鎖は prev の反対側から始めて時刻順に側を交互に取り（間隔 0.3 秒以上・qc ≥ 0.8）、鎖の最後が次の打点 h と同じ側なら
+    // 交替が崩れるので最後を捨てる（ラリーは必ず側が交替する）
     for (let i = 1; i < out.length; i++) {
       const prev = out[i - 1], h = out[i];
       if (prev.side === h.side || h.t - prev.t <= 2.2) continue;
-      const cand = events.filter(e => e.kind === "hit" && e.side !== prev.side && (e.qc || 0) >= 0.8 && e.t > prev.t + 0.3 && e.t < h.t - 0.3)
-                         .sort((a, b) => (b.qc || 0) - (a.qc || 0))[0];
-      if (cand) out.splice(i, 0, { t: cand.t, side: cand.side, cls: "unknown", src: "track", from: { X: cand.X, Z: cand.Z }, qc: cand.qc, gapFill: true });
+      const cands = events.filter(e => e.kind === "hit" && (e.qc || 0) >= 0.8 && e.t > prev.t + 0.3 && e.t < h.t - 0.3).sort((a, b) => a.t - b.t);
+      const chain = []; let side = prev.side === 'me' ? 'opp' : 'me', tLast = prev.t;
+      for (const e of cands) { if (e.side !== side || e.t < tLast + 0.3) continue; chain.push(e); tLast = e.t; side = side === 'me' ? 'opp' : 'me'; }
+      if (chain.length && chain[chain.length - 1].side === h.side) chain.pop();
+      const ins = chain.map(c => ({ t: c.t, side: c.side, cls: "unknown", src: "track", from: { X: c.X, Z: c.Z }, qc: c.qc, gapFill: true }));
+      out.splice(i, 0, ...ins); i += ins.length;
     }
     for (let i = 0; i < out.length; i++) {
       const h = out[i], tNext = i + 1 < out.length ? out[i + 1].t : t1;
