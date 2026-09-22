@@ -138,13 +138,37 @@ window.RallyFuse = (() => {
       else drop = b.nMax >= a.nMax ? i - 1 : i;
       hits.splice(drop, 1); i = Math.max(0, i - 2);
     }
+    // 奥側（相手側）のトレイル打点は、彗星の頭が小さく run が自分側に届いてから立つので 0.25〜0.95 秒遅れる（0908 の取りこぼし 7 本中 4 本がこれ）。
+    // フル解像度のボール追跡（tools/farball.js）が相手の位置で「折り返し」「軌道のペア」「出現」を 'hit'（src far-*）として出すので、
+    // 近すぎる 2 本の解決（MIN_GAP）の後に掛ける: 先に寄せると、本来落ちるはずの小さい断片（砂 0911 p5 160.20 n432）が別の時刻へ逃げて残る
+    // 相手側のトレイル打点の 0.12〜1.0 秒前にそれがあれば時刻をそちらへ寄せる（種別はトレイルのまま）。直前の打点より 0.25 秒以上後のものだけ。
+    // qc 1.0 以上（折り返し後に手前へ向かう球）を優先し、同じ段なら最も遅いもの（バウンドの折り返しは打点より前に出る）
+    for (let i = 0; i < hits.length; i++) {
+      const h = hits[i];
+      if (h.side !== 'opp') continue;
+      const prevT = i > 0 ? hits[i - 1].t : -Infinity;
+      // 直前の打点（自分）からボールが相手に届くまでの時間: ベースラインからは 0.5 秒以上（GT 実測 0.55〜0.85）・ネット際（Z > −5）からは 0.3 秒
+      // （芝ランクマ 15-18-15 p8: 205.54 の MAX 溜めの直後 205.98 に出た far-pair が 206.40 の相手の打点を 0.42 秒早く引いていた）
+      const prevH = i > 0 ? hits[i - 1] : null, minGap = prevH && prevH.from && prevH.from.Z != null && prevH.from.Z > -5 ? 0.3 : 0.5;
+      // 場所も合わせる: トレイルの尾（打点側の端）の X と 4m 以内。砂 0911 p5 160.47 が右端の junk（X 7.99）に 159.53 まで引かれた
+      const cands = events.filter(e => e.kind === 'hit' && e.src && e.src.startsWith('far-') && e.t >= h.t - 1.0 && e.t <= h.t - 0.12 && e.t > prevT + minGap
+                                    && (e.X == null || !h.from || h.from.X == null || Math.abs(e.X - h.from.X) <= 4));
+      if (!cands.length) continue;
+      const strong = cands.filter(e => (e.qc || 0) >= 1.0);
+      const pick = (strong.length ? strong : cands).sort((x, y) => y.t - x.t)[0];
+      h.tTrail = h.t; h.t = +pick.t.toFixed(3); h.farFix = pick.src; h.farQc = pick.qc;
+    }
+    hits.sort((a, b) => a.t - b.t);
     // 同側連続 → 間に反対側の追跡 hit があれば補完
     const out = [];
     for (let i = 0; i < hits.length; i++) {
       const h = hits[i], prev = out[out.length - 1];
       if (prev && prev.side === h.side) {
+        // 相手側の補完は、フル解像度のボール追跡（far-*・qc ≥ 1.0）を 960 の追跡 hit より優先する。960 の追跡は奥側で 0.5 秒遅れる
+        // （芝 0908 p0 58.0: 960 の hit は 58.50 qc 2.5、far-pair は 57.96）。qc の尺度が違うので並べ替えでなく段で分ける
+        const rank = e => (e.src && e.src.startsWith('far-') && (e.qc || 0) >= 1.0 ? 10 : 0) + (e.qc || 0);
         const cand = events.filter(e => e.kind === 'hit' && e.side !== h.side && e.t > prev.t + 0.15 && e.t < h.t - 0.1)
-                           .sort((a, b) => (b.qc || 0) - (a.qc || 0))[0];
+                           .sort((a, b) => rank(b) - rank(a) || b.t - a.t)[0];   // 同段なら遅い方（入射中の軌道の切れ目で出る偽のペアは打点より前に出る: 0908 p0 57.63 と 57.96）
         if (cand) out.push({ t: cand.t, side: cand.side, cls: 'unknown', src: 'track', from: { X: cand.X, Z: cand.Z }, qc: cand.qc });
         else h.suspect = 'same-side';
       }
@@ -162,9 +186,19 @@ window.RallyFuse = (() => {
       if (prev.side === h.side || h.t - prev.t <= 2.2) continue;
       const cands = events.filter(e => e.kind === "hit" && (e.qc || 0) >= 0.8 && e.t > prev.t + 0.3 && e.t < h.t - 0.3).sort((a, b) => a.t - b.t);
       const chain = []; let side = prev.side === 'me' ? 'opp' : 'me', tLast = prev.t;
-      for (const e of cands) { if (e.side !== side || e.t < tLast + 0.3) continue; chain.push(e); tLast = e.t; side = side === 'me' ? 'opp' : 'me'; }
-      if (chain.length && chain[chain.length - 1].side === h.side) chain.pop();
-      const ins = chain.map(c => ({ t: c.t, side: c.side, cls: "unknown", src: "track", from: { X: c.X, Z: c.Z }, qc: c.qc, gapFill: true }));
+      for (let k = 0; k < cands.length; k++) {
+        const e = cands[k]; if (e.side !== side || e.t < tLast + 0.3) continue;
+        // 同じ側の候補が 0.3 秒以内に並ぶときは qc 最大を採る（奥側のボール追跡: far-appear 0.9 の 0.1 秒後に far-turn 1.2 が出る）
+        let best = e; for (let m = k + 1; m < cands.length && cands[m].t <= e.t + 0.3; m++) if (cands[m].side === side && (cands[m].qc || 0) > (best.qc || 0)) best = cands[m];
+        chain.push(best); tLast = best.t; side = side === 'me' ? 'opp' : 'me';
+      }
+      if (chain.length && chain[chain.length - 1].side === h.side) {
+        // 交替が崩れる最後の 1 本でも、強い奥側イベント（qc ≥ 1.0 の far-turn/pair）なら残す（suspect same-side を付ける）。次の打点の側が誤っている場合がある
+        // （砂 0911 p7: 191.34 の自分のロブが opp と出て、189.15 の相手のロブ far-turn 1.2 が捨てられていた）
+        const last = chain[chain.length - 1];
+        if (!((last.qc || 0) >= 1.0 && last.src && last.src.startsWith('far-'))) chain.pop(); else last.keptSameSide = true;
+      }
+      const ins = chain.map(c => ({ t: c.t, side: c.side, cls: "unknown", src: c.src && c.src.startsWith('far-') ? c.src : "track", from: { X: c.X, Z: c.Z }, qc: c.qc, gapFill: true, suspect: c.keptSameSide ? 'same-side' : undefined }));
       out.splice(i, 0, ...ins); i += ins.length;
     }
     for (let i = 0; i < out.length; i++) {
