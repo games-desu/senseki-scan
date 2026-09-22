@@ -529,6 +529,10 @@ window.Trail = (() => {
     // 重心の1ステップあたりの移動量の中央値（トレイルはボールと一緒に動く: 10〜60px/2コマ。選手・ラベル・看板は数px）
     const steps = []; for (let i = 1; i < fr.length; i++) steps.push(Math.hypot(fr[i].b.cx - fr[i - 1].b.cx, fr[i].b.cy - fr[i - 1].b.cy) / Math.max(1, Math.round((fr[i].t - fr[i - 1].t) * fps)));
     const spd = median(steps) || 0;
+    // 出現直後の速さ（先頭 4 ステップの中央値）。砂 0911 p5 156.67 の自分のトップスピン（橙）は、トレイルが自分→相手コートの縦一本の筋として
+    // 0.3 秒残るため重心が筋の中央で静止し、全期間の中央値 4.8 でゲート（6.5）に落ちた。出現直後の 3 ステップは 5.4/13.6/25 と速い。
+    // 看板・テントの run は出現直後も数 px なので当たらない
+    const spdEarly = median(steps.slice(0, 4)) || 0;
     // 側は打点＝出現直後の尾の位置で決める（尾はボールと一緒に動くので全期間の多数決は駄目）
     // 側は「トレイルがどちらへ進むか」で決める（尾の位置は出現が遅れると動いてしまう）。
     // 重心の y が減る（画面上へ進む）＝自分の打球、増える＝相手の打球。動きが小さいときだけ尾の Z で補う
@@ -545,7 +549,7 @@ window.Trail = (() => {
     for (let i = 1; i < fr.length; i++) { const d = fr[i].b.cy - fr[i - 1].b.cy; if (d < 0) upSum -= d; else downSum += d; }
     if (Math.abs(dy) < 20 && Math.max(upSum, downSum) >= 20 && Math.max(upSum, downSum) >= 3 * Math.min(upSum, downSum)) dir = downSum > upSum ? 'down' : 'up';
     const side = dir ? (dir === 'up' ? 'me' : 'opp') : (zEarly > 0 ? 'opp' : 'me');
-    return { t0, t1, n: fr.length, cls, votes, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1), spd: +spd.toFixed(1), dur: +(t1 - t0).toFixed(2), sMax: +sMax.toFixed(2), reanchored: r.reanchored || 0,
+    return { t0, t1, n: fr.length, cls, votes, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1), spd: +spd.toFixed(1), spdEarly: +spdEarly.toFixed(1), dur: +(t1 - t0).toFixed(2), sMax: +sMax.toFixed(2), reanchored: r.reanchored || 0,
              provFrac: +provFrac.toFixed(2), straight: +yStraight.toFixed(2), cZpre,
              tail: { x: first.tail.x, y: first.tail.y, X: first.tailX, Z: first.tailZ },
              Htip: median(use.map(f => f.b.Htip).filter(v => v != null)),
@@ -572,7 +576,12 @@ window.Trail = (() => {
     // 再アンカーした run は出現時の重心が先へ進んでいる（クレイ 327.27: Z=3.68 で本物のロブが落ちた）ので、切り離す前の先頭（cZpre）でも可
     // 閾値 5: 自分のトレイルはネット手前 Z=3.2 で出現することがある（15-18-15 p8 デイジーのスライス/フラット・3 だと落ちた）。オーラは選手の位置（|Z|≈8〜10）なので余裕がある
     const sideOk = r => r.cZ0 == null || (r.side === 'me' ? (r.cZ0 < 5 || r.cZpre < 5) : (r.cZ0 > -5 || r.cZpre > -5));
-    const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minN && r.t0 >= tStart + 0.3 && r.dir && r.spd >= minSpd * sc && r.dur <= maxDur
+    // 速さは全期間の中央値か出現直後の中央値の速い方（縦一本の筋として残るトレイルは重心が途中で止まる・summarize の spdEarly 参照）
+    const spdOf = r => Math.max(r.spd, r.spdEarly || 0);
+    // コマ数の下限 5 は、速く（ゲートの 2 倍以上）まっすぐ（0.95 以上）大きく（nMax 1000 以上）動く 4 コマの断片だけ 4 に緩める
+    // （砂 0911 p5 158.8 相手のトップスピンは 0.3 秒で自分側へ届き、追跡の途切れで 4 コマ×2 本に割れた: nMax 1303/2758・spd 12.5/20.3・直進度 1）
+    const minNOf = (r, sc) => (spdOf(r) >= 2 * minSpd * sc && r.straight >= 0.95 && r.nMax >= 1000) ? Math.min(minN, 4) : minN;
+    const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minNOf(r, sc) && r.t0 >= tStart + 0.3 && r.dir && spdOf(r) >= minSpd * sc && r.dur <= maxDur
                                        && sideOk(r)
                                        && !r.camStatic                    // カメラと一緒に動くだけの静止物（砂の観客席・テント）
                                        && !(r.provFrac >= 0.8)          // 仮カメラのズーム中だけの run（0908 芝 52.37: サーブ画の blob が"相手の打点"になった）
