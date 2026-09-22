@@ -21,6 +21,8 @@ window.addEventListener("error", e => progress("error", { msg: String(e.message)
     settings.gameRect = { rx, ry, rw, rh };
   }
   localStorage.setItem('sc_settings', JSON.stringify(settings));
+  // 画面の言語: headless Chrome は navigator.language が英語になるので、指定が無ければ日本語に固定する（既存の回帰ログと比べられるように）
+  localStorage.setItem('sc_lang', q.get('lang') === 'en' ? 'en' : 'ja');
   const f = document.createElement('iframe');
   f.style.cssText = 'width:1400px;height:900px;border:0';
   f.src = '../app/renderer/index.html';

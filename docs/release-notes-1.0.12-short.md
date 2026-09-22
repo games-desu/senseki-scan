@@ -1,0 +1,6 @@
+- 画面の文言を英語で表示できるようになりました。Windowsの言語が日本語以外なら自動で英語になり、右上の「English／日本語」ボタンでいつでも切り替えられます
+- 英語表示ではキャラ名・コート名・ラケット名も英語で表示・入力できます（CSVの中身は従来どおり日本語のままなので、SENSEKI FEVERへの登録はそのまま使えます）
+- 日本語の表示・読み取り結果は変わっていません
+- The app can now show its whole interface in English. It switches automatically when Windows is not set to Japanese, and you can toggle with the "English / 日本語" button at the top right
+- In English mode, character, court and racket names are shown and entered in English (the CSV keeps the Japanese values, so importing into SENSEKI FEVER works as before)
+- Recognition results are unchanged
