@@ -15,7 +15,9 @@ async function main() {
   const W = 960, H = 540;
   let cam = null, hist = [], last = null, img = null, tt = 0;
   const times = [];
-  for await (const fr of frames(video, t - (n - 1) / 60, t + 0.001, 60)) {
+  // 30fps などの入力でも時刻が合うよう、動画のコマ数を渡す（rally-node の frames が fps=60 に揃える・exp-int3f-review）
+  const srcFps = ((await require('./shotcolor.js').videoSize(video)) || {}).fps || null;
+  for await (const fr of frames(video, t - (n - 1) / 60, t + 0.001, 60, srcFps)) {
     const e = Court.estimate(fr.img);
     console.log("estimate", fr.t, e.ok, e.reason, e.suspect, e.agree); if (e.ok && !e.suspect) cam = e;
     const s = Date.now();

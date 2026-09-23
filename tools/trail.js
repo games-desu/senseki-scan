@@ -66,9 +66,10 @@ window.Trail = (() => {
   // 幅5〜7px・長さ200px超の"白トレイル"として毎フレーム残った（2026-09-07 芝コート実測）。
   // カメラモデルでライン位置は分かるので、そこを白分岐から外す。
   const lineNear = new Uint8Array(W * H);
-  function stamp(x, y, r) {
+  const netNear = new Uint8Array(W * H);   // ネットの白帯だけ（色相分岐の淡い画素を落とす・effectMask）
+  function stamp(x, y, r, dst = lineNear) {
     const x0 = Math.max(0, (x - r) | 0), x1 = Math.min(W - 1, (x + r) | 0), y0 = Math.max(0, (y - r) | 0), y1 = Math.min(H - 1, (y + r) | 0);
-    for (let yy = y0; yy <= y1; yy++) for (let xx = x0; xx <= x1; xx++) lineNear[yy * W + xx] = 1;
+    for (let yy = y0; yy <= y1; yy++) for (let xx = x0; xx <= x1; xx++) dst[yy * W + xx] = 1;
   }
   function segment(X0, Z0, X1, Z1, cam, extra = 0) {
     const a = Court.toScreen(X0, Z0, cam), b = Court.toScreen(X1, Z1, cam);
@@ -81,7 +82,7 @@ window.Trail = (() => {
     }
   }
   function buildLineNear(cam) {
-    lineNear.fill(0);
+    lineNear.fill(0); netNear.fill(0);
     const XD = Court.X_DBL, XS = Court.X_SGL, ZS = Court.Z_SVC, ZB = Court.Z_BASE;
     for (const X of [-XD, -XS, XS, XD]) segment(X, -ZB - 4, X, ZB + 2, cam);   // サイドラインはベースラインの外へ延びて描かれている
     segment(0, -ZS, 0, ZS, cam);
@@ -92,7 +93,53 @@ window.Trail = (() => {
     const nl = Court.toScreen(-(XD + 0.9), 0, cam), nr = Court.toScreen(XD + 0.9, 0, cam);
     const n = Math.ceil((nr.x - nl.x) / SC);
     for (let i = 0; i <= n; i++) stamp((nl.x + (nr.x - nl.x) * i / n) / SC, (base.y - hpx * 1.1) / SC, 5);
+    // 芝では白帯が淡い水色（s 0.13〜0.23）に写って色相分岐 H に入り、白帯（elong 35〜50・ネット全幅の blob）がネットを越える色のトレイルと 1 個の blob に繋がって
+    // 両端の色相ビンが白帯になり drop に化けていた（芝ランクマ 15-18-15 p9 217.23〜217.40: 自分の青スライスの筋 n 2926・S 0.43 が白帯と繋がって n 5770・S 0.16・Htip/Htail null／
+    // p10 230.87〜231.07: 自分のピンクのフラットが同じく drop）。白帯の帯 netNear を別に持ち、effectMask で帯の中の淡い画素を色相分岐からも外す。
+    // 帯は垂れを入れる（中央 0.914m・ポスト 1.07m）: 実測（samples/rally/exp-misses/scr/netpos.js・217.216）で上の一直線は y960 203.6、白帯の画素は中央で y 206〜212＝高さ 0.86〜0.95m。帯の厚み分（−0.04m）も押さえる
+    for (let i = 0; i <= n; i++) {
+      const X = -(XD + 0.9) + 2 * (XD + 0.9) * i / n, q = X / (XD + 0.9), hX = 0.914 + 0.156 * q * q;
+      const p = Court.toScreen(X, 0, cam);
+      for (const dh of [0, -0.04]) stamp(p.x / SC, (p.y - (hX + dh) * u / cam.Yc) / SC, 5, netNear);   // netNear だけ（白分岐の lineNear に足すと、ネットを越える白いドロップの筋（ハード 0908b p0 85.63 自分のドロップ）が痩せて run が消えた）
+    }
     return lineNear;
+  }
+  // 白帯の彩度（帯の明るい画素の中央値）。筋が帯を横切っていても帯全体（ダブルスの幅を 200 分割×4 段）の中央値なので動かない。
+  // 値（2026-09-24 第 3 ラウンドの反証役がパイプラインの中で毎コマ測った値・exp-misses-verify/nets.js）: 芝ランクマ 15-18-15 は中央値 0.33〜0.35、砂 0911 は 11 ポイント中 9 で 0.27〜0.44
+  //   → effectMask の上限 0.25 がほぼ毎コマ効いている。0908（砂・クレイ・芝）は 0.06〜0.08、ハード 0908b は ≈0.065 だが、0908 はカメラ推定（15 コマごと）の間に帯の位置がずれて
+  //   1 つの窓の中で最大 0.6 まで鋸歯状に上がる（そのコマは上限 0.25 で切る）。
+  //   （レーンが別スクリプト samples/rally/exp-misses/scr/tapecolor.js で 1 コマずつ測った「芝 0.18・砂/クレイ/ハード 0.06〜0.07」はパイプラインの値と合わなかった）
+  //   上限の感度（x151815＋151815 を rerun）: 0.21 → 22/30 T15（p9 218.5 のロブを失う）・0.25 → 23/30 T16・0.30 → 22/30 C17 T15（p9 217.05 をまた失う）
+  // 根拠の無い値（2026-09-24 exp-int3f・レビューの note）: 帯の画素が 50 点未満（帯が画面外・HUD の下・暗い）なら 0.15 とする所の「50 点」と「0.15」は実測の根拠が無い暫定値
+  //   （exp-misses/scr/patch-net2.js で入ったまま・どのコマで効いているかも数えていない）。0.15 のとき effectMask の切りは 0.21
+  let netS = 0.25;
+  function measureNet(img, cam, ref) {
+    const d = img.data, XD = Court.X_DBL, u = 1 / cam.c0, ss = [];
+    for (let i = 0; i <= 200; i++) {
+      const X = -XD + 2 * XD * i / 200, q = X / (XD + 0.9), hX = 0.914 + 0.156 * q * q, p = Court.toScreen(X, 0, cam), x = Math.round(p.x / SC);
+      if (x < 0 || x >= W) continue;
+      for (const dh of [0.02, 0, -0.02, -0.04]) {
+        const y = Math.round((p.y - (hX + dh) * u / cam.Yc) / SC); if (y < 0 || y >= H || inHud(x, y)) continue;
+        const j = (y * W + x) * 4, r = d[j], g = d[j + 1], b = d[j + 2];
+        if (lum(r, g, b) < ref.L90 - 20) continue;
+        ss.push(hsv(r, g, b).s);
+      }
+    }
+    netS = ss.length >= 50 ? median(ss) : 0.15;
+  }
+
+  // ネットの白帯そのものの blob: 白（drop＝両端に色相が無い）・横長（elong ≥ 15・先端と尾の傾き < 0.15）・白帯の高さ（中央 0.914m）の ±30px。
+  // 帯の除外（netNear）はカメラ推定（15 コマごと）の位置で掛けるので、サーブ画→ラリー画のズーム中は白帯が 1 コマ 1〜2px ずつ動いて帯から外れる
+  // （芝ランクマ 15-18-15 p8 204.47〜204.73: 白帯 y 215→240・推定の帯 218／240・elong 20〜28・n 1000〜1600。7 コマの run が相手のドロップの打点 204.44 になった）。
+  // 本物の白いドロップの筋は幅のある円錐（elong 2〜5）で、白帯と繋がった色のトレイルは両端に色相が出て drop にならない。
+  // blob は捨てずに印（tape）だけ付け、run の 8 割以上が白帯の白い run を shots で捨てる（detect で捨てると run の繋ぎ方が変わり、
+  // 芝ランクマ p9 218.43 の自分の黄ロブの run の先頭が別の切れ端に取られて側の整合で落ちた・実験場の再計算で確認）
+  function netTapeBlob(b, cam) {
+    if (b.cls !== 'drop' || !(b.elong >= 15) || !cam) return false;
+    const dx = Math.abs(b.tip.x - b.tail.x), dy = Math.abs(b.tip.y - b.tail.y);
+    if (!(dx > 0 && dy / dx < 0.15)) return false;
+    const base = Court.toScreen(0, 0, cam), yT = (base.y - 0.914 / cam.c0 / cam.Yc) / SC;
+    return Math.abs(b.cy - yT) <= 30;
   }
 
   // ---- 手順1: コート基準（台形の内側・ライン画素を除く）----
@@ -146,6 +193,7 @@ window.Trail = (() => {
     wm.fill(0, Math.max(0, yTop) * W);
     const S90 = ref.S90, V90 = ref.V90, L90 = ref.L90, Hmed = ref.Hmed, whiteCap = ref.whiteCap, useHue = ref.useHue;
     const sK = S90 + 0.08, vK = V90 - 0.05, lB = L90 + 25;
+    const netCut = Math.min(0.25, netS + 0.06);
     for (let y = 0; y < H; y++) {
       const x0 = rows[y * 2], x1 = rows[y * 2 + 1];
       let j = y * W + x0, i = j * 4;
@@ -168,6 +216,20 @@ window.Trail = (() => {
           // 分岐P（追加・2026-09-08 砂コート実測）: 淡い水色のスライス (172,193,215) は S=0.20・L=189 で
           // コートの L90(194) より暗く、K/B/H/白のどれにも入らない。色相が 60°以上離れていれば低彩度でも通す
           if (!hit && s >= 0.12 && v > 0.6) hit = hd > 60;
+          // ネットの白帯は芝の上で淡い水色（色相 130〜187°・s 0.13〜0.23、帯の下縁で網と混ざる所は 0.29〜0.40）に写り、分岐 H（s≥0.12・色相 30°超）に入る
+          // （芝ランクマ 15-18-15 217.216 の y 202〜214・samples/rally/exp-misses/scr/tapepix.js）。白分岐のライン除外（lines）では止まらないので、帯の中の淡い画素は色相分岐でも取らない。
+          // 切るのは白帯の彩度（measureNet）＋0.06 未満・上限 0.25。芝ランクマと砂 0911 ではほぼ毎コマ上限 0.25 で切っている。0908 の砂/クレイ/芝とハードは多くのコマで 0.12〜0.14
+          // （分岐 H の下限 0.12 に近く、ほとんど切らない）だが、カメラ推定の間に帯がずれたコマは上限まで上がる（measureNet のコメント）。
+          // ＋0.06 の出所（2026-09-24 exp-int3f・レビューの note）: misses レーンが別スクリプト（scr/tapecolor.js）で測った白帯の彩度（芝 0.18・砂/クレイ/ハード 0.06）に足して
+          //   「芝 0.24・その他 0.12＝分岐 H の下限と同じで実質切らない」になるように置いた値（exp-misses/LOG）。その測り値はパイプラインの値と合わなかった（上の measureNet）ので、
+          //   ＋0.06 自体は振って確かめていない暫定値（効いているのは主に上限 0.25 の方）
+          // 注意（2026-09-24 exp-int3f・レビューの note）: ここで色相分岐から外した画素（hit=false）は下の else if に落ち、s < 0.22・明るい（l > lB・whiteCap 未満）・lines の外なら
+          //   白分岐（wm）に入る（lines＝lineNear にはネットの一直線の stamp だけがあり、垂れを入れた netNear の帯は入れていない）。芝ランクマの白帯は輝度 170〜181 で lB（204）に
+          //   届かず白分岐には落ちない（exp-misses/LOG）が、他のコートは測っていない。落ちた画素は白帯の白い blob になりうる＝変更 2（白帯の blob の印 tape と shots の除外）と組にする理由の一つ。
+          //   コードを読んだだけで、白分岐へ落ちる画素の数・効きは測っていない
+          // 色のトレイルの芯は s 0.4 以上なので帯の所が細く削れるだけ。一律 0.45 で切ると、砂の淡い水色のスライス（s 0.16〜0.30・0908 砂 420.9）の筋が帯の所で 1357→397 に痩せ、
+          // summarize の再アンカー（次のコマで 2.5 倍）に掛かって run が 3 コマに縮み相手の打点 420.6 を失った
+          if (hit && s < netCut && netNear[j]) hit = false;
         } else if (!hit && !useHue && l > lB && s > 0.30) hit = true;
         if (hit) mask[j] = 1;
         else if (s < 0.22 && l > lB && l < whiteCap && !(lines && lines[j])) wm[j] = 1;
@@ -343,6 +405,7 @@ window.Trail = (() => {
     const rows = region(cam);
     let yTop = H; for (let y = 0; y < H; y++) if (rows[y * 2] <= rows[y * 2 + 1]) { yTop = y; break; }
     const lines = buildLineNear(cam);
+    measureNet(img, cam, ref);
     const raw = effectMask(img, ref, rows, lines);
     // カメラが大きく変わった（サーブ画→ラリー画のカット）ら居座りの履歴を捨てる。前の画の選手の位置が"居座り"として残り、
     // そこを通るサーブのトレイルが消えた（0908b p4 185.6: c0 0.00074→0.00091・Yc 16.7→12.7）
@@ -378,13 +441,14 @@ window.Trail = (() => {
       const tip = tipIsP2 ? sh.p2 : sh.p1, tail = tipIsP2 ? sh.p1 : sh.p2;
       const col = sampleColors(img, pts, sh, tipIsP2);
       const cls = classify(col, ref);
+      const tape = netTapeBlob({ cls, elong: sh.elong, tip, tail, cy: sh.cy }, cam);
       const tz = Court.toCourt(tail.x * SC, tail.y * SC, cam), cz = Court.toCourt(sh.cx * SC, sh.cy * SC, cam);
       blobs.push({ n: sh.n, cx: +sh.cx.toFixed(1), cy: +sh.cy.toFixed(1), elong: +sh.elong.toFixed(2), len: +sh.len.toFixed(1),
                    tip: { x: tip.x, y: tip.y }, tail: { x: tail.x, y: tail.y }, ov: +ov.toFixed(2),
                    tailZ: +tz.Z.toFixed(2), tailX: +tz.X.toFixed(2), cZ: +cz.Z.toFixed(2), side: tz.Z > 0 ? 'opp' : 'me',
                    Htip: col.Htip == null ? null : Math.round(col.Htip), Hcore: col.Hcore == null ? null : Math.round(col.Hcore),
                    Htail: col.Htail == null ? null : Math.round(col.Htail), Smed: col.Smed == null ? null : +col.Smed.toFixed(2),
-                   cls });
+                   cls, tape: tape || undefined });
     }
     blobs.sort((a, b) => b.n - a.n);
     return { blobs, ref, mask: raw, persisted };
@@ -565,7 +629,10 @@ window.Trail = (() => {
              Htail: median(use.map(f => f.b.Htail).filter(v => v != null)),
              Smed: median(use.map(f => f.b.Smed).filter(v => v != null)),
              trimPre: r.trimPre || 0, trimSuf: r.trimSuf || 0, camStatic: r.camStatic || 0, camTrim: r.camTrim || 0, farStay: r.farStay || 0,
-             nMax: Math.max(...fr.map(f => f.b.n)), cZ0: first.cZ, frames: fr.map(f => ({ t: f.t, cx: f.b.cx, cy: f.b.cy, ty: f.b.tip.y, n: f.b.n, cls: f.b.cls, side: f.b.side })) };
+             // nTape: 白帯の blob（netTapeBlob）のコマ数。shots の除外は nTape / n（丸める前の比）で比べる。tapeFrac は 2 桁に丸めた記録用（2026-09-24 exp-int3f・レビューの note:
+             //   丸めてから ≥ 0.8 と比べると実質 0.795 で 39/49 も通っていた。76 ポイントでは丸め前 < 0.8・丸め後 ≥ 0.8 の run は 0 本＝出力は変わらない: exp-int3f/work/precheck.js）
+             nMax: Math.max(...fr.map(f => f.b.n)), cZ0: first.cZ, nTape: fr.filter(f => f.b.tape).length, tapeFrac: +(fr.filter(f => f.b.tape).length / fr.length).toFixed(2),
+             frames: fr.map(f => ({ t: f.t, cx: f.b.cx, cy: f.b.cy, ty: f.b.tip.y, n: f.b.n, cls: f.b.cls, side: f.b.side })) };
   }
 
   // ---- ショット列の整形 ----
@@ -591,10 +658,15 @@ window.Trail = (() => {
     // （砂 0911 p5 158.8 相手のトップスピンは 0.3 秒で自分側へ届き、追跡の途切れで 4 コマ×2 本に割れた: nMax 1303/2758・spd 12.5/20.3・直進度 1）
     // 相手側だけ（自分側の 4 コマ断片はチャージの閃光: 芝 15-18-15 p8 208.47 nMax 5539・直進度 1・spd 16.8 が 0.3 秒早い偽打点になり同側補完まで誘発した）
     const minNOf = (r, sc) => (r.side === 'opp' && spdOf(r) >= 2 * minSpd * sc && r.straight >= 0.95 && r.nMax >= 1000) ? Math.min(minN, 4) : minN;
+    // 入れなかった（2026-09-24 misses の変更 3・第 3 ラウンドの反証役が止めた）: 自分側で遠く（150px×遠近）までまっすぐ（直進度 0.9 以上）速く（ゲートの 2 倍以上）・nMax 1500 以上・
+    // elong の中央値 2.6 以上の run を緑ガード（下）の例外にする案（ハード 0908b p4 190.03 のボレーの橙・p5 234.37 のサーブの紫はヨッシーの緑が筋の端に入って落ちる）。
+    // 変更 1 と組んだときの効き（exp-misses-verify のアブレーション）はベンチで x0908b 22→23 T12→14・x151815 22→23、全体走で 104.58m→104.30m・191.30m→190.00m＋190.55o・
+    // +234.34m・+297.63o・+225.24m（sfno3）。例外の閾値（直進度・速さ・nMax・elong）が手置きで、ネット際を奥へ走るヨッシー（直進 0.94・速さ 14）との境が近い
     const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minNOf(r, sc) && r.t0 >= tStart + 0.3 && r.dir && spdOf(r) >= minSpd * sc && r.dur <= maxDur
                                        && sideOk(r)
                                        && !r.camStatic                    // カメラと一緒に動くだけの静止物（砂の観客席・テント）
                                        && !r.farStay                      // run 全体で補正後の重心 y が動かない大きい静止物（砂のテント・summarize 参照）
+                                       && !(r.cls === 'drop' && (r.nTape != null ? r.nTape / r.n : r.tapeFrac) >= 0.8)   // 8 割以上のコマが白帯の blob（netTapeBlob）の白い run（芝ランクマ 15-18-15 p8 204.47: 7/7）。丸める前の比（nTape が無い古い run だけ tapeFrac）
                                        && !(r.provFrac >= 0.8)          // 仮カメラのズーム中だけの run（0908 芝 52.37: サーブ画の blob が"相手の打点"になった）
                                        && !(r.side === 'me' && r.nMax < 500)   // 手前（自分側）のトレイルは大きく映る（GT の自分の打点は全部 600 以上・本物のドロップ 1024〜4383）。ヨッシーの白い切れ端 319 を落とす
                                        && !(r.straight != null && r.straight < 0.6)   // y が往復する run は走る選手（0908 クレイ 227.93 マリオ 0.14・本物は 0.85 以上）
@@ -625,5 +697,5 @@ window.Trail = (() => {
     return out;
   }
 
-  return { W, H, SC, hsv, hueDist, courtRef, effectMask, detect, runs, shots, classify, HUD_EXCL, _region: region, _closing: closing, _components: components, _buildLineNear: buildLineNear };
+  return { W, H, SC, hsv, hueDist, courtRef, effectMask, detect, runs, shots, classify, HUD_EXCL, netTapeBlob, _region: region, _closing: closing, _components: components, _buildLineNear: buildLineNear };
 })();
