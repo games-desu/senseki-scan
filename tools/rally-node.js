@@ -10,6 +10,7 @@ const path = require('path');
 const vm = require('vm');
 const { spawn } = require('child_process');
 const FarBall = require('./farball.js');
+const ShotColor = require('./shotcolor.js');
 
 const W = 960, H = 540, FRAME_BYTES = W * H * 4;
 
@@ -155,10 +156,19 @@ async function analyze(opts) {
     farBall = await FarBall.track({ video, t0, t1, fps, cams, Court, markers });
     events.push(...farBall.events); events.sort((a, b) => a.t - b.t);
   }
-  const rally = shots ? RallyFuse.fuse({ shots, events, track, camAt, t0, t1, markers }).shots : null;
+  const rally = shots ? RallyFuse.fuse({ shots, events, track, camAt, t0, t1, markers, farTracks: farBall ? farBall.tracks : [] }).shots : null;
+  // 追跡由来の打点（src track / far-* / launch*・種別 unknown）の種別を、打点直後の球の通り道の色（フル解像度）で読む後段（tools/shotcolor.js・1 打 0.3〜0.6 秒）。
+  // fuse の後に掛ける（rally-refuse.js も fuse の後に掛け直す）
+  let shotColor = null;
+  if (rally && opts.trail && opts.shotColor !== false) {
+    const sc = await ShotColor.apply({ video, rally, segPts: segs.map(s => ({ pts: s.pts })), farBall, t1,
+                                       toCourt: (t, x, y) => { const c = camAt(t); return c && c.ok ? Court.toCourt(x, y, c) : null; },
+                                       camOk: ShotColor.makeCamOk(cams, Court) });
+    shotColor = { changed: sc.changed, n: sc.log.length, ms: sc.ms };
+  }
 
   return {
-    rally, shots, trailRuns, markers, farBall, trailLog: opts.trail ? trailLog : undefined,
+    rally, shots, trailRuns, markers, farBall, shotColor, trailLog: opts.trail ? trailLog : undefined,
     video: path.basename(video), t0, t1, fps, variant: opts.variant || null,
     ms: Date.now() - started,
     nFrames: frameLog.length,
