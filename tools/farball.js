@@ -23,6 +23,8 @@ const expectDiam = yF => 0.0155 * (yF - YVP);
 const isBall = (r, g, b) => { if (g < 160) return false; const rg = r / g, bg = b / g; return rg > 0.84 && rg < 1.02 && bg > 0.28 && bg < 0.68; };
 // HUD（FHD）: 左上の実況吹き出し＋名札・右上のスコア
 const HUD = [{ x: 0, y: 0, w: 480, h: 460 }, { x: 1340, y: 0, w: 580, h: 160 }];
+// 時刻 a → b の間隔を ms の整数で（2026-09-24 exp-int3f・レビュー should-fix 2）。イベントの時刻はコマの格子（1/60 秒）に乗るので、閾値がコマ周期の倍数だと浮動小数の誤差で境界の出入りが変わる
+const dms = (a, b) => Math.round((b - a) * 1000);
 
 function findFfmpeg() {
   if (process.env.SENSEKI_FFMPEG) return process.env.SENSEKI_FFMPEG;
@@ -34,7 +36,7 @@ function findFfmpeg() {
 // r,g,b の値は rgba で受けたときと同じ（2026-09-24 実測: 4 本の録画の 1 秒ずつ・計 2.6 億画素を rgba と rgb24 で読み比べて不一致 0）
 const BPP = 3;
 function spawnFfmpeg(video, t0, t1, fps, band) {
-  const ff = spawn(findFfmpeg(), ['-hide_banner', '-loglevel', 'error', '-ss', String(t0), '-t', String(Math.max(0.001, t1 - t0)), '-i', video,
+  const ff = spawn(findFfmpeg(), ['-hide_banner', '-loglevel', 'error', '-ss', String(t0), '-t', String(Math.max(1 / fps, t1 - t0)), '-i', video,
     '-vf', `fps=${fps},crop=${FW}:${band.h}:0:${band.y}`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
   ff.stderr.on('data', d => process.stderr.write(d));
   return ff;
@@ -158,6 +160,10 @@ function candidates(raw, band, prevMask) {
     if (n < 0.35 * A || n > 4.0 * AU) strong = false;         // 上限 4A: フル解像度では球に光沢と影が付いて 3A を超える（砂 157.2: n 287 / A 170）
     if (n / (bw * bh) < 0.45) strong = false;                   // 球は丸い。芝のライン縁（18x10 f0.4）を落とす
     if (Math.max(bw, bh) > 3.0 * dU || Math.max(bw, bh) > 2.0 * Math.min(bw, bh)) strong = false;
+    // 空中の球の印（2026-09-24 farjunk）: 上限を y+300 の地面の径まで緩めたから強い候補になったもの（地面の径の上限 4A・3.0dF なら落ちていた）。
+    // 地面の径の 4 倍を超えて写る球は、その画面位置の地面より高い所（カメラに近い所）に居る＝相手のラケットの高さには居ない。
+    // 軌道の連結・折り返し（turn/stall）・手前の打ち出しにはそのまま使い、軌道のペアの相手（先行軌道の末尾）からだけ外す（events の isAir・出現の起点には使わない）
+    if (strong && (n > 4.0 * A || Math.max(bw, bh) > 3.0 * dF)) c.air = true;
     if (strong) out.push(c); else if (weakOk) { c.weak = true; weak.push(c); }
   }
   out.mask = mask; out.weak = weak;
@@ -187,12 +193,12 @@ function link(frameCands, fps) {
         if (Math.min(d, d0) > lim) continue;
         if (d < bd) { bd = d; best = c; }
       }
-      if (best) { used.add(best); tr.pts.push({ t: f.t, x: best.x, y: best.y, u: best.u, v: best.v, n: best.n, weak: !!best.weak }); }
+      if (best) { used.add(best); tr.pts.push({ t: f.t, x: best.x, y: best.y, u: best.u, v: best.v, n: best.n, weak: !!best.weak, air: !!best.air }); }
     }
     // 開いている軌道のうち欠測が長いものは閉じる
     for (let i = open.length - 1; i >= 0; i--) { const last = open[i].pts[open[i].pts.length - 1]; if (Math.round((f.t - last.t) * fps) > MAXGAP) { done.push(open[i]); open.splice(i, 1); } }
     // 残りの候補は新しい軌道（静止物は前コマとの重なりで捨てる）
-    for (const c of f.cands) { if (used.has(c) || c.ov >= 0.85) continue; open.push({ pts: [{ t: f.t, x: c.x, y: c.y, u: c.u, v: c.v, n: c.n, weak: !!c.weak }] }); }
+    for (const c of f.cands) { if (used.has(c) || c.ov >= 0.85) continue; open.push({ pts: [{ t: f.t, x: c.x, y: c.y, u: c.u, v: c.v, n: c.n, weak: !!c.weak, air: !!c.air }] }); }
   }
   done.push(...open);
   return done.filter(tr => tr.pts.length >= 4).map(tr => { tr.t0 = tr.pts[0].t; tr.t1 = tr.pts[tr.pts.length - 1].t; return tr; }).sort((a, b) => a.t0 - b.t0);
@@ -277,6 +283,9 @@ function events(tracks, band, Court, camAt, markers = [], weakTracks = []) {
       if (angle(a, b) < (b.vy > 0 ? 45 : 60)) continue;
       if (lastAt >= 0 && p[i].t - p[lastAt].t < 0.25) continue;
       lastAt = i;
+      // 入れなかった（2026-09-24 farjunk 案 C1・第 3 ラウンドの反証役が止めた）: 手前へ 1 コマ 20px 以上で速く降りてきた球が上へ折り返す（a.vy ≥ 20・b.vy < 0）turn を
+      // 自分のネット際のボレー/スマッシュ（高さバイアスで見かけの Z が 4〜7）として捨てる案。0908b p3 156.683（34.7px/コマ）・砂 0911 p3 125.283（29.3）は消えるが、
+      // 本物の相手の折り返し 砂 0911 p2 89.733 が 19.8 で閾値まで 0.2 しか余裕が無い（exp-farjunk/turnvel.js・exp-farjunk-verify）
       // やって戻した（2026-09-24 統合）: 0.1 秒先までで向きの変化が最大の点へ寄せる案（oppsand の turnRefine）。ベンチでの種別の改善は
       // 寄せ先が junk のイベントだった偶然で、打点の数には効かなかった
       push(p[i].t, p[i].x, p[i].y, b.vy > 0 ? 1.2 : 0.85, 'turn', { pts: p, i });
@@ -308,7 +317,21 @@ function events(tracks, band, Court, camAt, markers = [], weakTracks = []) {
       i = i1;
     }
     // 軌道のペア: 直前 0.35 秒以内・120px 以内で終わる軌道があり、その末尾の向きと この軌道の出だしの向きが 60° 以上違えば、間で折り返した（ラケットと閃光で球が隠れる）
-    const prevTr = tracks.filter(o => o !== tr && o.t1 <= tr.t0 && tr.t0 - o.t1 <= 0.35 && Math.hypot(o.pts[o.pts.length - 1].u - p[0].u, o.pts[o.pts.length - 1].v - p[0].v) <= 120);
+    // 空中の球（candidates の air）で終わる先行軌道はペアの相手にしない（2026-09-24 farjunk）。ペアは「ラケットで球が隠れる間の折り返し」なので、
+    // 先行軌道の末尾は相手の打点の高さの球のはず。末尾 0.25 秒に地面の径の 4 倍を超える球があれば、それは頭上を行き来する球（打ち上げたロブの頂点前後・降りてくるロブ）。
+    // 実例: 砂 0911 p2 69.817（自分の打ち上げ 69.43〜69.70 が n/A 4.2〜5.8 で頂点の手前で切れ、降りてくる軌道とペア＝頂点を打点と読んだ）・98.083（末尾 97.70〜97.85 が 4.1〜4.8）／
+    // 0908 p12 320.3（降りてくる大きい球 319.78〜320.20 が n/A 4.4〜7.4 で先行軌道になり、相手の打ち返しの出現 320.30 を消していた）。
+    // 0.25 秒: 98.083 の末尾は空中の点 97.85 の後に小さい点が 2 つ（97.883・97.933）続いてから切れる
+    const isAir = (pts, ta, tb) => pts.some(q => q.air && q.t >= ta - 1e-6 && q.t <= tb + 1e-6);
+    const prevAll = tracks.filter(o => o !== tr && o.t1 <= tr.t0 && tr.t0 - o.t1 <= 0.35 && Math.hypot(o.pts[o.pts.length - 1].u - p[0].u, o.pts[o.pts.length - 1].v - p[0].v) <= 120);
+    const prevTr = prevAll.filter(o => !isAir(o.pts, o.t1 - 0.25, o.t1));
+    // 空中で終わる先行軌道を外しても、この軌道の出だしがその先行軌道の「続き」なら（末尾の速度で外挿した位置から 40px 以内）、同じ球が飛び続けているだけで
+    // 出現（打点）ではない。外挿のずれの実測: 砂 0911 p3 130.233（頭上を越えていく自分のロブ・126.83〜130.13 の空中の軌道の続き）13px／
+    // 0908 p12 271.45（降りてくるロブの続き）11px ／ 本物の打ち返しの 0908 p12 320.317（降りてくるロブ 320.20 (1087,231) の外挿 (1108,294) に対し (1107,186) から出る）108px
+    const contAir = !prevTr.length && prevAll.some(o => {
+      const q = o.pts[o.pts.length - 1], va = velAt(o.pts, o.pts.length - 1, -1), k = Math.max(1, Math.round((p[0].t - q.t) * 60));
+      return Math.hypot(q.u + va.vx * k - p[0].u, q.v + va.vy * k - p[0].v) <= 40;
+    });
     const v0 = velAt(p, 0, +1);
     let pairOk = false, prevSlow = false;
     if (prevTr.length) {
@@ -319,7 +342,11 @@ function events(tracks, band, Court, camAt, markers = [], weakTracks = []) {
       // 飛んでいる球は奥側でも 1 コマ 6px 以上（入射球 6〜30px/コマ）なので 4px 未満を停止とみなす（2026-09-24 opp0908）
       if (speed(va) < 2.5) { let j = o.pts.length - 1; while (j > 0 && Math.hypot(o.pts[j].u - o.pts[j - 1].u, o.pts[j].v - o.pts[j - 1].v) < 4 && o.t1 - o.pts[j - 1].t <= 0.15) j--; if (j >= 1) va = velAt(o.pts, j, -1); }
       if (process.env.FARDBG) console.error('pair?', tr.t0.toFixed(3), 'prev', o.t0.toFixed(3), 'va', va, 'v0', v0, 'ang', angle(va, v0).toFixed(1));
-      if (speed(va) >= 2.5 && speed(v0) >= 2.5 && angle(va, v0) >= (v0.vy > 0 ? 45 : 60)) { const q = o.pts[o.pts.length - 1]; push((q.t + p[0].t) / 2, (q.x + p[0].x) / 2, (q.y + p[0].y) / 2, v0.vy > 0 ? 1.1 : 0.85, 'pair', { pts: p, i: 0 }); pairOk = true; }
+      // 時刻は出射の始まりの 1 コマ前（出現と同じ・2026-09-24 snap）。旧は入射の終わり q と出射の始まり p0 の中点で、ベンチの GT 7 本
+      // （0908 p0 54.81/57.63・p8 227.53・p16 416.13/419.41/420.51・砂 0911 p5 156.99）で中点は GT より 0.09〜0.28 秒早く（中央 −0.12）、p0 は −0.13〜+0.07（中央 +0.02）。
+      // 入射球は接触の前に相手の体・ラケット・閃光に隠れる区間が長く（隠れ 0.15〜0.32 秒）、打った球はすぐ見えるため（0908 p16 419.6: 419.60 白い輪・p0 419.55）
+      const tOut = (q) => Math.max(q.t, p[0].t - 1 / 60);
+      if (speed(va) >= 2.5 && speed(v0) >= 2.5 && angle(va, v0) >= (v0.vy > 0 ? 45 : 60)) { const q = o.pts[o.pts.length - 1]; push(tOut(q), (q.x + p[0].x) / 2, (q.y + p[0].y) / 2, v0.vy > 0 ? 1.1 : 0.85, 'pair', { pts: p, i: 0 }); pairOk = true; }
       // 奥側のロブ（far-lobpair・2026-09-24 opp0908）: 入射球も出射球も画面では「上」へ動くので向きが変わらない（入射＝奥へ遠ざかる／ロブ＝手前へ来るが高く上がる）。
       // 代わりに画面上の速さが急に落ちる。入射球が奥へ速く（8px/コマ以上・上向き 5 以上）動いて途切れ、0.35 秒以内・120px 以内に
       // 半分以下の速さで上へ動く軌道が始まれば、間で相手が打ち上げた（0908 砂 p16 416.1: 415.98 まで (−2.3,−13.1) s13.3 → 416.27 から (0.5,−5.6) s5.6・
@@ -332,7 +359,7 @@ function events(tracks, band, Court, camAt, markers = [], weakTracks = []) {
         const near = p.filter(r => r.t <= p[0].t + 0.3).map(r => [r.x / SC, r.y / SC]).concat([[xE / SC, yE / SC]]);
         const bounce = markers.some(m => Math.abs(m.t0 - tE) <= 0.3 && near.some(([x, y]) => Math.hypot(m.x - x, m.y - y) <= 150));
         if (process.env.FARDBG) console.error('lobpair?', tE.toFixed(3), 'bounce', bounce);
-        if (!bounce) push(tE, xE, yE, 0.85, 'lobpair', { pts: p, i: 0 });
+        if (!bounce) push(tOut(q), xE, yE, 0.85, 'lobpair', { pts: p, i: 0 });   // 時刻は出射の始まり（pair と同じ・0908 p16 416.25: 中点 416.125・p0 416.267）
       }
       // 先行軌道が遅い（静止した候補・落ちてくるトス）ときは折り返しの相手ではない。そのときは下の「出現」も見る（slowAppear・2026-09-24 oppsand）
       // （砂 0911 p1 50.667: 0.32 秒前に静止した候補 (873,376) があってペア不成立→出現も見ずに 0 本・p1 サーブ 48.65: 先行はトス）
@@ -340,7 +367,9 @@ function events(tracks, band, Court, camAt, markers = [], weakTracks = []) {
     }
     // 出現: 直前に軌道が無く、手前へ向かって動き出す（入射球はラケット・閃光・相手の体に隠れて見えないことが多い＝砂 0911 p5 157.1）
     // 奥へ向かう出現（自分の打球が途中から見える）は打点ではないので採らない。ロブは上へ上がるので折り返し／ペアに任せる
-    if ((!prevTr.length || (!pairOk && prevSlow)) && speed(v0) >= 2.5 && v0.vy >= 1 && tr.t1 - tr.t0 >= 0.1) push(Math.max(0, p[0].t - 1 / 60), p[0].x, p[0].y, 0.9, 'appear', { pts: p, i: 0 });
+    // やって戻した（2026-09-24 farjunk）: 出現の起点が空中の大きさ（最初の 0.1 秒に地面の径の 4 倍超）なら採らない案。0908b p4 196.017（降りてくるロブ）は消えたが、
+    // 打った直後の球が光と一体で大きく写る本物の出現を 3 本失った（芝 0908 p6 155.08・160.97（接触 155.05・160.97 前後）／ハード 0908b p3 147.82（接触 147.80））。大きさでは区別できない
+    if ((!prevTr.length || (!pairOk && prevSlow)) && !contAir && speed(v0) >= 2.5 && v0.vy >= 1 && tr.t1 - tr.t0 >= 0.1) push(Math.max(0, p[0].t - 1 / 60), p[0].x, p[0].y, 0.9, 'appear', { pts: p, i: 0 });
   }
   // 弱い軌道の出だし（far-weak・2026-09-24 oppsand）: 手前へ滑らかに進み出す淡いスライスの返球（砂 0911 p7 185.7）。通常の軌道が同じ時刻・場所を覆っていれば見ない。
   // qc 0.75（空白補完の鎖 qc ≥ 0.8 には入れず、同側補完でだけ使う）。smoothWeak の境界・丸めへの敏感さに注意（上のコメント）
@@ -356,6 +385,19 @@ function events(tracks, band, Court, camAt, markers = [], weakTracks = []) {
     if (weakTracks.some(o => o !== tr && o.t1 < p[0].t && p[0].t - o.t1 <= 0.1 && Math.hypot(o.pts[o.pts.length - 1].u - p[0].u, o.pts[o.pts.length - 1].v - p[0].v) <= 50)) continue;
     push(Math.max(0, p[0].t - 1 / 60), p[0].x, p[0].y, 0.75, 'weak', { pts: p, i: 0 });
   }
+  // バウンドの折り返しを捨てる（2026-09-24 farjunk）: 自分の打球が相手コートで跳ねると、画面では「落ちてくる（下へ）→跳ね上がる（上へ）」の折り返しになり、
+  // 上へ向かう折り返し（turn/stall の qc 0.85）として出る。相手が打つのはその後で、跳ね上がった球が相手のラケットで手前へ折り返す＝強いイベント（qc ≥ 1.0）が
+  // 0.1〜0.5 秒後・近くに出る。弱い折り返しの後にそれがあれば、弱い方はバウンド（球は 1 回しか打たれない）。
+  // 実例（目視・exp-farjunk/img）: 芝 0908 p1 76.317 → 76.467 far-pair 1.1（接触 76.50〜76.55・白い輪 76.55）/ ハード 0908b p0 71.883 → 72.233 far-turn 1.2（接触 72.25〜72.30）/
+  // 0908b p3 149.233 → 149.533 far-pair 1.1（接触 149.55〜149.60）。弱い方がトレイルの時刻寄せ（0.12〜1.0 秒前）に選ばれ −0.2〜−0.4 秒ずれていた
+  // （強い方はトレイルの 0.12 秒以内で窓の外）。距離は 960 空間で 18〜91px（71.883→72.233 が 91: 跳ねた球が相手の頭上まで上がってから打たれる）→ 120px まで
+  // snap（窓の上端を h.t に・far-pair の時刻を出射の始まりへ）と組んだ後（2026-09-24 統合 3）: 強い方が窓に入る所は snap だけで強い方が選ばれる（0908 p1 76.517・0908b p0 72.233）。
+  // 強い方がトレイルより後に出て窓の外のままの所では、弱い方だけが候補に残る（0908b p3: far-pair 149.617・トレイル 149.57）→ ここで捨てないと 149.233 へ −0.34 秒寄る（exp-int3 段 2）
+  // 0.1〜0.5 秒は ms の整数で比べる（2026-09-24 exp-int3f・should-fix 2: 0.1/0.5 秒は far のコマ 6/30 個で、76 ポイントの --refar で 3 回ちょうど同点になっていた
+  //   ＝d0911/s0911 p5 158.683→159.183 が 0.5・s0908 p19 521.35→521.45 が 0.1・exp-int3-review/eps/ties.js）。100 < d ≤ 500
+  const bounce = e => (e.src === 'far-turn' || e.src === 'far-stall') && (e.qc || 0) < 1.0
+    && out.some(o => { if (o === e || (o.qc || 0) < 1.0) return false; const d = dms(e.t, o.t); return d > 100 && d <= 500 && Math.hypot(o.x - e.x, o.y - e.y) <= 120; });
+  for (let i = out.length - 1; i >= 0; i--) if (bounce(out[i])) { if (process.env.FARDBG) console.error('bounce', out[i].t); out.splice(i, 1); }
   for (const e of out) { const r = riseAfter(tracks, e); if (r) e.rise = r; }
   return out.sort((a, b) => a.t - b.t);
 }
@@ -480,7 +522,16 @@ function candWorkerMain() {
   });
 }
 
+// FHD 60fps 以外は追わない（2026-09-24 exp-int3f-review N5）: rally-node の analyze は掛ける前に同じ門で止めるが、rally-exp の refarball と下の CLI は track を直接呼ぶので
+// ここでも止める（720p は crop=1920 が ffmpeg に拒まれるだけ・2560×1440 は crop が通って縮尺違いの far が出る・30fps は同じ絵が 2 回ずつ来てコマごとの規則が崩れる）
+const warnedGate = new Set();
 async function track({ video, t0, t1, fps = 60, cams, Court, camAt = null, markers = [] }) {
+  const ShotColor = require('./shotcolor.js');
+  const why = ShotColor.notFhd60(await ShotColor.videoSize(video));
+  if (why) {
+    if (!warnedGate.has(video)) { warnedGate.add(video); console.warn(`[farball] FHD 60fps 以外（${why}）なので奥側のボール追跡を掛けない: ${path.basename(video)}`); }
+    return { skipped: why, events: [], tracks: [], weakTracks: [], band: null };
+  }
   const camList = cams.map(c => c.cam ? Object.assign({ t: c.t }, c.cam) : c);
   const band = bandFor(camList, Court);
   if (!band) return { events: [], tracks: [], band: null };
@@ -515,8 +566,8 @@ async function track({ video, t0, t1, fps = 60, cams, Court, camAt = null, marke
   const weakTracks = smoothWeak(link(weakCands, fps));
   const at = camAt || (t => { let b = camList[0]; for (const c of camList) if (Math.abs((c.t || 0) - t) < Math.abs((b.t || 0) - t)) b = c; return b; });
   const evs = events(tracks, band, Court, at, markers, weakTracks);
-  // 軌道の点: [t, x, y, n, weak(0/1)]（rally-refuse.js --refar が weakTracks も読み直す）
-  const ser = trs => trs.map(tr => ({ t0: tr.t0, t1: tr.t1, n: tr.pts.length, pts: tr.pts.map(q => [+q.t.toFixed(3), Math.round(q.x), Math.round(q.y), q.n, q.weak ? 1 : 0]) }));
+  // 軌道の点: [t, x, y, n, weak(0/1), air(0/1)]（rally-refuse.js --refar が weakTracks も読み直す）
+  const ser = trs => trs.map(tr => ({ t0: tr.t0, t1: tr.t1, n: tr.pts.length, pts: tr.pts.map(q => [+q.t.toFixed(3), Math.round(q.x), Math.round(q.y), q.n, q.weak ? 1 : 0, q.air ? 1 : 0]) }));
   return { events: evs, band, tracks: ser(tracks), weakTracks: ser(weakTracks) };
 }
 

@@ -2,11 +2,11 @@
 // 規則を試して「0908 ベンチ＋砂 4 ポイント＋芝ランクマ 15-18-15 p8＋ロブの退行チェック（0908b p4・芝 0908 p5）」を 1 コマンドで採点する。
 // 本体の tools/ を触らずに並行して試せる（loadModules は __dirname から読むので、コピー側の rally-fuse.js / farball.js が使われる）。
 //
-//   node tools/rally-exp.js init <root> [--from <root0>]   tools/ と基準の結果（既定: v36）を <root> にコピー（--from なら別の実験場から）
+//   node tools/rally-exp.js init <root> [--from <root0>]   tools/ と基準の結果（既定: v38）を <root> にコピー（--from なら別の実験場から）
 //   node tools/rally-exp.js refuse <root> [--refar] [--sets 0908,0911]   <root>/tools で fuse だけ掛け直す（--refar: 保存済み軌道から far イベントも）
 //   node tools/rally-exp.js refarball <root> [--sets 0908,0911] [--only 2,16]   <root>/tools/farball.js で奥側のボール追跡を動画から取り直す→fuse
 //   node tools/rally-exp.js rerun <root> [--sets ...] [--only ...]   <root>/tools で rally-node を丸ごと走らせ直す（トレイル・追跡を変えたとき・1 ポイント 1〜3 分）
-//   node tools/rally-exp.js score <root> [--json out.json] [--base <root0>]   採点（--base: 基準との差分だけ短く出す）
+//   node tools/rally-exp.js score <root> [--json out.json] [--base <root0>] [--holdout]   採点（--base: 基準との差分だけ短く出す・--holdout: 評価専用の y セットも・調整には使わない）
 //   node tools/rally-exp.js copyin <root> --src <dir> --as <name> [--only 4,9]   任意の p*.json 群（全体走など）を <root>/<name> にコピー
 //   score の T は「GT と 0.15 秒以内に当たった打点の数」（|dt|med は当たった打点の時刻誤差の中央値）
 //   node tools/rally-exp.js diff <rootA> <rootB> [--dirs d0908,s0911]   打点単位の差分（+ 増えた / - 消えた / ~ 時刻・種別・由来が変わった）
@@ -17,28 +17,39 @@ const path = require('path');
 // 実験場の tools コピー（samples/rally/exp-*/tools）から走らせても本体のリポジトリを指すように、samples/rally がある所まで上がる
 const REPO = (() => { let d = path.resolve(__dirname, '..'); for (let k = 0; k < 6; k++) { if (fs.existsSync(path.join(d, 'samples', 'rally'))) return d; d = path.dirname(d); } return path.resolve(__dirname, '..'); })();
 const SR = path.join(REPO, 'samples', 'rally');
-// 基準の結果（2026-09-24 v37）。d* = ベンチ（0908・0911 は GT ファイル・151815 は下の GT_151815・0908b/0908p5 はロブチェック）、
+// 基準の結果（2026-09-24 v38＝第 3 ラウンドの統合 exp-int3f・全体走は exp-sv38＝y セットの 9 ポイントを抜いた 47 ポイント）。d* = ベンチ（0908・0911 は GT ファイル・151815 は下の GT_151815・0908b/0908p5 はロブチェック）、
 // x* = 全体走から目視 GT を足したポイント（gt-x*.json・2 人が独立にラベル付け→突き合わせ）。GT ファイルが無いセットは採点しない。
-// v36 の基準は samples/rally/exp-base（init --from samples/rally/exp-base、score --base samples/rally/exp-base で比べられる）
+// v37 の基準は samples/rally/exp-v37（全体走 exp-sv37）、v36 は samples/rally/exp-base（init --from <root>・score --base <root> で比べられる）
 const SETS = {
-  '0908':    { dir: 'd0908',    base: 'exp-v37/d0908',    gt: 'gt-0908.json' },
-  '0911':    { dir: 'd0911',    base: 'exp-v37/d0911',    gt: 'gt-0911.json' },
-  '151815':  { dir: 'd151815',  base: 'exp-v37/d151815',  gt: null },
-  '0908b':   { dir: 'd0908b',   base: 'exp-v37/d0908b',   gt: null },
-  '0908p5':  { dir: 'd0908p5',  base: 'exp-v37/d0908p5',  gt: null },
-  'x0908':   { dir: 'x0908',    base: 'exp-v37/x0908',    gt: 'gt-x0908.json' },     // 芝 p5・砂 p17
-  'x0908b':  { dir: 'x0908b',   base: 'exp-v37/x0908b',   gt: 'gt-x0908b.json' },    // ハード p0（1 試合目・ドロップ）・p4（2 試合目・相手ロブ）
-  'x0911':   { dir: 'x0911',    base: 'exp-v37/x0911',    gt: 'gt-x0911.json' },     // 砂 p4・p6
-  'x151815': { dir: 'x151815',  base: 'exp-v37/x151815',  gt: 'gt-x151815.json' },   // 芝ランクマ p9・p10・p12
+  '0908':    { dir: 'd0908',    base: 'exp-v38/d0908',    gt: 'gt-0908.json' },
+  '0911':    { dir: 'd0911',    base: 'exp-v38/d0911',    gt: 'gt-0911.json' },
+  '151815':  { dir: 'd151815',  base: 'exp-v38/d151815',  gt: null },
+  '0908b':   { dir: 'd0908b',   base: 'exp-v38/d0908b',   gt: null },
+  '0908p5':  { dir: 'd0908p5',  base: 'exp-v38/d0908p5',  gt: null },
+  'x0908':   { dir: 'x0908',    base: 'exp-v38/x0908',    gt: 'gt-x0908.json' },     // 芝 p5・砂 p17
+  'x0908b':  { dir: 'x0908b',   base: 'exp-v38/x0908b',   gt: 'gt-x0908b.json' },    // ハード p0（1 試合目・ドロップ）・p4（2 試合目・相手ロブ）
+  'x0911':   { dir: 'x0911',    base: 'exp-v38/x0911',    gt: 'gt-x0911.json' },     // 砂 p4・p6
+  'x151815': { dir: 'x151815',  base: 'exp-v38/x151815',  gt: 'gt-x151815.json' },   // 芝ランクマ p9・p10・p12
 };
 const GTSETS = () => ['0908', '0911', '151815', ...Object.keys(SETS).filter(k => k.startsWith('x') && fs.existsSync(path.join(SR, SETS[k].gt)))];
+// 評価専用（調整に使わない）: y* = 全体走から 2 人独立ラベル→突き合わせで作った目視 GT（gt-y*.json・2026-09-24・計 102 打）。
+// 第 4 ラウンド以降のレーンには見せない: score --holdout のときだけ採点し、init はコピーしない（全体走の基準 exp-sv38 からもこの 9 ポイントを抜いてある）。
+// 統合の評価で <root>/y* に置いた結果を採る（copyin --src <全体走>/s0908 --as y0908 --only 9,18 など）
+const HOLDOUT = {
+  'y0908':   { dir: 'y0908',   gt: 'gt-y0908.json' },     // クレイ p9・砂 p18
+  'y0908b':  { dir: 'y0908b',  gt: 'gt-y0908b.json' },    // ハード p9・p10（フィーバー・キラーブースト後の種別 unknown が 12 打）
+  'y0911':   { dir: 'y0911',   gt: 'gt-y0911.json' },     // 砂 p3・p10
+  'y151815': { dir: 'y151815', gt: 'gt-y151815.json' },   // 芝ランクマ p15・p16・p17
+};
+const HOLDSETS = () => Object.keys(HOLDOUT).filter(k => fs.existsSync(path.join(SR, HOLDOUT[k].gt)));
 // 芝ランクマ 15-18-15 p8（docs「実測（15-18-15 p8）」の目視 GT 6 打）
 const GT_151815 = { video: 'samples/2026-09-06 15-18-15.mp4', points: [{ idx: 8, t0: 204, t1: 209.8, hits: [
   { t: 204.65, side: 'opp', cls: 'slice', serve: true }, { t: 205.6, side: 'me', cls: 'topspin' }, { t: 206.45, side: 'opp', cls: 'topspin' },
   { t: 206.9, side: 'me', cls: 'slice' }, { t: 207.85, side: 'opp', cls: 'flat' }, { t: 208.7, side: 'me', cls: 'flat' } ] }] };
-// ロブの退行チェック（GT は無い。台本・前回確認済みのロブが lob のまま残るか）。watch は COM の球で正解未確認（表示だけ）
+// ロブの退行チェック（GT は無い。台本・前回確認済みのロブが lob のまま残るか）。watch は正解未確認か lob でないもの（表示だけ）
+// 0908b 188.80m は目視 GT（gt-x0908b・2 人一致）で橙のトップスピンと確定したので must から外した（2026-09-24 第 3 ラウンド）
 const LOBS = {
-  '0908b':  { idx: 4, must: [[188.80, 'me'], [192.17, 'opp'], [194.34, 'me']], watch: [] },
+  '0908b':  { idx: 4, must: [[192.17, 'opp'], [194.34, 'me']], watch: [[188.80, 'me']] },
   '0908p5': { idx: 5, must: [[134.34, 'me'], [138.50, 'me'], [139.37, 'opp'], [141.10, 'me']], watch: [[135.87, 'opp']] },
 };
 const TOL = 0.4;
@@ -75,15 +86,18 @@ function camsOf(r) {
 }
 
 // refuse は Promise を返す（2026-09-24: fuse の後に shotcolor を掛け直す・ffmpeg を呼ぶ）。--no-shotcolor で掛けない
+// shotcolor の 1 行表示: <root>/tools の rally-refuse.js の scText（読まなかったとき skipped と n を出す・2026-09-24 exp-int3f）。古い tools の実験場では従来の形
+const scTextOf = T => require(path.join(T, 'rally-refuse.js')).scText || (sc => sc ? ` shotcolor ${sc.changed}/${sc.n} ${(sc.ms / 1000).toFixed(1)}s` : '');
 async function refuseAll(root, get, refar, has) {
   const T = path.resolve(root, 'tools');
   const { refuse } = require(path.join(T, 'rally-refuse.js'));
+  const scText = scTextOf(T);
   const { loadModules } = require(path.join(T, 'rally-node.js'));
   const mods = loadModules(null), only = onlyOf(get);
   for (const k of dirsOf(get)) for (const f of pfiles(path.join(root, k))) {
     if (only && !only.has(parseInt(f.slice(1), 10))) continue;
     const { before, after, sc } = await refuse(path.join(root, k, f), mods, { refar, shotColor: !has('--no-shotcolor') });
-    console.log(`${k}/${f}: ${before === after ? 'unchanged' : 'changed'}${sc ? ` shotcolor ${sc.changed}/${sc.n} ${(sc.ms / 1000).toFixed(1)}s` : ''}`);
+    console.log(`${k}/${f}: ${before === after ? 'unchanged' : 'changed'}${scText(sc)}`);
   }
 }
 
@@ -94,6 +108,7 @@ async function refarball(root, get, has) {
   const FarBall = require(path.join(T, 'farball.js'));
   const { loadModules } = require(path.join(T, 'rally-node.js'));
   const { refuse } = require(path.join(T, 'rally-refuse.js'));
+  const scText = scTextOf(T);
   const mods = loadModules(null), only = onlyOf(get);
   const jobs = [];
   for (const k of dirsOf(get)) for (const f of pfiles(path.join(root, k))) { if (!only || only.has(parseInt(f.slice(1), 10))) jobs.push(path.join(root, k, f)); }
@@ -107,7 +122,7 @@ async function refarball(root, get, has) {
     fs.writeFileSync(file, JSON.stringify(r, null, 1));
     const t2 = Date.now();
     const { before, after, sc } = await refuse(file, mods, { shotColor: !has('--no-shotcolor') });
-    console.log(`${path.basename(path.dirname(file))}/${path.basename(file)}: far ${fb.events.length} ev ${fb.tracks.length} tr ${((t2 - t) / 1000).toFixed(1)}s ${before === after ? 'unchanged' : 'changed'}${sc ? ` shotcolor ${sc.changed}/${sc.n} ${(sc.ms / 1000).toFixed(1)}s` : ''}`);
+    console.log(`${path.basename(path.dirname(file))}/${path.basename(file)}: far ${fb.events.length} ev ${fb.tracks.length} tr ${((t2 - t) / 1000).toFixed(1)}s ${before === after ? 'unchanged' : 'changed'}${scText(sc)}`);
   });
 }
 
@@ -127,7 +142,7 @@ async function rerun(root, get) {
 
 const tag = d => `${d.t.toFixed(2)}${d.side === 'me' ? 'm' : 'o'} ${d.cls}${d.src && d.src !== 'trail' ? '(' + d.src + ')' : ''}`;
 function benchSet(dir, gt) {
-  let N = 0, F = 0, C = 0, X = 0; const miss = [], extra = [], cls = [], hit = [];
+  let N = 0, F = 0, C = 0, X = 0, Nk = 0, Ck = 0; const miss = [], extra = [], cls = [], hit = [];
   for (const p of gt.points) {
     const file = path.join(dir, `p${p.idx}.json`);
     if (!fs.existsSync(file)) continue;
@@ -138,13 +153,14 @@ function benchSet(dir, gt) {
       if (best == null) { miss.push(`p${p.idx} ${h.t}${h.side === 'me' ? 'm' : 'o'} ${h.cls}`); continue; }
       const d = det[best]; used.add(best); F++;
       hit.push({ p: p.idx, t: h.t, side: h.side, want: h.cls, got: d.cls, dt: +(d.t - h.t).toFixed(2), src: d.src });
+      if (h.cls !== 'unknown') { Nk++; if (d.cls === h.cls) Ck++; }   // Ck/Nk: GT の種別が読めている打点だけの種別正答（y0908b はフィーバー後の unknown が多い）
       if (d.cls === h.cls) C++; else cls.push(`p${p.idx} ${h.t}${h.side === 'me' ? 'm' : 'o'} ${h.cls}←${d.cls}${d.src !== 'trail' ? '(' + d.src + ')' : ''}`);
     }
     det.forEach((d, i) => { if (!used.has(i)) { X++; extra.push(`p${p.idx} ${tag(d)}`); } });
   }
   const ad = hit.map(h => Math.abs(h.dt)).sort((a, b) => a - b);
   const dtMed = ad.length ? +ad[(ad.length - 1) >> 1].toFixed(2) : null, dt15 = ad.filter(v => v <= 0.15 + 1e-9).length;
-  return { N, F, C, X, recall: +(F / Math.max(1, N)).toFixed(3), precision: +(F / Math.max(1, F + X)).toFixed(3), clsAcc: +(C / Math.max(1, F)).toFixed(3), dtMed, dt15, miss, extra, cls, hit };
+  return { N, F, C, X, Nk, Ck, recall: +(F / Math.max(1, N)).toFixed(3), precision: +(F / Math.max(1, F + X)).toFixed(3), clsAcc: +(C / Math.max(1, F)).toFixed(3), dtMed, dt15, miss, extra, cls, hit };
 }
 function lobCheck(dir, spec) {
   const file = path.join(dir, `p${spec.idx}.json`);
@@ -155,17 +171,19 @@ function lobCheck(dir, spec) {
   const watch = spec.watch.map(m => { const d = look(m); return { t: m[0], side: m[1], got: d ? tag(d) : '—' }; });
   return { lobsOk: must.filter(m => m.ok).length, lobsN: must.length, must, watch, rally: det.map(tag).join(' | ') };
 }
-function score(root) {
+function score(root, holdout) {
   const out = {};
   for (const k of GTSETS()) out[k] = benchSet(path.join(root, SETS[k].dir), k === '151815' ? GT_151815 : JSON.parse(fs.readFileSync(path.join(SR, SETS[k].gt), 'utf8')));
   for (const k of Object.keys(LOBS)) out[k] = lobCheck(path.join(root, SETS[k].dir), LOBS[k]);
+  if (holdout) for (const k of HOLDSETS()) if (fs.existsSync(path.join(root, HOLDOUT[k].dir))) out[k] = benchSet(path.join(root, HOLDOUT[k].dir), JSON.parse(fs.readFileSync(path.join(SR, HOLDOUT[k].gt), 'utf8')));
   return out;
 }
 function printScore(s, base) {
-  for (const k of GTSETS()) {
+  for (const k of [...GTSETS(), ...HOLDSETS()]) {
     const r = s[k], b = base && base[k]; if (!r) continue;
-    const d = b ? ` (base ${b.F}/${b.N} X${b.X} C${b.C} |dt|${b.dtMed} ≤.15:${b.dt15})` : '';
-    console.log(`[${k}] ${r.F}/${r.N} R${r.recall} P${r.precision} C${r.C}/${r.F}=${r.clsAcc} X${r.X} |dt|med ${r.dtMed} ≤0.15s ${r.dt15}/${r.F}${d}`);
+    const hold = !!HOLDOUT[k], ck = x => hold ? ` Ck${x.Ck}/${x.Nk}` : '';
+    const d = b ? ` (base ${b.F}/${b.N} X${b.X} C${b.C}${ck(b)} |dt|${b.dtMed} ≤.15:${b.dt15})` : '';
+    console.log(`[${k}] ${r.F}/${r.N} R${r.recall} P${r.precision} C${r.C}/${r.F}=${r.clsAcc}${ck(r)} X${r.X} |dt|med ${r.dtMed} ≤0.15s ${r.dt15}/${r.F}${d}`);
     const diff = (arr, barr) => b ? arr.filter(x => !barr.includes(x)).map(x => '+' + x).concat(barr.filter(x => !arr.includes(x)).map(x => '-' + x)) : arr;
     const m = diff(r.miss, b ? b.miss : []), e = diff(r.extra, b ? b.extra : []), c = diff(r.cls, b ? b.cls : []);
     if (m.length) console.log('   miss :', m.join(' ; '));
@@ -178,7 +196,7 @@ function printScore(s, base) {
     console.log(`[${k} lobs] ${r.lobsOk}/${r.lobsN}${b ? ` (base ${b.lobsOk}/${b.lobsN})` : ''}  ` + r.must.map(m => `${m.t}${m.side[0]}→${m.got}${m.ok ? '' : ' ✗'}`).join(' ; ') + (r.watch.length ? '  watch: ' + r.watch.map(m => `${m.t}${m.side[0]}→${m.got}`).join(' ; ') : ''));
     if (!b || b.rally !== r.rally) console.log(`   rally: ${r.rally}`);
   }
-  const sum = {}; for (const k of GTSETS()) if (s[k]) sum[k] = `${s[k].F}/${s[k].N} X${s[k].X} C${s[k].C} T${s[k].dt15}`; for (const k of Object.keys(LOBS)) if (s[k]) sum[k + 'Lob'] = `${s[k].lobsOk}/${s[k].lobsN}`;
+  const sum = {}; for (const k of [...GTSETS(), ...HOLDSETS()]) if (s[k]) sum[k] = `${s[k].F}/${s[k].N} X${s[k].X} C${s[k].C} T${s[k].dt15}`; for (const k of Object.keys(LOBS)) if (s[k]) sum[k + 'Lob'] = `${s[k].lobsOk}/${s[k].lobsN}`;
   console.log('SUMMARY', JSON.stringify(sum));
 }
 
@@ -227,8 +245,8 @@ async function main() {
   if (cmd === 'refarball') return refarball(root, get, has);
   if (cmd === 'rerun') return rerun(root, get);
   if (cmd === 'score') {
-    const s = score(root);
-    const base = get('--base') ? score(path.resolve(get('--base'))) : null;
+    const s = score(root, has('--holdout'));
+    const base = get('--base') ? score(path.resolve(get('--base')), has('--holdout')) : null;
     printScore(s, base);
     if (get('--json')) fs.writeFileSync(get('--json'), JSON.stringify(s, null, 1));
     return;
@@ -236,4 +254,4 @@ async function main() {
   console.error('unknown command', cmd); process.exit(2);
 }
 if (require.main === module) main().catch(e => { console.error(e); process.exit(1); });
-module.exports = { score, benchSet, SETS, GT_151815, LOBS };
+module.exports = { score, benchSet, SETS, HOLDOUT, GT_151815, LOBS };

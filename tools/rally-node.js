@@ -13,6 +13,8 @@ const FarBall = require('./farball.js');
 const ShotColor = require('./shotcolor.js');
 
 const W = 960, H = 540, FRAME_BYTES = W * H * 4;
+// 実験場の tools コピー（samples/rally/exp-*/tools）から走らせても本体のリポジトリを指すように、samples/rally がある所まで上がる（rally-exp.js・rally-refuse.js と同じ）
+const REPO = (() => { let d = path.resolve(__dirname, '..'); for (let k = 0; k < 6; k++) { if (fs.existsSync(path.join(d, 'samples', 'rally'))) return d; d = path.dirname(d); } return path.resolve(__dirname, '..'); })();
 
 function findFfmpeg() {
   if (process.env.SENSEKI_FFMPEG) return process.env.SENSEKI_FFMPEG;
@@ -53,19 +55,31 @@ function loadModules(variant) {
   // 変種: 同じサンドボックスで走らせ、window.BallTrack のエクスポートを差し替えさせる。
   // 変種側は素の実装を window.BallTrack から取れるので、必要な関数だけ上書きすればよい。
   if (variant) {
-    const vp = path.isAbsolute(variant) ? variant : path.join(dir, 'variants', variant.endsWith('.js') ? variant : variant + '.js');
+    let vp = path.isAbsolute(variant) ? variant : path.join(dir, 'variants', variant.endsWith('.js') ? variant : variant + '.js');
+    // variants/ を写していない実験場の tools コピー（exp-int3f など）は本体の tools/variants を使う（本体の tools から走らせるときは同じ場所なので変わらない）
+    if (!path.isAbsolute(variant) && !fs.existsSync(vp)) {
+      const alt = path.join(REPO, 'tools', 'variants', path.basename(vp));
+      if (fs.existsSync(alt)) { if (!warnedVariant.has(alt)) { warnedVariant.add(alt); console.warn(`[rally-node] ${path.join(dir, 'variants')} に ${path.basename(vp)} が無いので本体の ${alt} を使う`); } vp = alt; }
+    }
     vm.runInContext(fs.readFileSync(vp, 'utf8'), sandbox, { filename: path.basename(vp) });
   }
   return { Court: sandbox.Court, BallTrack: sandbox.BallTrack, Trail: sandbox.Trail, Star: sandbox.Star, RallyFuse: sandbox.RallyFuse };
 }
 
+const warnedVariant = new Set();   // 本体の variants を借りたことを 1 回だけ知らせる（exp-int3f-review N7: 実験場が本体の後の変更を黙って拾わないように）
+
 // ---- ffmpeg から RGBA フレームを1枚ずつ ----
-async function* frames(video, t0, t1, fps) {
+// 時刻は t0 + i/fps と振る。srcFps（動画のコマ数・ShotColor.videoSize で調べたもの）が fps と違うときだけ fps フィルタで fps に揃える
+// （2026-09-24 exp-int3f・レビューの note: 以前はフィルタが無く、30fps の動画を 1/60 秒刻みで数えて時刻が半分に縮んでいた＝窓 60〜72 秒の最後のトレイルのコマが 65.97）。
+// srcFps が fps と同じ（FHD 60fps の録画）か不明なら従来どおりフィルタを掛けない（出力を変えない）
+async function* frames(video, t0, t1, fps, srcFps = null) {
+  const resample = srcFps != null && Math.abs(srcFps - fps) > 0.5;
   const ff = spawn(findFfmpeg(), [
     '-hide_banner', '-loglevel', 'error',
-    '-ss', String(t0), '-t', String(Math.max(0.001, t1 - t0)),
+    // -t は 1 コマ分を下限に（exp-int3f-review S2: OBS の録画は時間の単位が 1/60 秒なので 0.001 は 0 に丸まり、ffmpeg が制限なしで動画の最後まで読んでいた）
+    '-ss', String(t0), '-t', String(Math.max(1 / fps, t1 - t0)),
     '-i', video,
-    '-vf', `scale=${W}:${H}`, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-',
+    '-vf', `${resample ? `fps=${fps},` : ''}scale=${W}:${H}`, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-',
   ]);
   ff.stderr.on('data', d => process.stderr.write(d));
   let buf = Buffer.alloc(0), i = 0;
@@ -80,11 +94,14 @@ async function* frames(video, t0, t1, fps) {
   }
 }
 
+const warnedFps = new Set(), warnedFar = new Set();   // 動画ごとに 1 回だけ警告する
+
 // ---- 1ラリーを解析 ----
 // camEvery: カメラ推定の間引き。ラリー中もドリーするので粗すぎると座標がずれる。
 async function analyze(opts) {
   const { Court, BallTrack, Trail, Star, RallyFuse } = loadModules(opts.variant);
-  const { video, t0, t1, fps = 60, camEvery = 15, trailEvery = 2 } = opts;   // トレイルは2コマに1回で足りる（仕様: 4コマ間隔で可）
+  const { video, t1, fps = 60, camEvery = 15, trailEvery = 2 } = opts;
+  const t0 = Math.max(0, opts.t0);   // 負の t0 は 0 から（exp-int3f-review N9: -ss が負だと窓より長く読み、時刻もずれた）   // トレイルは2コマに1回で足りる（仕様: 4コマ間隔で可）
   // overlapMax=null で静止物フィルタを無効化できる（実験用）
   const overlapMax = opts.overlapMax === undefined ? 0.6 : opts.overlapMax;
 
@@ -94,8 +111,16 @@ async function analyze(opts) {
   const started = Date.now();
   // Phase D: ショット色トレイル（opts.trail のとき毎フレーム）
   const trailLog = [], hist = [], starLog = [];
+  // 入力の解像度とコマ数（2026-09-24 exp-int3f）: FHD 60fps 以外（720p・30fps）は FHD 60fps 専用の段（farball・shotcolor）を掛けず、理由を残す。
+  // コマ数が fps と違えば frames で fps に揃える（時刻を正しく）。fps が読めなければ揃えない（従来どおり）。
+  // 動画そのものを調べられなければ（null）notFhd は 'size?' で、farball・shotcolor は掛けない（安全側・exp-int3f-review N4）
+  const vi = await ShotColor.videoSize(video);
+  const notFhd = ShotColor.notFhd60(vi);
+  const srcFps = vi ? vi.fps : null;
+  const resample = srcFps != null && Math.abs(srcFps - fps) > 0.5;
+  if (resample && !warnedFps.has(video)) { warnedFps.add(video); console.warn(`[rally-node] 入力が ${srcFps}fps なので fps=${fps} に揃えて読む（時刻 t0 + i/${fps}）: ${path.basename(video)}`); }
 
-  for await (const fr of frames(video, t0, t1, fps)) {
+  for await (const fr of frames(video, t0, t1, fps, srcFps)) {
     // カメラが古い（カット直後）ときは 5 コマごとに推定し直して復帰を早める（サーブ画→ラリー画の切替で打点を落とさない）
     if (fr.i % camEvery === 0 || (fr.i - camAt_i > 30 && fr.i % 5 === 0)) {
       const e = Court.estimate(fr.img);
@@ -153,8 +178,16 @@ async function analyze(opts) {
   // 奥側（相手コート）のボール追跡（フル解像度・tools/farball.js）: 折り返し/出現を 'hit' イベントとして追跡イベントに混ぜ、fuse の同側補完・空白補完に効かせる
   let farBall = null;
   if (opts.trail && opts.farBall !== false && cams.length) {
-    farBall = await FarBall.track({ video, t0, t1, fps, cams, Court, markers });
-    events.push(...farBall.events); events.sort((a, b) => a.t - b.t);
+    if (notFhd) {
+      // FHD 60fps 以外は掛けない（2026-09-24 exp-int3f・レビューの note）: 帯の crop（1920 幅）・期待直径・px の閾値は FHD、速さの閾値は 60fps のコマ。以前は ffmpeg が
+      // crop を拒否するのに頼っていた（720p は毎ポイント stderr にエラー・2560×1440 なら crop が通って縮尺違いの far が出る）。30fps の FHD は fps=60 で読むと同じ絵が 2 コマずつ続き、
+      // 前コマとの重なり（ov ≥ 0.85 は軌道の起点にしない）と同じ升目に居るコマ数（静止物の篩）の数え方が 60fps の前提から外れる。空の結果に理由を付けて残す（warn は動画ごとに 1 回）
+      if (!warnedFar.has(video)) { warnedFar.add(video); console.warn(`[farball] FHD 60fps 以外（${notFhd}）なので奥側のボール追跡を掛けない: ${path.basename(video)}`); }
+      farBall = { skipped: notFhd, events: [], tracks: [], weakTracks: [], band: null };
+    } else {
+      farBall = await FarBall.track({ video, t0, t1, fps, cams, Court, markers });
+      events.push(...farBall.events); events.sort((a, b) => a.t - b.t);
+    }
   }
   const rally = shots ? RallyFuse.fuse({ shots, events, track, camAt, t0, t1, markers, farTracks: farBall ? farBall.tracks : [] }).shots : null;
   // 追跡由来の打点（src track / far-* / launch*・種別 unknown）の種別を、打点直後の球の通り道の色（フル解像度）で読む後段（tools/shotcolor.js・1 打 0.3〜0.6 秒）。
@@ -164,12 +197,13 @@ async function analyze(opts) {
     const sc = await ShotColor.apply({ video, rally, segPts: segs.map(s => ({ pts: s.pts })), farBall, t1,
                                        toCourt: (t, x, y) => { const c = camAt(t); return c && c.ok ? Court.toCourt(x, y, c) : null; },
                                        camOk: ShotColor.makeCamOk(cams, Court) });
-    shotColor = { changed: sc.changed, n: sc.log.length, ms: sc.ms };
+    shotColor = { changed: sc.changed, n: sc.skipped ? sc.n : sc.log.length, ms: sc.ms, skipped: sc.skipped, log: sc.log };   // skipped: FHD 以外で読まなかった（2026-09-24）
   }
 
   return {
     rally, shots, trailRuns, markers, farBall, shotColor, trailLog: opts.trail ? trailLog : undefined,
     video: path.basename(video), t0, t1, fps, variant: opts.variant || null,
+    input: vi ? { w: vi.w, h: vi.h, fps: vi.fps, resampled: resample, notFhd60: notFhd } : null,   // 入力の解像度・コマ数と FHD 60fps でない理由（2026-09-24 exp-int3f）
     ms: Date.now() - started,
     nFrames: frameLog.length,
     nCands: frameLog.reduce((s, f) => s + f.c.length, 0),
