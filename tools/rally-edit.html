@@ -20,6 +20,7 @@
   .badge.draft { color:var(--gold); border-color:#6b5a1c; }
   .badge.done { color:var(--accent); border-color:var(--accent-dark); }
   #work { flex:1; display:flex; flex-direction:column; min-width:0; padding:10px 14px; gap:8px; overflow-y:auto; }
+  #work > * { flex-shrink:0; }
   #vwrap { position:relative; background:#000; overflow:hidden; align-self:center; width:100%; max-width:1280px; aspect-ratio:16/9; flex-shrink:0; }
   #vwrap video { width:100%; height:100%; display:block; transform-origin:50% 18%; }
   #vwrap.zoom video { transform:scale(2); }
