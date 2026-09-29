@@ -30,23 +30,24 @@ function retrailFile(file, mods, opts = {}) {
 
 if (require.main === module) (async () => {
   const a = process.argv.slice(2);
-  const dir = a[0];
-  if (!dir) { console.error('usage: node rally-retrail.js <dir> [--only 0,2] [--check] [--refar] [--no-shotcolor]'); process.exit(2); }
+  // 先頭の「--」で始まらない引数を全部 dir として扱う（以前は先頭 1 つだけだった）
+  const dirs = []; for (const x of a) { if (x.startsWith('--')) break; dirs.push(x); }
+  if (!dirs.length) { console.error('usage: node rally-retrail.js <dir...> [--only 0,2] [--check] [--refar] [--no-shotcolor]'); process.exit(2); }
   const get = (k, d) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : d; };
   const only = get('--only') ? new Set(get('--only').split(',').map(Number)) : null;
   const check = a.includes('--check');
   const mods = loadModules(null);
   let nSame = 0, nDiff = 0;
-  for (const f of fs.readdirSync(dir).filter(f => /^p\d+\.json$/.test(f)).sort((x, y) => +x.slice(1) - +y.slice(1))) {
+  for (const dir of dirs) for (const f of fs.readdirSync(dir).filter(f => /^p\d+\.json$/.test(f)).sort((x, y) => +x.slice(1) - +y.slice(1))) {
     const idx = parseInt(f.slice(1), 10);
     if (only && !only.has(idx)) continue;
-    const file = path.join(dir, f);
+    const file = path.join(dir, f), tag = dirs.length > 1 ? `${path.basename(dir)}/${f}` : f;
     const s = retrailFile(file, mods, { write: !check });
-    if (s.noLog) { console.log(`${f}: no trailLog`); continue; }
-    if (s.changed) { nDiff++; console.log(`${f}: shots changed`); console.log('  -', s.before); console.log('  +', s.after); } else nSame++;
+    if (s.noLog) { console.log(`${tag}: no trailLog`); continue; }
+    if (s.changed) { nDiff++; console.log(`${tag}: shots changed`); console.log('  -', s.before); console.log('  +', s.after); } else nSame++;
     if (check) continue;
     const { before, after, sc } = await refuse(file, mods, { refar: a.includes('--refar'), shotColor: !a.includes('--no-shotcolor') });
-    console.log(`${f}: rally ${before === after ? 'unchanged' : 'changed'}${scText(sc)}`);
+    console.log(`${tag}: rally ${before === after ? 'unchanged' : 'changed'}${scText(sc)}`);
     if (before !== after) { console.log('  -', before); console.log('  +', after); }
   }
   console.log(`shots same ${nSame} diff ${nDiff}`);

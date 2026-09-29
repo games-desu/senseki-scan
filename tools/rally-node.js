@@ -128,6 +128,7 @@ async function analyze(opts) {
       // 横2本以上・縦2本以上・交差検証あり、を「ラリーカメラ」の条件にする（2026-09-08 実測: 0908 p3 110.5〜111.75）
       if (e.ok && !e.suspect && e.hHits >= 2 && e.xHits >= 2 && e.agree != null) {
         cam = e; camAt_i = fr.i; camProv = null;
+        e.t = fr.t;   // 標本の時刻（rally-refuse の camAt と同じ形・2026-09-29 fartime: fuse の自分のサーブの寄せが「直前に標本が無い」を見る。farball は自前で t を足すので変わらない）
         cams.push({ t: fr.t, cam: e });
         const base = Court.toScreen(0, 0, cam).y, u = 1 / cam.c0, hpx = 0.91 * u / cam.Yc;
         net = { y0: (base - hpx * 1.25) / 2, y1: (base + 12) / 2 };

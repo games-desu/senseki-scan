@@ -383,7 +383,12 @@ window.Trail = (() => {
   //   v38 で偶然繋がっていた run が割れて全体走で偽の打点が 4 本出た（砂 0911 p1 49.47o・p2 59.64o・ハード 0908b p5 228.37o・p12 のフィーバーの自分の打点が消える: exp-r4-color/LOG [4]）
   function flatTail(b) {
     const purple = h => h != null && h >= 270 && h < 345;
-    return b.cls === 'topspin' && b.Htail != null && (b.Htail >= 345 || b.Htail < 15) && (purple(b.Htip) || b.Htip == null) && purple(b.Hcore);
+    // 2026-09-29 第5ラウンド color: 先端はマゼンタ（345〜360）も紫の側に入れる。砂の上の紫のフラットは先端が赤へ寄る
+    //   （x0911 p4 142.50〜142.67 の自分の紫のフラット: 核 313〜325 のまま先端 346・353 のコマがあり、flat 2／topspin 2 の同数で clsAlt にならず topspin・GT 142.3 flat）。
+    //   GT のある 6 セットで「topspin・尾が赤・核が紫・先端 345〜360」の blob は 3 個（上の 142.6/142.633 が GT flat・d0911 152.733 は GT 打点の外）で topspin は 0（magtip.js）。
+    //   先端が 0〜15（赤〜橙）は入れない（x0908 p5 140.467 は核 328 だが GT slice）
+    //   全体走 47 ポイントでは新たに条件に入る blob が 3 個あり、うち 2 個は得点板・チャージ光のゴミだが、打点の種別には届いていない（exp-r5-color-verify）
+    return b.cls === 'topspin' && b.Htail != null && (b.Htail >= 345 || b.Htail < 15) && (purple(b.Htip) || b.Htip == null || b.Htip >= 345) && purple(b.Hcore);
   }
 
   // クレイの青スライス（2026-09-23 第 4 ラウンド color レーン）: 半透明の青い筋の尾が赤いクレイ（コートの色相 11）と混ざって紫（尾 288〜322）に寄り、尾で決めると flat になる
@@ -652,6 +657,19 @@ window.Trail = (() => {
       for (let i = 0; i < Math.min(fr.length, 10); i++) { if (fr[i].b.n < 0.15 * nMaxAll) { run++; if (run >= 3) cut = i + 1; } else run = 0; }
       if (cut > 0 && fr.length - cut >= 3) { r.trimPre = (r.trimPre || 0) + cut; r.tinyCut = cut; fr = fr.slice(cut); }
     }
+    // 画面の上端（y 30px 以内＝奥の壁・フェンス・テントの帯）に居座る先頭（第 5 ラウンド nearjunk）。上の静止切りは大きさ保護（0.5/0.8）で止まり、
+    // 壁の帯が run 最大と同じ大きさのコマを含むと素通りした（砂 x0911 p4 147.60〜148.23: y 17〜22 の 19 コマ・n 1059 が run の最大 → 本物の橙トレイルは
+    // 148.367 (441,78) から。打点が 147.57 と GT 147.85 より 0.28 早かった・img/x0911_1476.png。同じ形: x0911 p4 144.90〜145.20 の 8 コマ（y 23）→ 145.233 (581,100)、
+    // ハード x0908b p0 80.53〜81.83 の 40 コマ（y 16〜28・img/x0908b_804.png で球は上端に無い）→ 82.000 (492,91)）。
+    // 上端が 5 コマ以上（静止切りと同じ 5）続いた後に 40px 以上跳んで次が来るなら、上端の部分は別物とみなし、本物が現れたコマの時刻と尾を topHead/topTail に残す。
+    // run は切らない（切ると後ろの切れ端が別の run として先頭に立ち、併合と種別が変わった: x0908b p0 が 81.54o topspin に・work/LOG 段 1）。使うのは fuse の相手側の打点時刻だけ。
+    // ロブの頂点が上端に掛かっても、降りてくる球はふつう 1 コマ 12px 以下で繋がる（跳ばない）ので当たらない。ただし自分のロブが画面の上から外へ出て戻ると跳ぶ
+    // （s0911 p0 20.717 の自分のロブ → 21.037 に topHead・全体走で見つけた）。これは fuse 側で「自分の打点の 370ms 以内の topHead 相手打点は捨てる」で止めている。3 コマ（x0908b p0 85.83: 決め球の後の上端 3 コマ）は数えない
+    {
+      r.topHead = null; r.topTail = null; r.topCut = 0;
+      let k = 0; while (k < fr.length && fr[k].b.cy <= 30) k++;
+      if (k >= 5 && fr.length - k >= 3 && Math.hypot(fr[k].b.cx - fr[k - 1].b.cx, fr[k].b.cy - fr[k - 1].b.cy) >= 40) { r.topHead = fr[k].t; r.topCut = k; r.topTail = { x: fr[k].b.tail.x, y: fr[k].b.tail.y, X: fr[k].b.tailX, Z: fr[k].b.tailZ }; }
+    }
     let suf = 0; while (suf + 1 < fr.length && near(fr[fr.length - 2 - suf], fr[fr.length - 1 - suf])) suf++;
     if (suf + 1 >= 5 && fr.length - (suf + 1) >= 3) { r.trimSuf = (r.trimSuf || 0) + suf + 1; fr = fr.slice(0, fr.length - (suf + 1)); }
     // 「速く動いた後にその場で止まる」末尾（1 コマ 6px 以下が 4 コマ以上・大きさ不問）は走って止まった選手（0908b ヨッシーの赤い甲羅: 413→384 と動いて 319 付近で静止）。
@@ -733,7 +751,7 @@ window.Trail = (() => {
              Htail: median(use.map(f => f.b.Htail).filter(v => v != null)),
              Smed: median(use.map(f => f.b.Smed).filter(v => v != null)),
              align: align == null ? null : +align.toFixed(3), nAlign: aligns.length,
-             tailMoved: r.tailMoved || 0, trimPre: r.trimPre || 0, trimSuf: r.trimSuf || 0, camStatic: r.camStatic || 0, camTrim: r.camTrim || 0, farStay: r.farStay || 0,
+             topHead: r.topHead != null ? r.topHead : null, topTail: r.topTail || null, topCut: r.topCut || 0, tailMoved: r.tailMoved || 0, trimPre: r.trimPre || 0, trimSuf: r.trimSuf || 0, camStatic: r.camStatic || 0, camTrim: r.camTrim || 0, farStay: r.farStay || 0,
              // nTape: 白帯の blob（netTapeBlob）のコマ数。shots の除外は nTape / n（丸める前の比）で比べる。tapeFrac は 2 桁に丸めた記録用（2026-09-24 exp-int3f・レビューの note:
              //   丸めてから ≥ 0.8 と比べると実質 0.795 で 39/49 も通っていた。76 ポイントでは丸め前 < 0.8・丸め後 ≥ 0.8 の run は 0 本＝出力は変わらない: exp-int3f/work/precheck.js）
              // courtH: コートの色相（courtRef の Hmed・run のコマの中央値）。芝 84〜86・砂 51〜55・クレイ 11・ハード 188〜205（v38 の全体走の trailLog）。shots の緑ガードの例外（淡い青スライス）に使う
