@@ -1,6 +1,7 @@
 // ラリー解析の手直しツール（自分用・方針 B の第 1 段）
-//   node tools/rally-edit-server.js <runDir> [--gt out.json] [--video path] [--port 4762]
+//   node tools/rally-edit-server.js <runDir> [--gt out.json] [--seed gt.json] [--video path] [--port 4762]
 //   → http://localhost:4762/ をブラウザで開く
+//   --seed: 既存の目視 GT（gt-x0908.json 等）を下書きにする。無ければ検出結果が下書き
 // <runDir> の p*.json（rally-match / rally-exp の出力）の打点を初期値にして、時刻・側・種別を直し、
 // 目視 GT と同じ形（{video, note, points:[{idx, t0, t1, hits:[{t, side, cls, serve?}]}]}）で保存する。
 // 保存先の既定は samples/rally/gt-edit-<runDir の名前>.json。「確認済み」にしていないポイントは draft: true で残し、
@@ -28,14 +29,21 @@ let summary = null;
 try { summary = JSON.parse(fs.readFileSync(path.join(runDir, 'points.json'), 'utf8')); } catch { /* 無くてよい */ }
 const sumByIdx = new Map((summary?.points || []).map(p => [p.idx, p]));
 let videoName = get('--video', summary?.video || null);
+// --seed <gt.json>: 既存の目視 GT があるポイントは、それを下書きにする（検出は薄い線で並べるだけ）。
+// x0911 で旧 GT（10fps シート読み）と手直しを突き合わせたら、時刻は全打点 ±0.3 秒以内・違いはトレイル無色の球の種別だけだった（2026-09-30）。
+const seedFile = get('--seed', null);
+const seed = seedFile ? JSON.parse(fs.readFileSync(path.resolve(seedFile), 'utf8')) : null;
+const seedByIdx = new Map((seed?.points || []).map(p => [p.idx, p]));
 const points = files.map(f => {
   const j = JSON.parse(fs.readFileSync(path.join(runDir, f), 'utf8'));
   const idx = parseInt(f.slice(1));
   if (!videoName && j.video) videoName = j.video;
   const s = sumByIdx.get(idx);
+  const sd = seedByIdx.get(idx);
   return {
     idx, t0: j.t0, t1: j.t1, fps: j.fps, score: s?.score ?? null, winner: s?.winner ?? null,
     rally: (s?.rally || j.rally || []).map(h => ({ t: h.t, side: h.side, cls: h.cls, serve: !!h.serve, src: h.src })),
+    seed: sd ? sd.hits.map(h => ({ t: h.t, side: h.side, cls: h.cls, serve: !!h.serve, src: '旧GT', note: h.note })) : null,
   };
 });
 if (!points.length) { console.error(`p*.json がありません: ${runDir}`); process.exit(1); }
@@ -124,4 +132,5 @@ http.createServer((req, res) => {
   console.log(`  run   ${runDir}（${points.length} ポイント）`);
   console.log(`  video ${videoPath}`);
   console.log(`  gt    ${gtFile}`);
+  if (seed) console.log(`  seed  ${path.resolve(seedFile)}（${points.filter(p => p.seed).length} ポイント）`);
 });
