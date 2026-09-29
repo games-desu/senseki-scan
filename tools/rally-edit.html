@@ -135,7 +135,7 @@ function openPoint(idx) {
   flushSave();
   cur = D.points.find(p => p.idx === idx);
   const s = state.get(idx);
-  hits = (s ? s.hits : cur.rally).map(h => ({ t: h.t, side: h.side, cls: h.cls, serve: !!h.serve, src: h.src, note: h.note }));
+  hits = (s ? s.hits : cur.seed || cur.rally).map(h => ({ t: h.t, side: h.side, cls: h.cls, serve: !!h.serve, src: h.src, note: h.note }));
   sel = hits.length ? 0 : -1;
   renderSide(); render();
   seek(hits.length ? hits[0].t - 0.3 : cur.t0);
@@ -248,8 +248,8 @@ $('bSide').onclick = () => withSel(h => { h.side = h.side === 'me' ? 'opp' : 'me
 $('bServe').onclick = () => withSel(h => { h.serve = !h.serve; });
 $('bDel').onclick = () => { if (sel < 0) return; hits.splice(sel, 1); sel = Math.min(sel, hits.length - 1); changed(); };
 $('bReset').onclick = () => {
-  if (!confirm(`p${cur.idx} の手直しを捨てて検出結果に戻しますか？`)) return;
-  hits = cur.rally.map(h => ({ ...h, orig: h.t })); sel = hits.length ? 0 : -1; changed();
+  if (!confirm(`p${cur.idx} の手直しを捨てて${cur.seed ? '旧GT' : '検出結果'}に戻しますか？`)) return;
+  hits = (cur.seed || cur.rally).map(h => ({ ...h, orig: h.t })); sel = hits.length ? 0 : -1; changed();
 };
 // 多数のシーク後に、デコードは生きているのに画面へ描かれず黒くなることがある（2026-09-30）。
 // ソースを張り直して同じ時刻に戻す。編集内容（hits）には触れない。
