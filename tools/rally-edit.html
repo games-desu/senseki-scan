@@ -89,6 +89,8 @@
 const CLS = [
   ['topspin', 'トップスピン', '#e8623d'], ['slice', 'スライス', '#4aa3e8'], ['flat', 'フラット', '#a56be8'],
   ['lob', 'ロブ', '#e8c93d'], ['drop', 'ドロップ', '#e4ede8'], ['fever', 'フィーバー', '#e85aa8'], ['unknown', '不明', '#6b7d74'],
+  // 以下はトレイルに色が付かない打球（ユーザー直伝 2026-09-30）
+  ['slide', 'スライドフットワーク', '#7fc8b4'], ['dive', 'とびつき', '#c9a27a'],
 ];
 const COL = Object.fromEntries(CLS.map(c => [c[0], c[2]]));
 const NAME = Object.fromEntries(CLS.map(c => [c[0], c[1]]));
@@ -274,7 +276,7 @@ document.addEventListener('keydown', e => {
   else if (k === 'z' || k === 'Z') { $('zoom').checked = !$('zoom').checked; $('zoom').onchange(); }
   else if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); $('bDel').click(); }
   else if (k === 'Enter') { e.preventDefault(); $('bDone').click(); }
-  else if (/^[1-7]$/.test(k)) withSel(h => { h.cls = CLS[+k - 1][0]; });
+  else if (/^[1-9]$/.test(k)) withSel(h => { h.cls = CLS[+k - 1][0]; });
 });
 window.addEventListener('beforeunload', flushSave);
 init();
