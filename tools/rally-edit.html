@@ -78,7 +78,7 @@
       <button id="bDel">削除 <kbd>Del</kbd></button>
       <span class="sub">種別: <span id="clsKeys"></span></span>
     </div>
-    <table><thead><tr><th>#</th><th>時刻(s)</th><th>検出との差</th><th>側</th><th>種別</th><th>サーブ</th><th>元</th></tr></thead><tbody id="tb"></tbody></table>
+    <table><thead><tr><th>#</th><th>時刻(s)</th><th>検出との差</th><th>側</th><th>種別</th><th>サーブ</th><th>元</th><th>メモ</th></tr></thead><tbody id="tb"></tbody></table>
     <div id="help">
       打点の時刻は「ラケットが球に当たったコマ（トレイルが出る直前）」に合わせる。<kbd>[</kbd><kbd>]</kbd> 前後の打点へ移動、<kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> は 0.1 秒送り。
       タイムラインは上が相手・下が自分、真ん中の細い線は元の検出。変更は自動で保存され、「確認済み」にするまで採点には使われない（draft）。
@@ -102,6 +102,15 @@ $('clsKeys').innerHTML = CLS.map((c, i) => `<kbd>${i + 1}</kbd><span class="sw" 
 async function init() {
   D = await (await fetch('/api/load')).json();
   for (const p of D.edited) state.set(p.idx, { hits: p.hits, done: !p.draft });
+  // 前回サーバーに届かなかった編集を戻して保存し直す
+  let pending = {};
+  try { pending = JSON.parse(localStorage.getItem(BK()) || '{}'); } catch { }
+  for (const [idx, b] of Object.entries(pending)) {
+    const p = D.points.find(q => q.idx === +idx);
+    if (!p) continue;
+    const r = await fetch('/api/save', { method: 'POST', body: JSON.stringify({ idx: p.idx, t0: p.t0, t1: p.t1, done: b.done, hits: b.hits }) }).then(r => r.json()).catch(() => ({}));
+    if (r.ok) { state.set(p.idx, { hits: b.hits, done: b.done }); dropBackup(p.idx); setStatus(`前回保存できなかった p${idx} の編集を戻しました`); }
+  }
   $('meta').textContent = `${D.runDir}  →  ${D.gtFile}`;
   v.src = '/video';
   v.playbackRate = +$('rate').value;
@@ -123,8 +132,7 @@ function openPoint(idx) {
   flushSave();
   cur = D.points.find(p => p.idx === idx);
   const s = state.get(idx);
-  hits = (s ? s.hits : cur.rally).map(h => ({ t: h.t, side: h.side, cls: h.cls, serve: !!h.serve, src: s ? h.src : h.src, orig: s ? null : h.t }));
-  // 元の検出との対応（保存済みでも最寄りの検出を差として見せる）
+  hits = (s ? s.hits : cur.rally).map(h => ({ t: h.t, side: h.side, cls: h.cls, serve: !!h.serve, src: h.src, note: h.note }));
   sel = hits.length ? 0 : -1;
   renderSide(); render();
   seek(hits.length ? hits[0].t - 0.3 : cur.t0);
@@ -149,7 +157,7 @@ function render() {
     return `<tr data-i="${i}" class="${i === sel ? 'sel' : ''}"><td>${i + 1}</td><td class="mono">${h.t.toFixed(3)}</td>` +
       `<td class="mono sub">${diff == null ? '（新規）' : diff === 0 && d.cls === h.cls ? '' : (diff >= 0 ? '+' : '') + diff.toFixed(2) + (d.cls !== h.cls ? ' ' + NAME[d.cls] + '→' : '')}</td>` +
       `<td>${h.side === 'me' ? '自分' : '相手'}</td><td><span class="sw" style="background:${COL[h.cls] || '#888'}"></span>${NAME[h.cls] || h.cls}</td>` +
-      `<td>${h.serve ? 'サーブ' : ''}</td><td class="sub">${h.src || '手'}</td></tr>`;
+      `<td>${h.serve ? 'サーブ' : ''}</td><td class="sub">${h.src || d?.src || '手'}</td><td class="sub">${h.note ? h.note.replace(/</g, '&lt;') : ''}</td></tr>`;
   }).join('');
   drawTl();
 }
@@ -188,13 +196,33 @@ function changed() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => save(false), 700);
 }
+// サーバーに届かなかった編集はブラウザに控え、次に開いたときに戻す
+const BK = () => 'rally-edit:' + D.gtFile;
+function backup(idx, h, done) {
+  try { const b = JSON.parse(localStorage.getItem(BK()) || '{}'); b[idx] = { hits: h, done, at: Date.now() }; localStorage.setItem(BK(), JSON.stringify(b)); } catch { /* 控えられなくても続ける */ }
+}
+function dropBackup(idx) {
+  try { const b = JSON.parse(localStorage.getItem(BK()) || '{}'); delete b[idx]; localStorage.setItem(BK(), JSON.stringify(b)); } catch { }
+}
+function setStatus(msg, bad) { $('status').textContent = msg; $('status').style.color = bad ? 'var(--warn)' : ''; }
 async function save(done) {
   clearTimeout(saveTimer); saveTimer = null;
-  if (!cur) return;
-  const r = await fetch('/api/save', { method: 'POST', body: JSON.stringify({ idx: cur.idx, t0: cur.t0, t1: cur.t1, done, hits }) });
-  const j = await r.json();
-  $('status').textContent = j.ok ? `p${cur.idx} を保存（${done ? '確認済み' : '作業中'}）${new Date().toLocaleTimeString()}` : '保存に失敗: ' + j.error;
-  if (j.ok) { state.set(cur.idx, { hits: hits.map(h => ({ ...h })), done }); renderSide(); }
+  if (!cur) return false;
+  const idx = cur.idx, snapshot = hits.map(h => ({ ...h }));
+  backup(idx, snapshot, done);
+  let j;
+  try {
+    const r = await fetch('/api/save', { method: 'POST', body: JSON.stringify({ idx, t0: cur.t0, t1: cur.t1, done, hits: snapshot }) });
+    j = await r.json();
+  } catch (e) {
+    setStatus(`保存できません（サーバーが止まっています）。編集はこのブラウザに控えました。サーバーを起動し直してページを開き直すと戻ります`, true);
+    return false;
+  }
+  if (!j.ok) { setStatus('保存に失敗: ' + j.error, true); return false; }
+  dropBackup(idx);
+  setStatus(`p${idx} を保存（${done ? '確認済み' : '作業中'}）${new Date().toLocaleTimeString()}`);
+  state.set(idx, { hits: snapshot, done }); renderSide();
+  return true;
 }
 function flushSave() { if (saveTimer) save(false); }
 
@@ -221,7 +249,7 @@ $('bReset').onclick = () => {
   hits = cur.rally.map(h => ({ ...h, orig: h.t })); sel = hits.length ? 0 : -1; changed();
 };
 $('bDone').onclick = async () => {
-  await save(true);
+  if (!await save(true)) return;
   const i = D.points.findIndex(p => p.idx === cur.idx);
   const next = D.points.slice(i + 1).find(p => !state.get(p.idx)?.done);
   if (next) openPoint(next.idx);
