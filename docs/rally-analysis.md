@@ -1252,4 +1252,8 @@ x セットの失敗は v38 の 94 件から減った。x0908＋x0908b が 27 �
   - y0911 の見逃し 13 本。
   - far-flat の追試（根拠が 1 ポイント）。
   - s0911 p0 型のサーブ寄せの誤り。
+- **手直しツール（自分用・2026-09-30・ユーザー決定: まず自分用、利用者からの回収は当面不要）**: `node tools/rally-edit-server.js <runDir> [--gt out.json] [--video path]` → http://localhost:4762/。
+  - `<runDir>` の p*.json の打点を初期値にして、時刻（1 コマ送り・奥の 2 倍拡大）・側・種別・サーブを直す。保存先の既定は `samples/rally/gt-edit-<runDir の名前>.json`（GT と同じ形・変更のたびに自動保存）。
+  - 「確認済み」にしていないポイントは `draft: true` で、`rally-bench2`・`rally-exp` の採点は読み飛ばす。採点は `node tools/rally-bench2.js samples/rally/gt-edit-<名前>.json --dir <runDir>`。
+  - アプリへの組み込みは、この画面と保存形式が固まってから（ラリー解析はまだアプリから呼べない）。
 - 基準（`rally-exp.js` の既定・2026-09-30）: `exp-v40`（ベンチ・x セット・y セット）。exp-int5 の結果の写しで、本体 tools から init→retrail で作り直して `diff` が +0 −0 ~0 になることを確かめた。全体走の基準（sv40）はまだ作っていない（exp-int5 の s* が同じ中身）。
