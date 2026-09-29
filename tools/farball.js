@@ -418,8 +418,91 @@ function events(tracks, band, Court, camAt, markers = [], weakTracks = []) {
       // 0908b p7 288.37（接触 288.37〜288.40）→ 288.70（+0.33）／docs の 0908 p16 416.25 → 416.47（+0.22）。窓の上端 0.7 は最も遅い 0.60 に 0.1 の余裕
       const starSoon = markers.some(m => { const d = dms(p[0].t, m.t0); if (d < 100 || d > 700) return false; const cam = camAt ? camAt(m.t0) : null; if (!cam || !cam.ok) return false; const c = Court.toCourt(m.x * SC, m.y * SC, cam); return isFinite(c.Z) && c.Z < 0; });
       // 上がったまま軌道が切れた（頂点が最後の点・D が軌道の長さで打ち切られる）ものを「0.1 秒以上・30px 以上上がり続けた」で通す変種（farcontact レーンの censored）は
-      // 統合（2026-09-25 exp-int4）では採らない: 実例が砂 0908 p17 435.32 の 1 件で、D と grow の篩を外した分だけバウンドの上がりとの境が薄い
-      if (r && !r.down && r.D >= 0.25 && r.R >= 30 && r.grow != null && r.grow >= 0.85 && starSoon) push(Math.max(0, p[0].t - 1 / 60), p[0].x, p[0].y, 0.85, 'lobappear', { pts: p, i: 0 });
+      // 統合（2026-09-25 exp-int4）では採らなかった: 実例が砂 0908 p17 435.32 の 1 件で、D と grow の篩を外した分だけバウンドの上がりとの境が薄い
+      //   → 第 5 ラウンドで 2 例目（x151815 p9 217.62）が見つかり、grow を末尾/先頭の n で残す形で入れた（下の cens）
+      // 上がったまま 0.25 秒に届かず切れた軌道（censored・2026-09-29 第 5 ラウンド farcontact）: 打ち上げた球はすぐ帯の上端・相手の体・閃光に入って追跡が切れ、
+      // D（頂点までの時間）が軌道の長さで打ち切られて 0.25 に届かず、grow も「起点 +0.15 秒〜頂点」の点が無くて null になる。
+      // 軌道の最後の点が最も高い（v 最小から 3px 以内）ときだけ、D の代わりに「軌道が 0.25 秒より短い」、grow の代わりに末尾 3 点と先頭 3 点の n の中央値の比を使う。
+      // R ≥ 30・grow ≥ 0.85・自分側の星 0.1〜0.7 秒後は上の規則と同じ値（新しい閾値は無い）。星は相手が自分のコートへ高い球を打った時だけ出る（ゲームの仕様）ので、
+      // 奥で跳ねて上がる自分の球（星なし）と区別する役は上の規則と同じく星が負う。
+      // 実例（GT の相手のロブ 2 本・目視）: 砂 0908 p17 435.32（x0908・軌道 435.367〜435.500 R 37・n 68→91・星 435.60 Z −11）／
+      // 芝ランクマ 15-18-15 p9 217.62（x151815・飛びつきロブ・軌道 217.617〜217.700 は 4 点だけ R 31・n 182→862・星 218.07 Z −6＝点の数の下限 4 はこの例）。
+      // 同じ型で星が自分側に出る軌道は全体走 exp-sv39 の 47 ポイントでこの 2 本と先行軌道のある所（pair 側で扱う）だけ。
+      // 星はあるが縮む軌道（自分の打球が奥へ飛ぶ途中）: 全体走 0908b p5 204.683（n 157→35）・0911 p2 77.000（n 120→71）は grow で落ちる（exp-r5-farcontact/scan-cens-full.txt）
+      //   ただし反証（exp-r5-farcontact-verify）では grow の篩を外しても・点の下限を 3 に下げても全体走 47 ポイントで出力が 1 件も変わらない（上の 2 本は grow より前の条件で落ちる）。
+      //   grow ≥ 0.85 と点 ≥ 4 は今のデータでは効いていない安全弁として残す。
+      // 偶然の当たり（記録）: 砂 0908 p17 441.98o（x0908）は自分の球が相手コートで跳ねて上がる所に立った cens で、接触は ≈442.17（GT 442.12o lob）。
+      //   直後に相手が本当にロブを打ったので星の篩も通り、T・種別とも合うが仕組みとしては偶然＝上で心配した「バウンドの上がりとの境」の実例。
+      //   「先行軌道なし」（!prevTr.length・!prevAll.length）を足しても落ちない（入射球の軌道は air 扱いか 0.35 秒/120px の外）
+      const vMinAll = Math.min(...p.map(q => q.v)), last = p[p.length - 1];
+      let cens = false;
+      if (r && !r.down && dms(p[0].t, tr.t1) < 250 && last.v <= vMinAll + 3 && Math.round(p[0].v - last.v) >= 30 && p.length >= 4) {
+        const med3 = a => { const b = a.filter(x => x).sort((x, y) => x - y); return b.length ? b[b.length >> 1] : null; };
+        const nA = med3(p.slice(0, 3).map(q => q.n)), nB = med3(p.slice(-3).map(q => q.n));
+        cens = !!(nA && nB && nB / nA >= 0.85);
+        if (process.env.FARDBG) console.error('lobappear-cens?', p[0].t.toFixed(3), nA, nB, cens, starSoon);
+      }
+      if (r && !r.down && ((r.D >= 0.25 && r.R >= 30 && r.grow != null && r.grow >= 0.85) || cens) && starSoon) push(Math.max(0, p[0].t - 1 / 60), p[0].x, p[0].y, 0.85, 'lobappear', { pts: p, i: 0 });
+    }
+  }
+  // 平らな頂から手前へ（far-flat・2026-09-29 第 5 ラウンド farcontact）: ハードのクッパの溜め打ちでは、奥へ上がってきた球が相手の前で 0.1〜0.2 秒ほぼ止まり
+  // （画面の縦の動きが 2px 以内）、ゆっくり動き出してから手前へ降りてくる。前後の速さが 2.5px/コマに届かず、向きも急に変わらないので turn/stall にならない。
+  // 型: (1) 平ら＝±0.3 秒で v が最小の点のまわりで v が最小 +2px 以内に収まる区間が 0.1 秒以上（2px は上の stall の「止まっている 1 歩」と同じ）
+  //     (2) 平らの前 0.3 秒に 20px 以上上がってきて、その間に下向きの歩み（2px/コマ超）が無い
+  //     (3) 平らの後 0.8 秒以内に見かけの Z < 0（ネットを越えて自分側）まで降りる。高さバイアスで見かけの Z は本当の Z より大きいので、Z < 0 に見えた球は本当に自分側にいる
+  //         ＝相手コートで跳ねる自分の球・自分のロブの頂点（降りた先は相手コート）ではない
+  //     (4) 平らの始まりの 0.6 秒前〜平らの終わりに他の奥側イベントが無い（相手が打ち上げた球の頂点を除く: 0.6 は riseAfter の頂点探索の窓と同じ。
+  //         反例＝全体走 クレイ 0908 p8 227.95〜228.03 は相手のロブ（far-pair 227.617・GT 227.65o lob）の頂点で、降りて自分側まで来る）
+  // 軌道の割れ目（相手の体・閃光で数コマ隠れる）は、止まっている球の動き（2px/コマ）×隠れたコマ数 以内・0.35 秒（pair の窓）以内なら繋いで見る。
+  // 時刻は降り始め（下の k）。降り始めの 3 歩の中に 3 コマ以上隠れた所があれば（接触の閃光）隠れた区間の中点。平らの終わりを時刻にすると 3 本とも 0.13〜0.16 秒早かった
+  //   （カメラが動く間は画面で止まっている球も補正座標 v では 0.5px/コマほど動き、平らが早く終わる）。
+  // 実例（GT・目視）: ハード 0908b p0 76.98（x0908b・平ら 76.73〜76.85・降下 77.03〜・img/b0_770.png 接触の輪 ≈76.97）→ 77.017／
+  //   84.38（x0908b・平ら 84.07〜84.22・割れ目 84.233→84.350（7 コマ・12px）の先で降り始める）→ 84.367／74.9（x0908b・平ら 74.55〜74.68・閃光で 74.767〜74.850 隠れる・
+  //   img/b0_746.png 閃光 74.82・輪 74.85）→ 74.808。(2) の上がりは 3 本で 35〜55px、(3) で Z < 0 に届くのは平らの終わりから 0.38〜0.48 秒
+  // （scan: exp-r5-farcontact/scanflat.js・scan-flat-bench.txt / scan-flat-full.txt。Z 4〜22 で (2)(3) を満たすのはこの 3 本と (4) の反例・相手のロブの頂点 2 本（0908b p11 364.85・0911 p0 17.90）だけ）
+  // 注意: 実例 3 本はすべて x0908b p0 の 1 ポイント（同じ対戦・同じクッパの溜め打ち）から。ほかの素材での裏付けはまだ無い。
+  //   閾値は緩めても（上がり ≥12px・平ら ≥67ms）全体走で何も増えない＝境の余裕はある。(4) は外すと 0908 ベンチが 37/38 X1 に悪化するので必須（反証 flatnoprior）
+  {
+    const srt = tracks.slice().sort((a, b) => a.t0 - b.t0), used = new Set();
+    const fOf = (a, b) => Math.max(1, Math.round((b.t - a.t) * 60));
+    for (const tr0 of srt) {
+      if (used.has(tr0)) continue; used.add(tr0);
+      let p = tr0.pts.slice();
+      for (;;) {
+        const lp = p[p.length - 1];
+        const nx = srt.find(o => !used.has(o) && o.t0 > lp.t && dms(lp.t, o.t0) <= 350 && Math.hypot(o.pts[0].u - lp.u, o.pts[0].v - lp.v) <= 2 * fOf(lp, o.pts[0]));
+        if (!nx) break; used.add(nx); p = p.concat(nx.pts);
+      }
+      for (let i = 0; i < p.length; i++) {
+        const win = p.filter(q => Math.abs(dms(q.t, p[i].t)) <= 300);
+        if (win.some(q => q.v < p[i].v)) continue;
+        let a = i, b = i;
+        while (a - 1 >= 0 && p[a - 1].v <= p[i].v + 2) a--;
+        while (b + 1 < p.length && p[b + 1].v <= p[i].v + 2) b++;
+        if (dms(p[a].t, p[b].t) < 100) { i = b; continue; }
+        const pre = p.filter(q => dms(q.t, p[a].t) > 0 && dms(q.t, p[a].t) <= 300);
+        const pre2 = pre.concat([p[a]]);
+        let downPre = false; for (let k = 1; k < pre2.length; k++) if ((pre2[k].v - pre2[k - 1].v) / fOf(pre2[k - 1], pre2[k]) > 2) downPre = true;
+        const riseIn = pre.length ? Math.max(...pre.map(q => q.v)) - p[i].v : 0;
+        let nearT = null;
+        for (let k = b + 1; k < p.length && dms(p[b].t, p[k].t) <= 800; k++) {
+          const cam = camAt ? camAt(p[k].t) : null; if (!cam || !cam.ok) continue;
+          const c = Court.toCourt(p[k].x, p[k].y, cam); if (isFinite(c.Z) && c.Z < 0) { nearT = p[k].t; break; }
+        }
+        const prior = out.some(e => dms(e.t, p[a].t) <= 600 && dms(p[b].t, e.t) <= 0);
+        if (process.env.FARDBG) console.error('flat?', p[a].t.toFixed(3), p[b].t.toFixed(3), 'rise', Math.round(riseIn), 'downPre', downPre, 'near', nearT, 'prior', prior);
+        if (riseIn >= 20 && !downPre && nearT != null && !prior) {
+          // 時刻＝降り始め: 平らの最後の点から先で、次の 3 歩の平均の縦の速さが 2px/コマ以上になる最初の点（平らの内側でもカメラ補正で v は 0.5px/コマほど動く）
+          let k = b; while (k + 3 < p.length && (p[k + 3].v - p[k].v) / fOf(p[k], p[k + 3]) < 2) k++;
+          if (k + 3 < p.length) {
+            // その 3 歩の中に 3 コマ以上隠れた所があれば（接触の閃光で球が消える）、隠れた区間の中点
+            let t = p[k].t;
+            for (let g = k; g < k + 3; g++) if (fOf(p[g], p[g + 1]) >= 3) { t = (p[g].t + p[g + 1].t) / 2; break; }
+            push(t, p[k].x, p[k].y, 1.2, 'flat', { pts: p, i: k });
+          }
+        }
+        i = b;
+      }
     }
   }
   // 弱い層との軌道のペア（逆向き・far-wpair）: 入射＝強い層・出射＝弱い層（淡いスライスの返球）。強い層の先行軌道が 0.35 秒・120px 以内で終わり、向きが変わる。

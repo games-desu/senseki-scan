@@ -142,7 +142,7 @@ async function readPath(video, pts, t0, t1, camOk = null, dbg = null, tFrom = -I
     //   全体の中央値は 35 前後で topspin 30 票になっていた）。trail.js classify もトップスピン/ロブを先端の色相で分ける（仕様: 先端 topspin 28〜42 / lob 54〜55）
     const tipL = k === 'hue' ? top[1].filter(l => l.s >= (L - EXCL) * 2 / 3) : [];
     const Htip = tipL.length >= 3 ? Math.round(circMed(tipL.map(l => l.h))) : null;
-    out.push({ t: fr.t, k, H: H == null ? null : Math.round(H), Htip, G: gHs.length ? Math.round(circMed(gHs)) : null, dh: k === 'sat' ? Math.round(med(top[1].map(l => l.dh))) : null, frac: +(top[1].length / nS).toFixed(2) });
+    out.push({ t: fr.t, k, H: H == null ? null : Math.round(H), Htip, G: gHs.length ? Math.round(circMed(gHs)) : null, dh: k === 'sat' ? Math.round(med(top[1].map(l => l.dh))) : null, bh: k === 'sat' ? Math.round(circMed(top[1].map(l => l.bh))) : null, frac: +(top[1].length / nS).toFixed(2) });
   }
   return out;
 }
@@ -155,7 +155,14 @@ function decide(rows) {
     if (!r.k) continue;
     let c = null;
     if (r.k === 'white') c = 'drop';
-    else if (r.k === 'sat') c = r.H >= 40 && r.H < 75 && Math.abs(r.dh) <= 2 ? 'lob' : null;
+    else if (r.k === 'sat') c = r.H >= 40 && r.H < 75 && Math.abs(r.dh) <= 2 ? 'lob'
+      // 2026-09-29 第5ラウンド color: 黄の砂（脇の色相 40〜75）で帯が脇より 3° 以上赤く、帯の色相が 45 未満なら topspin。
+      //   橙の筋は黄の砂に溶けて同じ色相の枠（±12°）に入るが、砂より赤い側へ寄る。黄ロブは砂と同じか黄色い側（x0911 p6 176.33 の自分のロブ: sat 50〜57・dh −2〜+2）。
+      //   実例: x0911 p4 147.05 の相手のトップスピン（far-appear 由来: sat 帯 37〜44／脇 42〜48・dh −3〜−8 が多数）・142.0 の相手のトップスピン（帯 36〜48／脇 40〜50・dh −3〜−7）。
+      //   以前（2026-09-24 統合）はベンチで効きなしとして戻した。x セットで効く 2 件があるので入れ直す（全体走の差分は LOG.txt）
+      //   この読み（A）は下の apexLob の覆し（B: hue の票だけ数える）と必ず組で入れる。B を外すと sat→topspin の票が決め手を pathcolor-sat にして、
+      //   全体走 s0911 p2 68.74o（相手のトップスピン・hue 8＋sat 12 票）が頂点の規則の lob に戻る（exp-r5-color-verify のアブレーション）
+      : r.H >= 40 && r.H < 75 && r.dh <= -3 && r.bh != null && r.bh < 45 ? 'topspin' : null;
     else { const warm = H => H >= 345 || H < 75; c = hueCls(warm(r.H) && r.Htip != null && warm(r.Htip) ? r.Htip : r.H, r.G); }   // 暖色（トップスピン/ロブ）は先端の色相で決める
     if (!c) continue;
     vote[c] = (vote[c] || 0) + 1;
@@ -167,7 +174,7 @@ function decide(rows) {
   if (!best || best[1] < 4 || (second && second[1] * 2 > best[1])) return { cls: null, vote, n: rows.length };
   // 決め手の種類（票の多い方）: hue → pathcolor・sat → pathcolor-sat（低信頼）・white → pathcolor-white（低信頼）
   const kind = Object.entries(by[best[0]]).sort((a, b) => b[1] - a[1])[0][0];
-  return { cls: best[0], vote, n: rows.length, clsBy: kind === 'hue' ? 'pathcolor' : 'pathcolor-' + kind };
+  return { cls: best[0], vote, by, n: rows.length, clsBy: kind === 'hue' ? 'pathcolor' : 'pathcolor-' + kind };
 }
 
 // 折れ線がこの打点の打球か: 打った側から相手側へ向かって動いていること（向き）と、始点が打った側のコートにあること（Z/X）の両方。
@@ -183,7 +190,13 @@ function pathOk(h, win, toCourt) {
   if (h.side === 'me' ? dy > -40 : dy < 40) return false;
   if (toCourt) {
     const c = toCourt(a.t, a.x, a.y);
-    const f = h.from, zMax = h.side === 'me' && f && Math.abs(f.X) <= 10 && f.Z <= 3 ? Math.max(3, f.Z + 3) : 3;
+    // 2026-09-29 第5ラウンド color: me の始点 Z の上限を奥のベースライン（Z_BASE 11.885・コートの中）まで広げる。
+    //   地面ホモグラフィは宙の球を奥へ投影するので、上がっていく打球（ロブ・高い打点）や打点から遅れて始まる経路は始点が奥へずれる。
+    //   pathOk の Z だけで落ちていた自分の打球（ベンチ＋x＋全体走・zsurvey.js）で色が決まるのは 4 本で、目視ですべて正:
+    //   d0911 p5 159.167 黄ロブ（far 始点 Z 9.02・lob 6 票）/ x0911 p4 141.35 紫フラット（960 始点 Z 5.57・+0.28s・flat 9 票）/
+    //   x0911 p6 171.10 黄ロブ（far 始点 Z 5.17・lob 4 票）/ s0911 p2 93.817 黄ロブ（始点 Z 4.6〜5.0・lob 7 票）
+    //   観客席の軌道（上の 184.97・188.13）はコートの外（奥のベースラインより奥・|X| > 10）なので、Z_BASE と |X| ≤ 10 で引き続き落ちる
+    const zMax = h.side === 'me' ? 11.885 : 3;
     if (c && (h.side === 'me' ? c.Z > zMax : c.Z < -3)) return false; if (c && Math.abs(c.X) > 10) return false;
   }
   return true;
@@ -298,7 +311,10 @@ async function apply({ video, rally, segPts = [], farBall = null, t1 = Infinity,
     log.push({ t: h.t, side: h.side, src: h.src, was: h.cls, got: r.cls, clsBy: r.clsBy, vote: r.vote, via: r.src, apexLob: apexLob || undefined });
     if (only) continue;
     if (apexLob) {
-      if (r.cls && r.cls !== 'lob' && r.clsBy === 'pathcolor' && r.vote[r.cls] >= APEX_OVERRIDE_VOTES) { h.clsPath = r.cls; h.cls = r.cls; h.clsBy = 'pathcolor-over-apex'; changed++; }
+      // 2026-09-29 第5ラウンド: 数えるのは色相の帯（hue）の票だけ。黄の砂の sat→topspin 票が混ざって決め手が pathcolor-sat になっても、hue の票が 6 コマあれば従来どおり覆す
+      //   上の sat→topspin の読み（decide の A）と組。片方だけ入れない
+      //   （全体走 s0911 p2 68.74 の相手のトップスピン: hue 8 票＋sat 12 票で決め手が sat になり、覆せず lob に戻っていた）
+      if (r.cls && r.cls !== 'lob' && ((r.by && r.by[r.cls] && r.by[r.cls].hue) || 0) >= APEX_OVERRIDE_VOTES) { h.clsPath = r.cls; h.cls = r.cls; h.clsBy = 'pathcolor-over-apex'; changed++; }
     } else if (r.cls) { h.clsPath = r.cls; h.cls = r.cls; h.clsBy = r.clsBy; changed++; }
   }
   return { changed, log, ms: Date.now() - started };
