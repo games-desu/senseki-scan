@@ -17,6 +17,7 @@ async function main() {
   const rows = [];
   for (const p of gt.points) {
     if (only && !only.has(p.idx)) continue;
+    if (p.draft) continue;   // 手直しツール（rally-edit）で「確認済み」にしていないポイント
     const file = path.join(dir, `p${p.idx}.json`);
     let r;
     if (rerun || !fs.existsSync(file)) {

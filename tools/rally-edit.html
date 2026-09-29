@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>SENSEKI SCAN — 打点の手直し</title>
+<style>
+  :root { --bg:#0f1613; --panel:#17211c; --border:#2a3a32; --text:#e4ede8; --sub:#8fa89b; --accent:#2ecc71; --accent-dark:#1f9d4d; --warn:#e74c3c; --gold:#f2c230; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:"Segoe UI","Yu Gothic UI",sans-serif; font-size:13px; height:100vh; display:flex; flex-direction:column; }
+  header { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; gap:16px; align-items:baseline; }
+  header h1 { font-size:16px; color:var(--accent); }
+  .sub { color:var(--sub); font-size:11px; }
+  .mono { font-family:Consolas,monospace; }
+  #main { flex:1; display:flex; min-height:0; }
+  #side { width:230px; border-right:1px solid var(--border); overflow-y:auto; }
+  #side .pt { padding:7px 12px; border-bottom:1px solid var(--border); cursor:pointer; display:flex; justify-content:space-between; gap:6px; }
+  #side .pt:hover { background:#1a2b22; }
+  #side .pt.cur { background:#1f3328; border-left:3px solid var(--accent); padding-left:9px; }
+  .badge { font-size:10px; padding:1px 6px; border-radius:8px; border:1px solid var(--border); color:var(--sub); white-space:nowrap; }
+  .badge.draft { color:var(--gold); border-color:#6b5a1c; }
+  .badge.done { color:var(--accent); border-color:var(--accent-dark); }
+  #work { flex:1; display:flex; flex-direction:column; min-width:0; padding:10px 14px; gap:8px; overflow-y:auto; }
+  #vwrap { position:relative; background:#000; overflow:hidden; align-self:center; width:100%; max-width:1280px; aspect-ratio:16/9; }
+  #vwrap video { width:100%; height:100%; display:block; transform-origin:50% 18%; }
+  #vwrap.zoom video { transform:scale(2); }
+  #vwrap .hud { position:absolute; left:8px; top:6px; font:12px Consolas,monospace; background:rgba(0,0,0,.6); padding:2px 6px; border-radius:4px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button { background:#223129; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:5px 10px; font-size:12px; cursor:pointer; }
+  button.primary { background:var(--accent-dark); border-color:var(--accent-dark); font-weight:bold; }
+  button:disabled { opacity:.4; cursor:default; }
+  select, input[type=number] { background:#0c130f; color:var(--text); border:1px solid var(--border); border-radius:5px; padding:3px 5px; font-size:12px; }
+  kbd { font:10px Consolas,monospace; border:1px solid var(--border); border-bottom-width:2px; border-radius:3px; padding:0 4px; color:var(--sub); }
+  #tl { position:relative; height:86px; background:#101a15; border:1px solid var(--border); border-radius:6px; cursor:pointer; user-select:none; }
+  #tl .lane { position:absolute; left:0; right:0; font-size:10px; color:var(--sub); padding-left:4px; }
+  #tl .mk { position:absolute; width:10px; height:22px; margin-left:-5px; border-radius:3px; border:2px solid transparent; }
+  #tl .mk.sel { border-color:#fff; }
+  #tl .mk.serve::after { content:"S"; position:absolute; top:-13px; left:0; font-size:9px; color:var(--sub); }
+  #tl .ghost { position:absolute; width:2px; height:12px; margin-left:-1px; opacity:.55; }
+  #tl .ph { position:absolute; top:0; bottom:0; width:1px; background:#fff; pointer-events:none; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { border-bottom:1px solid var(--border); padding:4px 7px; text-align:left; }
+  th { color:var(--sub); font-weight:normal; font-size:11px; }
+  tr.sel td { background:#1f3328; }
+  tr { cursor:pointer; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; vertical-align:-1px; margin-right:5px; }
+  #help { color:var(--sub); font-size:11px; line-height:1.9; }
+  #status { margin-left:auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>打点の手直し</h1>
+  <span class="sub" id="meta"></span>
+  <span class="sub" id="status"></span>
+</header>
+<div id="main">
+  <div id="side"></div>
+  <div id="work">
+    <div id="vwrap"><video id="v" preload="auto" muted></video><div class="hud" id="hud"></div></div>
+    <div class="row">
+      <button id="bPlay">再生 <kbd>Space</kbd></button>
+      <select id="rate"><option value="0.25">0.25x</option><option value="0.5" selected>0.5x</option><option value="1">1x</option></select>
+      <button data-step="-1">-1コマ <kbd>←</kbd></button>
+      <button data-step="1">+1コマ <kbd>→</kbd></button>
+      <button data-step="-6">-0.1秒</button>
+      <button data-step="6">+0.1秒</button>
+      <label class="sub"><input type="checkbox" id="zoom"> 奥を拡大 <kbd>Z</kbd></label>
+      <span style="flex:1"></span>
+      <button id="bReset">検出結果に戻す</button>
+      <button class="primary" id="bDone">確認済みにして次へ <kbd>Enter</kbd></button>
+    </div>
+    <div id="tl"></div>
+    <div class="row">
+      <button id="bAdd">現在位置に打点を追加 <kbd>A</kbd></button>
+      <button id="bMove">選択を現在位置へ <kbd>T</kbd></button>
+      <button id="bSide">側を入れ替え <kbd>S</kbd></button>
+      <button id="bServe">サーブ <kbd>V</kbd></button>
+      <button id="bDel">削除 <kbd>Del</kbd></button>
+      <span class="sub">種別: <span id="clsKeys"></span></span>
+    </div>
+    <table><thead><tr><th>#</th><th>時刻(s)</th><th>検出との差</th><th>側</th><th>種別</th><th>サーブ</th><th>元</th></tr></thead><tbody id="tb"></tbody></table>
+    <div id="help">
+      打点の時刻は「ラケットが球に当たったコマ（トレイルが出る直前）」に合わせる。<kbd>[</kbd><kbd>]</kbd> 前後の打点へ移動、<kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> は 0.1 秒送り。
+      タイムラインは上が相手・下が自分、真ん中の細い線は元の検出。変更は自動で保存され、「確認済み」にするまで採点には使われない（draft）。
+    </div>
+  </div>
+</div>
+<script>
+const CLS = [
+  ['topspin', 'トップスピン', '#e8623d'], ['slice', 'スライス', '#4aa3e8'], ['flat', 'フラット', '#a56be8'],
+  ['lob', 'ロブ', '#e8c93d'], ['drop', 'ドロップ', '#e4ede8'], ['fever', 'フィーバー', '#e85aa8'], ['unknown', '不明', '#6b7d74'],
+];
+const COL = Object.fromEntries(CLS.map(c => [c[0], c[2]]));
+const NAME = Object.fromEntries(CLS.map(c => [c[0], c[1]]));
+const $ = id => document.getElementById(id);
+const v = $('v');
+let D = null, cur = null, hits = [], sel = -1, saveTimer = null;
+const state = new Map();   // idx → {hits, done} （保存済みの手直し）
+
+$('clsKeys').innerHTML = CLS.map((c, i) => `<kbd>${i + 1}</kbd><span class="sw" style="background:${c[2]};margin-left:3px"></span>${c[1]}`).join(' ');
+
+async function init() {
+  D = await (await fetch('/api/load')).json();
+  for (const p of D.edited) state.set(p.idx, { hits: p.hits, done: !p.draft });
+  $('meta').textContent = `${D.runDir}  →  ${D.gtFile}`;
+  v.src = '/video';
+  v.playbackRate = +$('rate').value;
+  renderSide();
+  const first = D.points.find(p => !state.get(p.idx)?.done) || D.points[0];
+  openPoint(first.idx);
+}
+
+function renderSide() {
+  $('side').innerHTML = D.points.map(p => {
+    const s = state.get(p.idx);
+    const b = s ? (s.done ? '<span class="badge done">確認済み</span>' : '<span class="badge draft">作業中</span>') : '<span class="badge">未</span>';
+    return `<div class="pt${cur && cur.idx === p.idx ? ' cur' : ''}" data-idx="${p.idx}"><span>p${p.idx} <span class="sub">${p.score ?? ''}</span><br><span class="sub mono">${p.t0.toFixed(1)}〜${p.t1.toFixed(1)}</span></span>${b}</div>`;
+  }).join('');
+}
+$('side').addEventListener('click', e => { const el = e.target.closest('.pt'); if (el) openPoint(+el.dataset.idx); });
+
+function openPoint(idx) {
+  flushSave();
+  cur = D.points.find(p => p.idx === idx);
+  const s = state.get(idx);
+  hits = (s ? s.hits : cur.rally).map(h => ({ t: h.t, side: h.side, cls: h.cls, serve: !!h.serve, src: s ? h.src : h.src, orig: s ? null : h.t }));
+  // 元の検出との対応（保存済みでも最寄りの検出を差として見せる）
+  sel = hits.length ? 0 : -1;
+  renderSide(); render();
+  seek(hits.length ? hits[0].t - 0.3 : cur.t0);
+}
+
+const fps = () => cur.fps || 60;
+function seek(t) { v.currentTime = Math.max(cur.t0, Math.min(cur.t1, t)); }
+const snap = t => Math.round(t * fps()) / fps();
+
+function nearestDet(h) {
+  let best = null;
+  for (const d of cur.rally) if (d.side === h.side && (best == null || Math.abs(d.t - h.t) < Math.abs(best.t - h.t))) best = d;
+  return best && Math.abs(best.t - h.t) <= 0.6 ? best : null;
+}
+
+function render() {
+  hits.sort((x, y) => x.t - y.t);
+  const tb = $('tb');
+  tb.innerHTML = hits.map((h, i) => {
+    const d = nearestDet(h);
+    const diff = d ? (h.t - d.t) : null;
+    return `<tr data-i="${i}" class="${i === sel ? 'sel' : ''}"><td>${i + 1}</td><td class="mono">${h.t.toFixed(3)}</td>` +
+      `<td class="mono sub">${diff == null ? '（新規）' : diff === 0 && d.cls === h.cls ? '' : (diff >= 0 ? '+' : '') + diff.toFixed(2) + (d.cls !== h.cls ? ' ' + NAME[d.cls] + '→' : '')}</td>` +
+      `<td>${h.side === 'me' ? '自分' : '相手'}</td><td><span class="sw" style="background:${COL[h.cls] || '#888'}"></span>${NAME[h.cls] || h.cls}</td>` +
+      `<td>${h.serve ? 'サーブ' : ''}</td><td class="sub">${h.src || '手'}</td></tr>`;
+  }).join('');
+  drawTl();
+}
+$('tb').addEventListener('click', e => { const tr = e.target.closest('tr'); if (!tr) return; sel = +tr.dataset.i; render(); seek(hits[sel].t); });
+
+function x(t) { return (t - cur.t0) / (cur.t1 - cur.t0) * 100; }
+function drawTl() {
+  let s = `<div class="lane" style="top:4px">相手</div><div class="lane" style="top:62px">自分</div>`;
+  for (const d of cur.rally) s += `<div class="ghost" style="left:${x(d.t)}%;top:${d.side === 'opp' ? 30 : 44}px;background:${COL[d.cls] || '#888'}"></div>`;
+  hits.forEach((h, i) => {
+    s += `<div class="mk${i === sel ? ' sel' : ''}${h.serve ? ' serve' : ''}" data-i="${i}" style="left:${x(h.t)}%;top:${h.side === 'opp' ? 6 : 58}px;background:${COL[h.cls] || '#888'}" title="${h.t.toFixed(3)} ${NAME[h.cls]}"></div>`;
+  });
+  s += `<div class="ph" id="ph"></div>`;
+  $('tl').innerHTML = s;
+  movePh();
+}
+$('tl').addEventListener('mousedown', e => {
+  const mk = e.target.closest('.mk');
+  if (mk) { sel = +mk.dataset.i; render(); seek(hits[sel].t); return; }
+  const r = $('tl').getBoundingClientRect();
+  seek(cur.t0 + (e.clientX - r.left) / r.width * (cur.t1 - cur.t0));
+});
+function movePh() {
+  const ph = $('ph'); if (ph && cur) ph.style.left = x(v.currentTime) + '%';
+  $('hud').textContent = v.currentTime.toFixed(3) + ' s';
+}
+v.addEventListener('timeupdate', movePh);
+v.addEventListener('seeked', movePh);
+(function loop() { if (!v.paused) { movePh(); if (cur && v.currentTime >= cur.t1) v.pause(); } requestAnimationFrame(loop); })();
+
+function changed() {
+  const s = state.get(cur.idx);
+  state.set(cur.idx, { hits: hits.map(h => ({ ...h })), done: false });
+  if (!s || s.done) renderSide();
+  render();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => save(false), 700);
+}
+async function save(done) {
+  clearTimeout(saveTimer); saveTimer = null;
+  if (!cur) return;
+  const r = await fetch('/api/save', { method: 'POST', body: JSON.stringify({ idx: cur.idx, t0: cur.t0, t1: cur.t1, done, hits }) });
+  const j = await r.json();
+  $('status').textContent = j.ok ? `p${cur.idx} を保存（${done ? '確認済み' : '作業中'}）${new Date().toLocaleTimeString()}` : '保存に失敗: ' + j.error;
+  if (j.ok) { state.set(cur.idx, { hits: hits.map(h => ({ ...h })), done }); renderSide(); }
+}
+function flushSave() { if (saveTimer) save(false); }
+
+function step(n) { v.pause(); seek(snap(v.currentTime + n / fps())); }
+function addHit() {
+  const t = snap(v.currentTime);
+  const prev = [...hits].reverse().find(h => h.t < t);
+  hits.push({ t, side: prev ? (prev.side === 'me' ? 'opp' : 'me') : 'me', cls: 'unknown', serve: !prev, src: null, orig: null });
+  hits.sort((a, b) => a.t - b.t); sel = hits.findIndex(h => h.t === t); changed();
+}
+function withSel(f) { if (sel < 0 || !hits[sel]) return; f(hits[sel]); const h = hits[sel]; hits.sort((a, b) => a.t - b.t); sel = hits.indexOf(h); changed(); }
+
+$('bPlay').onclick = () => v.paused ? v.play() : v.pause();
+$('rate').onchange = () => { v.playbackRate = +$('rate').value; };
+document.querySelectorAll('[data-step]').forEach(b => b.onclick = () => step(+b.dataset.step));
+$('zoom').onchange = () => $('vwrap').classList.toggle('zoom', $('zoom').checked);
+$('bAdd').onclick = addHit;
+$('bMove').onclick = () => withSel(h => { h.t = snap(v.currentTime); });
+$('bSide').onclick = () => withSel(h => { h.side = h.side === 'me' ? 'opp' : 'me'; });
+$('bServe').onclick = () => withSel(h => { h.serve = !h.serve; });
+$('bDel').onclick = () => { if (sel < 0) return; hits.splice(sel, 1); sel = Math.min(sel, hits.length - 1); changed(); };
+$('bReset').onclick = () => {
+  if (!confirm(`p${cur.idx} の手直しを捨てて検出結果に戻しますか？`)) return;
+  hits = cur.rally.map(h => ({ ...h, orig: h.t })); sel = hits.length ? 0 : -1; changed();
+};
+$('bDone').onclick = async () => {
+  await save(true);
+  const i = D.points.findIndex(p => p.idx === cur.idx);
+  const next = D.points.slice(i + 1).find(p => !state.get(p.idx)?.done);
+  if (next) openPoint(next.idx);
+};
+
+document.addEventListener('keydown', e => {
+  if (e.target.matches?.('input, select')) return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const k = e.key;
+  if (k === ' ') { e.preventDefault(); $('bPlay').click(); }
+  else if (k === 'ArrowLeft' || k === 'ArrowRight') { e.preventDefault(); step((k === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 6 : 1)); }
+  else if (k === '[' || k === ']') {
+    if (!hits.length) return;
+    const t = v.currentTime;
+    const i = k === ']' ? hits.findIndex(h => h.t > t + 1e-3) : hits.map(h => h.t < t - 1e-3).lastIndexOf(true);
+    if (i >= 0) { sel = i; render(); seek(hits[i].t); }
+  }
+  else if (k === 'a' || k === 'A') addHit();
+  else if (k === 't' || k === 'T') $('bMove').click();
+  else if (k === 's' || k === 'S') $('bSide').click();
+  else if (k === 'v' || k === 'V') $('bServe').click();
+  else if (k === 'z' || k === 'Z') { $('zoom').checked = !$('zoom').checked; $('zoom').onchange(); }
+  else if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); $('bDel').click(); }
+  else if (k === 'Enter') { e.preventDefault(); $('bDone').click(); }
+  else if (/^[1-7]$/.test(k)) withSel(h => { h.cls = CLS[+k - 1][0]; });
+});
+window.addEventListener('beforeunload', flushSave);
+init();
+</script>
+</body>
+</html>

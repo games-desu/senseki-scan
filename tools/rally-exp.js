@@ -144,6 +144,7 @@ const tag = d => `${d.t.toFixed(2)}${d.side === 'me' ? 'm' : 'o'} ${d.cls}${d.sr
 function benchSet(dir, gt) {
   let N = 0, F = 0, C = 0, X = 0, Nk = 0, Ck = 0; const miss = [], extra = [], cls = [], hit = [];
   for (const p of gt.points) {
+    if (p.draft) continue;   // 手直しツール（rally-edit）で「確認済み」にしていないポイント
     const file = path.join(dir, `p${p.idx}.json`);
     if (!fs.existsSync(file)) continue;
     const det = (JSON.parse(fs.readFileSync(file, 'utf8')).rally || []).slice(), used = new Set();
