@@ -373,6 +373,31 @@ window.Trail = (() => {
     return 'unknown';
   }
 
+  // 尾が赤く流れた紫のフラット（2026-09-23 第 4 ラウンド color レーン）: 紫のフラットは先端・核（彩度最大のビン）がマゼンタ〜紫（270〜345）のまま尾が赤（345〜15）に流れ、
+  //   classify は尾で決めるので topspin になる（芝ランクマ 15-18-15 p12 248.93〜249.23 の自分のピンク紫のフラット: 先端 285〜313・核 302〜308・尾 346〜360 で run が topspin 3 票／
+  //   GT 248.8 flat）。GT のある 6 セット（d0908 d0911 x*）で「尾が赤・先端 250〜345」の blob は GT の種別で flat 48・topspin 5（redtail.js）。
+  //   先端だけで見ると、砂 0908 p17 のマリオの赤い体・赤いトップスピンの blob（先端 265〜344 だが核は赤 354〜12・S 0.6〜0.9）まで拾うので核も紫を課す。
+  //   紫のフラットの核: 芝ランクマ 299〜308・砂 0911 313〜323・クレイ 0908 p8 305〜325・芝 0908 p5 282〜294（redtail.js -v）。先端のビンが読めない（null）ときは核だけで見る
+  //   （同じ p12 249.20〜249.30 のピンクの球: 先端 null・核 307・尾 360）。
+  //   blob の種別（classify）そのものは変えず、run の種別の票（summarize）でだけ flat と数える: blob を flat にすると runs の同族の繋ぎが変わり、
+  //   v38 で偶然繋がっていた run が割れて全体走で偽の打点が 4 本出た（砂 0911 p1 49.47o・p2 59.64o・ハード 0908b p5 228.37o・p12 のフィーバーの自分の打点が消える: exp-r4-color/LOG [4]）
+  function flatTail(b) {
+    const purple = h => h != null && h >= 270 && h < 345;
+    return b.cls === 'topspin' && b.Htail != null && (b.Htail >= 345 || b.Htail < 15) && (purple(b.Htip) || b.Htip == null) && purple(b.Hcore);
+  }
+
+  // クレイの青スライス（2026-09-23 第 4 ラウンド color レーン）: 半透明の青い筋の尾が赤いクレイ（コートの色相 11）と混ざって紫（尾 288〜322）に寄り、尾で決めると flat になる
+  //   （全体走 0908 p12 278.5〜278.9 のルイージの青スライス: 先端 191〜228・尾 288〜322 で run が slice 5 票と flat 4 票の 2 本に割れ、打点は flat／
+  //   同 286.8〜287.5 の青スライス: 先端 205〜246・尾 260〜304 で blob の半分が flat。img/s0908-278.png・s0908-287.png で両方とも青い筋）。
+  //   混ざって紫になるのは赤いコートの上だけ（芝・砂の上では青緑になる: shots の tealSlice）。紫のフラットは先端（球の側）も紫（270〜345: flatTail の実測）なので先端が青なら slice
+  //   blob の種別（classify）で slice にすると、同じ筋の blob が slice と flat/topspin に交互に割れて run が切れ、筋の途中から偽の打点が立った
+  //   （全体走 0908 p11 +261.14o flat・p14 +361.64o topspin: img/s0908-260.png・s0908-361.png）ので、run の票（summarize）でだけ slice と数える。cH は run のコマのコートの色相
+  //   GT の裏付けは無い（2026-09-25 統合の注記）: ベンチ・x セットにクレイの該当が無く score は不変。根拠は全体走 0908 の目視 3 本だけ（278.13o flat→slice・361.08o flat→slice は青い筋、
+  //   321.14o は元から偽の打点で種別だけ変わる）。クレイの GT 付き素材が増えたら見直す
+  function clayBlue(b, cH) {
+    return cH != null && hueDist(cH, 13) <= 20 && b.Htip != null && b.Htip >= 140 && b.Htip < 250 && b.Htail != null && b.Htail >= 250 && b.Htail < 345;
+  }
+
   // 静止直線の除去: 3フレーム前の生マスクと 80% 以上重なる blob は捨てる
   function overlapWith(pts, mask) {
     if (!mask) return 0;
@@ -485,10 +510,10 @@ window.Trail = (() => {
           if (cost < bd) { bd = cost; best = r; }
         }
         if (best && bd < 1e6) {
-          best.frames.push({ t: f.t, b }); used.add(best); if (b.n > best.nMax) best.nMax = b.n;
+          best.frames.push({ t: f.t, b, cH: f.ref ? f.ref.Hmed : null }); used.add(best); if (b.n > best.nMax) best.nMax = b.n;
           if (!best.dirSign && best.frames.length >= 3) { const d0 = b.cy - best.frames[0].b.cy; if (Math.abs(d0) >= 6) best.dirSign = Math.sign(d0); }
         }
-        else { const r = { t0: f.t, frames: [{ t: f.t, b }], nMax: b.n }; open.push(r); used.add(r); }
+        else { const r = { t0: f.t, frames: [{ t: f.t, b, cH: f.ref ? f.ref.Hmed : null }], nMax: b.n }; open.push(r); used.add(r); }
       }
       for (let i = open.length - 1; i >= 0; i--) {
         const r = open[i], last = r.frames[r.frames.length - 1];
@@ -497,8 +522,51 @@ window.Trail = (() => {
     }
     open.forEach(close);
     done.sort((a, b) => a.t0 - b.t0);
-    return done.map(r => summarize(r, fps, yFarAt));
+    // 入ってくる run の尾の「上がり始め」を次の出球 run の頭へ移す（2026-09-24 第 4 ラウンド nearstart・work/reruns.js で保存済み trailLog から確かめた）。
+    // 入ってくる球の筋（相手の打球）と自分の出球の出だしはラケットの所で 1 つの blob の連なりになる。上の rev（1 コマ 8px を超える逆向き）は、出だしの数コマが
+    // ラケットの所で育つだけで 1 コマあたりはほとんど動かないので掛からず、出球の最初の 0.1 秒が入ってくる run に吸われる
+    // （芝ランクマ x151815 p12 246.5: 入ってくる run の y 303→325→369（最下点 246.567）→362→359→352 のあと 246.700 から自分の run・打点 +0.17）。
+    // 自分の上向き run B（先頭 5 コマで 20px 以上上がる）の 1〜2 コマ（トレイルの 30fps）前・40px 以内で終わる run A が、最下点まで 20px 以上降りてから 8px 以上上がって終わるなら、
+    // 最下点より後のコマを B の頭へ移す。
+    //  - A は B の開始より前のコマで見る（summarize の末尾の飛び値切り（trimSuf）で落ちる 1 コマが 246.5 では後ろに付いていた）。
+    //  - 移すのは 4 コマ（0.13 秒）まで: 吸われるのは出だしの 0.1 秒ほど（246.5 は 3 コマ）。長い尾はロブ・静止物の漂い（x0911 p4 147.63 で 22 コマの静止物が付きかけた）。
+    //  - B の最初のコマが A の終わりより下なら移さない: 出球は上へ続くはず（全体走 0908 p12 275.24: 移した 2 コマの後に B が 24px 下から始まり、直進度 0.43 で run ごと落ちて
+    //    本物（接触 ≈275.00）を失った）。
+    //  - A の最下点の見かけの Z < 8: 最下点が自分の打点（手前・ネット際のボレーでも球の高さで Z 5 前後: x0911 p4 142.47 の 5.4）。奥の高いロブ（全体走 0908 p19 479.7: cZ 12.5）の
+    //    尾を移すと相手のロブの run（479.34o・接触 ≈479.22）を短くして失った。8 は 5.4 と 12.5 の間（暫定）。
+    // 効き: x151815 246.67→246.57・x0911 p4 に自分のボレー 142.47m（接触 142.27〜.30・img/TM_142.png）が立ち、連鎖で 140.78o・142.65o が入る（141.95o drop は MIN_GAP で落ちる）。
+    // A が短くなって minFrames を割ったら捨てる（close と同じ下限）
+    for (const B of done) {
+      const b0 = B.frames[0], bk = B.frames[Math.min(B.frames.length - 1, 4)];
+      if (!(bk.b.cy - b0.b.cy <= -20)) continue;
+      for (const A of done) {
+        if (A === B || A.frames.length < 3) continue;
+        let e = A.frames.length - 1; while (e >= 0 && A.frames[e].t >= b0.t) e--;
+        if (e < 2) continue;
+        const aL = A.frames[e];
+        const k = Math.round((b0.t - aL.t) * fps);
+        if (k < 1 || k > 2 || Math.hypot(b0.b.cx - aL.b.cx, b0.b.cy - aL.b.cy) > 40) continue;
+        let m = 0; for (let i = 1; i <= e; i++) if (A.frames[i].b.cy >= A.frames[m].b.cy) m = i;
+        if (m === e || e - m > 4 || A.frames[m].b.cy - A.frames[0].b.cy < 20 || A.frames[m].b.cy - aL.b.cy < 8 || b0.b.cy > aL.b.cy || !(A.frames[m].b.cZ < 8)) continue;
+        const tail = A.frames.splice(m + 1, e - m);
+        B.frames = tail.concat(B.frames); B.t0 = B.frames[0].t; B.nMax = Math.max(...B.frames.map(q => q.b.n)); A.nMax = Math.max(...A.frames.map(q => q.b.n)); B.tailMoved = tail.length;
+        break;
+      }
+    }
+    const kept = done.filter(r => r.frames.length >= minFrames).sort((a, b) => a.t0 - b.t0);
+    return kept.map(r => summarize(r, fps, yFarAt));
   }
+
+  // 赤い体の blob: 芯の色相が赤（345〜15°）・彩度 0.85 以上・小さい（n < 1000）。マリオの赤いシャツ（S 0.84〜0.93・n 150〜1100）・ヨッシーの赤い甲羅/靴（H 12〜16）。
+  // 本物の橙〜赤の筋は手前では大きい（芯が赤い 0908 p8 221.90 のトップスピンも n 1818〜2039）
+  // （2026-09-24 第 4 ラウンド nearjunk・exp-r4-nearjunk/redscan.js: v38 の全 shot で半分以上のコマが該当する run は 6 本、映像で全部 junk
+  //   x0908 p17 442.93・s0908 p19 471.60/477.54・p3 115.37・p7 176.50（マリオ）・s0911 p9 224.87（ヨッシー）。GT セットの本物の打点は 0 本）
+  const redBody = b => b.Hcore != null && (b.Hcore >= 345 || b.Hcore <= 15) && b.Smed != null && b.Smed >= 0.85 && b.n < 1000;
+  // 横に細長い白い blob（白・elong ≥ 15・先端と尾の傾き < 0.15）＝ネットの白帯・ベースライン・サービスラインの一部。netTapeBlob から「白帯の高さ ±30px」を外したもの。
+  // カメラの縦振り・ズーム中はカメラ推定（15 コマごと）の線の位置（lineNear・netNear・白帯の高さ）が追いつかず、線が白い blob として残って縦に流れる
+  // （2026-09-24 第 4 ラウンド nearjunk: 芝ランクマ 15-18-15 p12 244.93〜245.57 の白帯がサーブ後の縦振りで下へ流れて相手の drop 打点 244.90o・p9 218.80／219.47 も同じ・exp-r4-nearjunk/flatscan.js）。
+  // 本物の白いドロップの筋は幅のある円錐（elong 2〜6.5・GT セットの drop 打点 9 本で横長の白は 0 コマ）
+  const flatWhite = b => b.cls === 'drop' && b.elong >= 15 && b.tip && b.tail && Math.abs(b.tip.y - b.tail.y) < 0.15 * Math.abs(b.tip.x - b.tail.x);
 
   // 色は打点から 4〜10 コマ後の中央値で決める（固定点で色相が流れるため・shot-color H項）
   function summarize(r, fps, yFarAt = null) {
@@ -533,6 +601,22 @@ window.Trail = (() => {
     }
     // 隣り合うコマ同士で見る（静止物はドリーでゆっくり流れるので、端のコマ基準だと 90 コマの静止が 5 コマで止まる）
     let pre = 0; while (pre + 1 < fr.length && near(fr[pre + 1], fr[pre])) pre++;
+    // 隣り合うコマの 16px 以内は「遅い」だけで「静止」とは限らない: 奥の筋（サーブ・奥からの返球）は 1 歩（30fps）7〜12px で一方向に進み、ネットを越えて
+    // 手前で大きく育つと先頭が nMaxAll の半分未満になって静止物として切られた（2026-09-24 第 4 ラウンド regress・芝ランクマ 15-18-15 p12 のサーブ 245.70〜246.13:
+    // 14 コマ・正味 106px・直進 0.96 を切って打点を失い、帯の白い run 244.90o が残った）。前置きの区間がまっすぐ（直進度 0.9 以上）で、画面上の正味の動きと
+    // カメラの縦移動を引いた重心 y（yFarAt・camTrim と同じ物差し）の動きがどちらも 1 歩平均 6px 以上なら、動く物として切らない（r.preMover）。
+    // 6px の根拠（v38 の 67 ポイントで前置き切りが掛かった 394 件・scr/pretrim.js → var/pretrim-v38.txt。直進 0.9 以上の補正後の 1 歩）:
+    //   奥の筋は 6.75〜12.1（最小 6.75 は 0908 p2 98.40・x0908 p5 140.37 の相手スライス 9.7・0911 p5 155.63 8.8・0908b p1 97.90 12.1（相手の黄の返球 97.4・img/v_b97.png）・151815 p12 8.5 ほか）、
+    //   その下は 5.8 以下（最大 5.8 は 0908 p12 330.13・0908b p5 228.67）で 5.8〜6.75 の間に例が無い。5.5 の 0908 p13 339.97（青スライスの先頭 5 コマ・27px）を 5 で通すと同じ筋が flat と slice の 2 本の run に割れた。
+    //   画面上の動き（net）も見るのは、画面の同じ所に居る物がカメラの縦移動だけで補正後に動いて見える組（0908b p3 140.80 正味 8px・0908 p12 306.77 9px・0911 p2 66.03 16px）を除くため。
+    //   カメラのドリーは補正後ほぼ 0（camTrim の前提）
+    // 残る誤り: 自分側へ落ちてくる相手のロブの筋（0908 p12 293.70・325.97・1 歩 12px）も動く物として残り、run の先頭が早まる（どちらも偽の相手打点で、前後で偽のまま・img/v_293.png・v_325.png）
+    if (pre + 1 >= 5 && yFarAt) {
+      const a = fr[0], b = fr[pre], ya = yFarAt(a.t), yb = yFarAt(b.t);
+      let path = 0; for (let i = 1; i <= pre; i++) path += Math.hypot(fr[i].b.cx - fr[i - 1].b.cx, fr[i].b.cy - fr[i - 1].b.cy);
+      const net = Math.hypot(b.b.cx - a.b.cx, b.b.cy - a.b.cy);
+      if (ya != null && yb != null && path > 0 && net / path >= 0.9 && net >= 6 * pre && Math.abs((b.b.cy - yb) - (a.b.cy - ya)) >= 6 * pre) { r.preMover = pre + 1; pre = 0; }
+    }
     if (pre + 1 >= 5 && fr.length - (pre + 1) >= 3) { r.trimPre = pre + 1; fr = fr.slice(pre + 1); }
     // 先頭に 3 コマ以上続く「ごく小さい blob（run 最大の 15% 未満）」は別物の切れ端（0908b p4 相手ロブの前の 769/217/884/499/224/139）。
     // 本物のトレイルは 1〜2 コマで育つ（279→1224→4696）ので 3 コマ以上の条件で当たらない
@@ -599,6 +683,14 @@ window.Trail = (() => {
       const alt = Object.entries(votes).filter(e => e[0] !== 'drop').sort((a, b) => b[1] - a[1])[0];
       cls = alt ? alt[0] : 'unknown';
     }
+    // 色の混ざりを直した票（2026-09-23 第 4 ラウンド color レーン）: 尾が赤く流れた紫のフラット（flatTail）は flat、クレイで尾が紫に寄った青スライス（clayBlue）は slice と数え直し、
+    //   その 1 位が今の種別（topspin/flat）より多ければ clsAlt。cls への反映は shots の併合が済んでから（併合の族・runs の繋ぎは v38 のまま。先に変えると筋が割れて偽の打点が立つ）
+    let clsAlt = null;
+    if (cls === 'topspin' || cls === 'flat') {
+      const av = {}; for (const f of use) { const c = flatTail(f.b) ? 'flat' : clayBlue(f.b, f.cH) ? 'slice' : f.b.cls; av[c] = (av[c] || 0) + 1; }
+      const top = Object.entries(av).sort((a, b) => b[1] - a[1] || (a[0] === 'unknown') - (b[0] === 'unknown'))[0];
+      if (top && top[0] !== cls && (top[0] === 'flat' || top[0] === 'slice') && top[1] > (av[cls] || 0)) clsAlt = top[0];
+    }
     // 重心の1ステップあたりの移動量の中央値（トレイルはボールと一緒に動く: 10〜60px/2コマ。選手・ラベル・看板は数px）
     const steps = []; for (let i = 1; i < fr.length; i++) steps.push(Math.hypot(fr[i].b.cx - fr[i - 1].b.cx, fr[i].b.cy - fr[i - 1].b.cy) / Math.max(1, Math.round((fr[i].t - fr[i - 1].t) * fps)));
     const spd = median(steps) || 0;
@@ -606,6 +698,18 @@ window.Trail = (() => {
     // 0.3 秒残るため重心が筋の中央で静止し、全期間の中央値 4.8 でゲート（6.5）に落ちた。出現直後の 3 ステップは 5.4/13.6/25 と速い。
     // 看板・テントの run は出現直後も数 px なので当たらない
     const spdEarly = median(steps.slice(0, 4)) || 0;
+    // 動きと形の揃い（align）: コマ間の重心の移動（3px 以上）と、前のコマの blob の主軸（尾→先端）の |cos| の中央値。nAlign は数えた歩数。
+    // トレイルは動きの筋なので筋は球の進む向きに伸び、重心も筋に沿って動く（手前の本物は 0.95〜1.00）。選手の体・SMASH 表示の文字は形の向きと動きが無関係
+    // （2026-09-24 第 4 ラウンド nearjunk・samples/rally/exp-r4-nearjunk/feat2.txt: x0908 p17 435.17m マリオの赤い体 0.71・442.73o 0.65・429.47o SMASH 表示 0.22／
+    //   x0911 p6 177.04m ヨッシーの靴 0.66／x151815 p9 216.24m デイジーの橙の体 0.55。手前（cZ0<0）の本物で 4 歩以上のものの最小は GT セットでは 0.85（x151815 p9 218.40・x0911 p6 178.40 0.89）、全体走まで含めると 0.77（shots の nearMisaligned の注記））
+    const aligns = [];
+    for (let i = 1; i < fr.length; i++) {
+      const A = fr[i - 1].b, B = fr[i].b, dx = B.cx - A.cx, dy = B.cy - A.cy, d = Math.hypot(dx, dy);
+      const ax = A.tip.x - A.tail.x, ay = A.tip.y - A.tail.y, L = Math.hypot(ax, ay);
+      if (d < 3 || !L) continue;
+      aligns.push(Math.abs(dx * ax + dy * ay) / (d * L));
+    }
+    const align = aligns.length ? median(aligns) : null;
     // 側は打点＝出現直後の尾の位置で決める（尾はボールと一緒に動くので全期間の多数決は駄目）
     // 側は「トレイルがどちらへ進むか」で決める（尾の位置は出現が遅れると動いてしまう）。
     // 重心の y が減る（画面上へ進む）＝自分の打球、増える＝相手の打球。動きが小さいときだけ尾の Z で補う
@@ -622,16 +726,19 @@ window.Trail = (() => {
     for (let i = 1; i < fr.length; i++) { const d = fr[i].b.cy - fr[i - 1].b.cy; if (d < 0) upSum -= d; else downSum += d; }
     if (Math.abs(dy) < 20 && Math.max(upSum, downSum) >= 20 && Math.max(upSum, downSum) >= 3 * Math.min(upSum, downSum)) dir = downSum > upSum ? 'down' : 'up';
     const side = dir ? (dir === 'up' ? 'me' : 'opp') : (zEarly > 0 ? 'opp' : 'me');
-    return { t0, t1, n: fr.length, cls, votes, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1), spd: +spd.toFixed(1), spdEarly: +spdEarly.toFixed(1), dur: +(t1 - t0).toFixed(2), sMax: +sMax.toFixed(2), reanchored: r.reanchored || 0,
+    return { t0, t1, n: fr.length, cls, clsAlt, votes, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1), spd: +spd.toFixed(1), spdEarly: +spdEarly.toFixed(1), dur: +(t1 - t0).toFixed(2), sMax: +sMax.toFixed(2), reanchored: r.reanchored || 0,
              provFrac: +provFrac.toFixed(2), straight: +yStraight.toFixed(2), cZpre,
              tail: { x: first.tail.x, y: first.tail.y, X: first.tailX, Z: first.tailZ },
              Htip: median(use.map(f => f.b.Htip).filter(v => v != null)),
              Htail: median(use.map(f => f.b.Htail).filter(v => v != null)),
              Smed: median(use.map(f => f.b.Smed).filter(v => v != null)),
-             trimPre: r.trimPre || 0, trimSuf: r.trimSuf || 0, camStatic: r.camStatic || 0, camTrim: r.camTrim || 0, farStay: r.farStay || 0,
+             align: align == null ? null : +align.toFixed(3), nAlign: aligns.length,
+             tailMoved: r.tailMoved || 0, trimPre: r.trimPre || 0, trimSuf: r.trimSuf || 0, camStatic: r.camStatic || 0, camTrim: r.camTrim || 0, farStay: r.farStay || 0,
              // nTape: 白帯の blob（netTapeBlob）のコマ数。shots の除外は nTape / n（丸める前の比）で比べる。tapeFrac は 2 桁に丸めた記録用（2026-09-24 exp-int3f・レビューの note:
              //   丸めてから ≥ 0.8 と比べると実質 0.795 で 39/49 も通っていた。76 ポイントでは丸め前 < 0.8・丸め後 ≥ 0.8 の run は 0 本＝出力は変わらない: exp-int3f/work/precheck.js）
-             nMax: Math.max(...fr.map(f => f.b.n)), cZ0: first.cZ, nTape: fr.filter(f => f.b.tape).length, tapeFrac: +(fr.filter(f => f.b.tape).length / fr.length).toFixed(2),
+             // courtH: コートの色相（courtRef の Hmed・run のコマの中央値）。芝 84〜86・砂 51〜55・クレイ 11・ハード 188〜205（v38 の全体走の trailLog）。shots の緑ガードの例外（淡い青スライス）に使う
+             courtH: (() => { const hs = fr.map(f => f.cH).filter(v => v != null); return hs.length ? median(hs) : null; })(),
+             nMax: Math.max(...fr.map(f => f.b.n)), cZ0: first.cZ, nTape: fr.filter(f => f.b.tape).length, nTapeArea: fr.filter(f => f.b.tape).reduce((a, f) => a + f.b.n, 0), nArea: fr.reduce((a, f) => a + f.b.n, 0), nFlatW: fr.filter(f => flatWhite(f.b)).length, zMinAll: +Math.min(...fr.map(f => f.b.cZ)).toFixed(2), nRedBody: fr.filter(f => redBody(f.b)).length, tapeFrac: +(fr.filter(f => f.b.tape).length / fr.length).toFixed(2),
              frames: fr.map(f => ({ t: f.t, cx: f.b.cx, cy: f.b.cy, ty: f.b.tip.y, n: f.b.n, cls: f.b.cls, side: f.b.side })) };
   }
 
@@ -662,16 +769,53 @@ window.Trail = (() => {
     // elong の中央値 2.6 以上の run を緑ガード（下）の例外にする案（ハード 0908b p4 190.03 のボレーの橙・p5 234.37 のサーブの紫はヨッシーの緑が筋の端に入って落ちる）。
     // 変更 1 と組んだときの効き（exp-misses-verify のアブレーション）はベンチで x0908b 22→23 T12→14・x151815 22→23、全体走で 104.58m→104.30m・191.30m→190.00m＋190.55o・
     // +234.34m・+297.63o・+225.24m（sfno3）。例外の閾値（直進度・速さ・nMax・elong）が手置きで、ネット際を奥へ走るヨッシー（直進 0.94・速さ 14）との境が近い
+    // 緑ガードの例外（2026-09-23 第 4 ラウンド color レーン・x セット診断の GREENSLICE を絞ったもの）: 半透明の青いスライスの筋は、緑の芝・黄の砂の上では
+    //   コートの色と混ざって片端が青緑（色相 130〜139）に寄り、緑ガードに掛かって打点ごと消えていた（芝ランクマ 15-18-15 p10 225.27 の自分のサーブ H 195/133・
+    //   p12 246.27 の相手のサーブ H 137/162／砂 0908 p17 441.57 の自分のスライス H 217/138）。混ざって青緑になるのはコートが黄〜緑（courtH 40〜100:
+    //   芝 84〜86・砂 51〜55）のときだけで、青いハード（188〜205）・赤いクレイ（11）の上では起きない。
+    //   選手の緑は色相 95〜123（v38 の全体走で緑ガードだけに落ちる run: 砂 0911 のヨッシー 99〜112・砂 0908 p19 のルイージ 102〜114・ハード 0908b p3 133.13 のヨッシー 123）なので、
+    //   緑側の端が 125 以上（青緑）で、もう一方の端が青（155〜250）の slice だけを通す。ヨッシーの緑と青スライスが混ざった blob（ハード 0908b p3: H 123/212）は通らない
+    //   青側の下限は 155（2026-09-25 統合 exp-int4 で 140 から上げた）: 通したい実例の青側の端は 162〜217（15-18-15 p10 225.27m 195・p12 246.27o 162・砂 0908 p17 441.57m 217・
+    //   全体走 0908 p1 77.63m 169）で、140〜154 の端を持つ実例は無い。140 だと両端とも青緑の blob（全体走 15-18-15 p13 262.27o H 139/140: 片端 140 が青の門・もう片端 139 が緑側の門を通る）が
+    //   例外に入る。青緑の端（133〜140）と青の端（162〜）の間を切る値で、境の実例は 140（通さない）と 162（通す）
+    const tealSlice = r => r.cls === 'slice' && r.courtH != null && r.courtH >= 40 && r.courtH < 100
+      && ((r.Htail != null && r.Htail >= 155 && r.Htail < 250) || (r.Htip != null && r.Htip >= 155 && r.Htip < 250))
+      && [r.Htail, r.Htip].every(h => h == null || h < 80 || h >= 125);
+    // 手前（出現の重心が自分のコート cZ0<0）で、動きが形の向きに沿わない run は選手の体・SMASH 表示（summarize の align）。側は問わない（手前に出る相手側の run も同じ物: x0908 p17 442.73o）。
+    // 4 歩以上のときだけ（3 歩の本物 0908 p8 225.90 が 0.63）。閾値 0.75 の両側（2026-09-25 統合 exp-int4 の検証で測り直した値・レーンの LOG の「本物の最小 0.85」は GT セットだけの値）:
+    //   本物（4 歩以上・手前）の最小は全体走まで含めると 0.77（ハード 0908b p7 291.50m 0.772・クレイ 0908 p13 343.62o 0.794・次が x151815 p9 218.40 0.85）、
+    //   junk の最大は 0.737（全体走 0908b 187.80o の体）・0.725（全体走 0908 520.033o）・0.71（x0908 435.17m）。余裕は 0.75 の上下に 0.02〜0.035 しか無い（例が増えたら真っ先に崩れる境）
+    // 効き（第 4 ラウンドの全体走 47 ポイント・+12 −33 の内訳）: align 25・redBody 9・flatWhite 6・奥の上端（zMinAll）6。レーンの LOG が x0908b の T+1（187.77→187.87）を flatWhite の効きと書いているのは誤りで、
+    //   187.80o の体の run（align 0.737）が落ちたことによる（align の効き）
+    // cZ0 ≤ −14.5 は外す: 手前の柵の run は fuse がカメラの引き（isPull: c0.y ≥ 490・cZ0 ≤ −14.5）＝ポイント終了の印に使う（x0911 p4 148.90 の柵を捨てると tPull が消えて 148.17m の偽打点が戻った）
+    // 副作用（第 4 ラウンドの全体走の目視・exp-r4-nearjunk/VERIFY.txt）: junk の run が同側の対を作って空白補完で入っていた本物に近い打点を失うことがある
+    //   （全体走 0908 p7 185.87m・x0908 p17 431.28o・0911 p6 176.85o・p9 225.74o・全体走 0908 519.70o）
+    const nearMisaligned = r => r.align != null && r.nAlign >= 4 && r.cZ0 != null && r.cZ0 < 0 && r.cZ0 > -14.5 && r.align < 0.75;
     const keep = runsIn.filter(r => { const sc = scOf(r); return r.disp >= minDisp * sc && r.n >= minNOf(r, sc) && r.t0 >= tStart + 0.3 && r.dir && spdOf(r) >= minSpd * sc && r.dur <= maxDur
                                        && sideOk(r)
                                        && !r.camStatic                    // カメラと一緒に動くだけの静止物（砂の観客席・テント）
                                        && !r.farStay                      // run 全体で補正後の重心 y が動かない大きい静止物（砂のテント・summarize 参照）
                                        && !(r.cls === 'drop' && (r.nTape != null ? r.nTape / r.n : r.tapeFrac) >= 0.8)   // 8 割以上のコマが白帯の blob（netTapeBlob）の白い run（芝ランクマ 15-18-15 p8 204.47: 7/7）。丸める前の比（nTape が無い古い run だけ tapeFrac）
+                                       // 面積でも見る（2026-09-24 第 4 ラウンド regress）: サーブ画→ラリー画のズーム中は白帯が帯（netNear）の切りで欠けて小さな切れ端（elong 3.5・n 220〜530）に割れ、
+                                       // 白帯の形（netTapeBlob）に当たらないコマが混ざる。芝ランクマ 15-18-15 p12 244.93〜245.57 の run はコマ数で 8/13＝0.62 だが面積で 0.85 が白帯
+                                       // （白帯の blob 1014〜1353 に対して切れ端 239/532/463/261/220）で、偽の相手の打点 244.90o になり、サーブ 245.67o と同じ側に並んで間に自分の track 245.24m を呼んだ。
+                                       // 閾値はコマ数と同じ 0.8。v38＋段 3 の 67 ポイントで白帯の blob を含む shots（23 本・scr なし・LOG の表）のうち面積 0.8 以上は 244.93 と 151815 p9 216.53（打点にならない）の 2 本、
+                                       // 打点になっている本物の白い筋（0908 p7 185.90m 0.68・マリオの白い返球 186.10）は 0.8 未満
+                                       && !(r.cls === 'drop' && r.nArea > 0 && r.nTapeArea / r.nArea >= 0.8)
+                                       && !nearMisaligned(r)
+                                       && !(r.nRedBody != null && 2 * r.nRedBody >= r.n && r.cZ0 != null && r.cZ0 < 2)   // 半分以上のコマが赤い体（redBody）の手前の run。奥は blob が小さく n<1000 が「小さい」の意味を持たない（奥の本物の筋は n 250〜1000）ので手前（cZ0<2）だけ
+                                       // 奥の上端の淡い背景（砂のテント・柵・観客席）: 相手側の白い（drop）run が全コマ Z ≥ 19（奥ベースライン 11.9m の 7m 後ろ）から出てこない。
+                                       // 白い球の筋は低い（ロブの黄と違って高さで Z が膨らまない）ので、打った相手（ベースラインの 3m 後ろまで）より奥には居ない
+                                       // （2026-09-24 第 4 ラウンド nearjunk・exp-r4-nearjunk/tiltscan.js: 全セットで該当 5 本、rally に入っていた 3 本は映像で全部 junk:
+                                       //   x0911 p6 171.24o・174.00o（自分のロブを追ってカメラが上へ振れ、上端の背景が流れ込む）・s0911 p9 205.94o（MATCH POINT 表示中のサーブ前・img/v_11_205.png）。
+                                       //   相手の本物の白い打点は 172.24o の zMin 4.1 など Z<16 に入る）
+                                       && !(r.side === 'opp' && r.cls === 'drop' && r.zMinAll != null && r.zMinAll >= 19)
+                                       && !(r.cls === 'drop' && r.nFlatW != null && 2 * r.nFlatW >= r.n)   // 半分以上のコマが横に細長い白（flatWhite）の白い run は線（白帯の高さに限らない）
                                        && !(r.provFrac >= 0.8)          // 仮カメラのズーム中だけの run（0908 芝 52.37: サーブ画の blob が"相手の打点"になった）
                                        && !(r.side === 'me' && r.nMax < 500)   // 手前（自分側）のトレイルは大きく映る（GT の自分の打点は全部 600 以上・本物のドロップ 1024〜4383）。ヨッシーの白い切れ端 319 を落とす
                                        && !(r.straight != null && r.straight < 0.6)   // y が往復する run は走る選手（0908 クレイ 227.93 マリオ 0.14・本物は 0.85 以上）
                                        // 尾か先端が緑（80〜140°）＝選手が混ざった blob（0908b ヨッシー: 赤い甲羅で topspin 判定・先端 101°）。ショット色に緑は無い（ロブの先端は 66° まで）
-                                       && !((r.Htail != null && r.Htail >= 80 && r.Htail < 140) || (r.Htip != null && r.Htip >= 80 && r.Htip < 140))
+                                       && !(((r.Htail != null && r.Htail >= 80 && r.Htail < 140) || (r.Htip != null && r.Htip >= 80 && r.Htip < 140)) && !tealSlice(r))
                                        && !(r.cls === 'unknown' && r.Smed != null && r.Smed >= 0.4); }).sort((a, b) => a.t0 - b.t0);   // 有彩色なのに種別が無い＝選手（緑のルイージ等）
     const out = [];
     for (const r of keep) {
@@ -680,20 +824,39 @@ window.Trail = (() => {
       // 併合の空間的な連続性（診断用に記録・先行断片の最後の重心と後続断片の最初の重心の距離）
       const endF = last && last._end, stF = r.frames[0];
       const jump = endF ? +Math.hypot(stF.cx - endF.cx, stF.cy - endF.cy).toFixed(0) : null;
-      if (last && fam(last.cls, r.cls) && (last.dir === r.dir || !r.dir || !last.dir) && r.t0 - last.t1 <= mergeGap) {
+      // 併合の鎖が次の打球を呑まない（2026-09-24 第 4 ラウンド regress）: 先行 shot の nMax の半分未満の小さい断片を併合しても t1 は延びるが「本体」の終わり（coreT1）は延ばさない。
+      // 後続が本体より大きい（nMax 2 倍以上＝新しい筋）のに本体の終わりから mergeGap より離れているなら、小さい断片の鎖で繋がっているだけなので併合しない
+      // （砂 0911 p9: 相手の run 212.37〜213.23（nMax 851）に 212.9〜213.70 の断片 4 本（118〜367）が繋がり、0.03 秒後に始まる次の打球 213.73（nMax 2526）まで 1 本になって、
+      //  打点 213.68o が消え 213.85o に遅れた。v37 では白帯の drop の run が間に挟まって鎖が切れていた（変更 2 がそれを除いた）。
+      //  大きさの条件なしで本体から測ると、切れ端が独立の打点になって全体走で +11 本増えた（LOG 段 7））
+      //  この条件（nMax 2 倍以上・本体から mergeGap 超）で切れる併合は全データで 1 例（0911 p9 213.73・比 3。exp-r4-regress-verify/VERIFY.txt）
+      const coreT1 = last ? (last.coreT1 != null ? last.coreT1 : last.t1) : null;
+      // 同じ大きさの条件で場所も見る（2026-09-25 統合 exp-int4・段 6 の相殺を直す）: 後続が本体より大きい（nMax 2 倍以上）のに、先行の最後の重心から 250px 以上離れた所で始まるなら別の物
+      //   （x0908 p17: 自分の slice の run 441.567〜443.400 が画面上端 (645,19) に張り付いたまま、その同じコマに次の打球の筋 443.400（nMax 6362・GT 443.17m）が (399,241) に立った＝331px。
+      //    段 5 までは間に 442.933 の体の run が挟まって鎖が切れていたが、nearjunk の redBody/align がそれを落として 1 本に呑まれた）。
+      //   後続が大きい併合は 9 セットで 6 本しか無く、飛びは 331（この本物）・305（x0911 p6 173.87o: 奥の背景の切れ端どうし・GT 無し）・202（x151815 p12 248.27o: 同じコマで始まる白い切れ端 174→1272）、残り 3 本は 40 以下。
+      //   250 は 202 と 305 の間。トレイルの筋そのものは 200px を超えない（後続が小さい併合の中央値 160・それは切れ端や体の吸収で場所の意味が薄い）
+      //   副作用（2026-09-29 exp-int4-survey/VERIFY.txt）: GT の無い全体走で 7 回発火し、悪くなったのが 2 回（s0908b p11 373.47 の必殺ショットの演出で側が反転 など）。暫定の値
+      if (last && fam(last.cls, r.cls) && (last.dir === r.dir || !r.dir || !last.dir) && r.t0 - last.t1 <= mergeGap
+          && !(r.nMax >= 2 * last.nMax && r.t0 - coreT1 > mergeGap)
+          && !(r.nMax >= 2 * last.nMax && jump != null && jump >= 250)) {
         (last.mergeLog = last.mergeLog || []).push({ t0: r.t0, gap: +(r.t0 - last.t1).toFixed(2), jump, nMax: r.nMax, cls: r.cls });
         last._end = r.frames[r.frames.length - 1];
         // 先行断片が「4コマ以上あるのに後続の 1/5 未満」ならチャージ中のオーラ（0908 クレイ 225.4: nMax 834 → 本物 13343、
         // 砂 413.7: 723 → 7688）。時刻・種別・側などは後続（本物のトレイル）のものにする。本物が途中で切れた断片は 1〜2 コマ目で
         // 育ちきっているので 5 倍差にはならない（芝 56.267 で最大 4.6 倍）
         const t1 = Math.max(last.t1, r.t1), n = last.n + r.n, merged = (last.merged || 1) + 1;
-        if (last.n >= 4 && r.nMax >= 5 * last.nMax) Object.assign(last, r, { t1, n, merged, auraT0: last.auraT0 != null ? last.auraT0 : last.t0 });
-        else { last.t1 = t1; last.n = n; last.nMax = Math.max(last.nMax, r.nMax); last.merged = merged; }
+        const small = r.nMax < 0.5 * last.nMax;
+        if (last.n >= 4 && r.nMax >= 5 * last.nMax) Object.assign(last, r, { t1, n, merged, auraT0: last.auraT0 != null ? last.auraT0 : last.t0, coreT1: r.t1 });
+        else { last.t1 = t1; last.n = n; last.nMax = Math.max(last.nMax, r.nMax); last.merged = merged; last.coreT1 = small ? coreT1 : Math.max(coreT1, r.t1); }
         continue;
       }
       out.push(Object.assign({}, r, { _end: r.frames[r.frames.length - 1] }));
     }
-    for (const s of out) delete s._end;
+    for (const s of out) { delete s._end; delete s.coreT1; }
+    // 色の混ざりを直した種別（summarize の clsAlt: flatTail・clayBlue）は併合の後で付ける: 併合の族（topspin と同族で繋ぐ）は v38 のまま。先に flat にすると、赤い尾の run が
+    //   吸っていた小さい junk の run（砂 0911 p1 49.50: 画面上端のパックンの頭）が取り残されて偽の打点になった（exp-r4-color/LOG [4]）
+    for (const s of out) if (s.clsAlt && s.clsAlt !== s.cls) { s.clsRaw = s.cls; s.cls = s.clsAlt; }
     return out;
   }
 

@@ -158,8 +158,58 @@ window.RallyFuse = (() => {
     return out;
   }
 
-  function fuse({ shots = [], events = [], track = [], camAt = null, t0 = -Infinity, t1 = Infinity, markers = [], farTracks = [] } = {}) {
+  // 切れ目をまたぐ反転（2026-09-24 第 4 ラウンド netvolley）: 自分のネット際のボレー／ジャンプスマッシュ。
+  // 960 の追跡はボレーを「手前へ来る区間が途切れ → 近くから画面上へ去る区間が始まる」として見ている（球がラケット・体に隠れる所で切れる）が、
+  // ball.js classifyEvents は側を見かけ Z の符号で決めるので、ラケットの高さの球（見かけ Z 0.5〜5）が opp・離れていく向きで bounce になり、自分の候補が 1 本も無かった
+  // （x0911 p4: ヨッシーのボレー 141.35・142.3・145.2・147.4 がすべて bounce/opp。far は相手の全打点に当たっているのに、交互の鎖も fillOne も組めない）。
+  // 物理: 手前へ来た球が奥へ戻るのは自分が打った時だけ（自分の球の相手コートでのバウンドは入射が奥向き・相手のボレーも入射が奥向き＝画面上へ）。
+  // 条件と値の出所（exp-diag-x0911/scan-gaprev.js・v38 相当の exp-int3 の segPts・GT 6 素材）:
+  //   区間 A の最後 0.2 秒に 3 点以上・画面下へ 2px/コマ以上（手前へ来る）／切れ目の見かけ Z が −1〜6（ネット際。−1 より手前はトレイル・打ち出しで取れる）／
+  //   0.45 秒以内に 130px(960) 以内から始まる区間 B の最初の 0.15 秒が画面上へ 3px/コマ以上。
+  //   距離は diag の 100 から 130 に広げた（2026-09-24 netvolley）: 球は隠れている 0.3〜0.45 秒の間も動く（x0911 146.45: 116px・接触後 0.38 秒で再捕捉）。
+  //   100〜130 で新たに入った打点は全部本物だった: x0911 146.48m（GT 146.45）・15-18-15 p10 229.77m（GT 229.75）・全体走 0908b p7 296.65m（フィーバーショット・exp-r4-netvolley/img/b7_296.png）・
+  //   0911 p2 102.90m（ボレーの白い輪 102.90〜102.95・exp-r4-netvolley/img/c2_101.png）・0911 p9 215.68m（白い輪 215.70〜215.75・exp-r4-netvolley/img/c9_215.png）。偽の挿入は 0
+  //   （x0911 144.1 は 130.0px・0.45 秒ちょうどで境界。しかも 0.2 秒後にパックンが打つので下の「止まる出射」で落ちる。取れないまま）
+  //   GT で自分の打点 6 本（x0908b p4 189.88・x0911 p4 141.35/142.3/145.2/147.4・x151815 p9 215.72）に当たり、誤りは 1 本（x151815 p12 253.40＝ポイント終了後に追跡が別物へ移る所）。
+  // 時刻: 切れ目の終わり +0.05 秒（中点の方が早ければ中点）。当たり 6 本で終わり→接触は +0.01〜+0.05（189.817→189.88・141.300→141.35・142.233→142.3・145.133→145.2・
+  //   147.383→147.4・215.717→215.72）、中点は 141.47（+0.12）・142.39（+0.09）と遅れる。球はラケットに隠れた直後に打たれる
+  function gapReversals(segs, camAt) {
+    const out = []; if (!camAt || typeof Court === 'undefined' || !segs || !segs.length) return out;
+    const S = segs.map(s => s.pts || s).filter(p => p && p.length >= 4).sort((a, b) => a[0].t - b[0].t);
+    const rate = (a, b) => (b.y - a.y) / Math.max(1, Math.round((b.t - a.t) * 60));
+    for (let i = 0; i < S.length; i++) {
+      const A = S[i], e = A[A.length - 1];
+      const inc = A.filter(q => dms(q.t, e.t) <= 200);
+      if (inc.length < 3 || rate(inc[0], e) < 2) continue;
+      const cam = camAt(e.t); if (!cam || !cam.ok) continue;
+      const Ze = Court.toCourt(e.x * 2, e.y * 2, cam).Z;
+      if (!(Ze >= -1 && Ze < 6)) continue;
+      const B = S.find(s => s[0].t > e.t && dms(e.t, s[0].t) <= 450 && Math.hypot(s[0].x - e.x, s[0].y - e.y) <= 130);
+      if (!B) continue;
+      const o = B.filter(q => dms(B[0].t, q.t) <= 150);
+      if (o.length < 3 || rate(o[0], o[o.length - 1]) > -3) continue;
+      // 出射がすぐ止まる区間は静止物（ネットの白帯・柵）へ乗り移った所: 打った球は 0.35 秒では止まらない。0.15〜0.35 秒の正味の速さが 2.5px/コマ（960）未満なら捨てる
+      //   （2.5 は purgeStatic の「カメラのドリーで静止物が流れる最大」と同じ）。実測: 全体走 0908 p6 161.19（0.7・目視で球は左奥のルイージから手前へ飛んでいる最中で、
+      //   追跡は 161.15 にネットの右の白帯 (712,182) で切れ (875,199) の静止物へ移る・exp-r4-netvolley/img/s0908_161v.png）・0908 p3 112.23（1.3）。当たりの 15 本は 3.8 以上
+      //   閾値 2.5 は偽の最大 1.3 と当たりの最小 3.8 の間（purgeStatic と同じ値を採った）。1.5 に下げても x0911 144.1（正味 1.6・0.2 秒後にパックンが打つので出射が止まって見える）は残せるが、
+      //   144.1 は切れ目 0.450 秒・130.0px でもあり（上の距離・時間の境界ちょうど）、1 本のために 2 つの境を同時に緩めない（exp-r4-netvolley/LOG [見送り]）
+      const o2 = B.filter(q => dms(B[0].t, q.t) > 150 && dms(B[0].t, q.t) <= 350);
+      if (o2.length >= 3 && Math.hypot(o2[o2.length - 1].x - o2[0].x, o2[o2.length - 1].y - o2[0].y) / Math.max(1, Math.round((o2[o2.length - 1].t - o2[0].t) * 60)) < 2.5) continue;
+      // 区間 B の出だしが A の終わりより画面の下（dy > 0）なら、球は隠れている間も手前へ降り続け、B の出だしの所で打たれている → 時刻は B の出だし −0.05 秒。
+      //   実測（work/gapdy.js・目視/GT）: 0908b p7 296.25→296.75（dy +115・接触 296.65 のフィーバーショット・exp-r4-netvolley/img/b7_296.png）・15-18-15 p8 205.27→205.52（+71・GT 205.6）・
+      //   p10 229.60→229.82（+127・GT 229.75）・p9 216.78→216.93（+77・GT 217.05）・215.717→215.733（+96・GT 215.72）。終わり +0.05 だと −0.10〜−0.35 秒早い。
+      //   dy ≤ 0 の当たり（141.35 など上の 6 本）は −13〜−72 で、上へ去る球がすぐ見えている
+      const t = B[0].y > e.y ? Math.max(e.t, B[0].t - 0.05) : Math.min((e.t + B[0].t) / 2, e.t + 0.05);
+      const c = Court.toCourt(e.x * 2, e.y * 2, cam);
+      out.push({ t: +t.toFixed(3), x: e.x, y: e.y, kind: 'hit', side: 'me', qc: 1.0, src: 'gaprev', X: +c.X.toFixed(2), Z: +c.Z.toFixed(2), tEnd: e.t, tStart: B[0].t });
+    }
+    return out;
+  }
+
+  function fuse({ shots = [], events = [], track = [], camAt = null, t0 = -Infinity, t1 = Infinity, markers = [], farTracks = [], segs = null } = {}) {
     track = purgeStatic(track);
+    // 自分のネット際のボレー（上の gapReversals）を追跡 hit として足す。以降の同側補完・空白補完の鎖・規則 3 の寄せはこれを 960 の hit と同じに扱う
+    if (segs) events = events.concat(gapReversals(segs, camAt)).sort((a, b) => a.t - b.t);
     const launches = nearLaunches(track, camAt);
     // フル解像度のボール軌道（tools/farball.js・帯は奥ベースライン −300〜+240px で、ネット際の打ち上げまで入る）でも打ち出しを探す。
     // 960 の追跡は打ち上げ直後の球（黄トレイルと重なる）を失うことがある（砂 0911 p5 159.2: 960 は 159.32 で途切れ、フル解像度の軌道は 159.25→159.45 で y 463→127）。
@@ -174,7 +224,8 @@ window.RallyFuse = (() => {
                                  // 先端 y の 2 番目に小さい値（先頭に紛れた外れ blob 1 個に引っ張られない。砂 413.5: テントの縞 ty=16 で lob に化けた）
                                  tyMin: s.frames && s.frames.length ? (ys => ys.length >= 2 ? ys[1] : ys[0])(s.frames.map(f => f.ty != null ? f.ty : f.cy).sort((a, b) => a - b)) : null,
                                  _tys: s.frames ? s.frames.map(f => ({ t: f.t, y: f.ty != null ? f.ty : f.cy })) : null,
-                                 c0: s.frames && s.frames.length && s.frames[0].cx != null ? { x: s.frames[0].cx, y: s.frames[0].cy } : null }))
+                                 c0: s.frames && s.frames.length && s.frames[0].cx != null ? { x: s.frames[0].cx, y: s.frames[0].cy } : null,
+                                 c1: s.frames && s.frames.length >= 2 && s.frames[1].cx != null ? { x: s.frames[1].cx, y: s.frames[1].cy } : null }))
                     .sort((a, b) => a.t - b.t);
     // 画面の下端から入ってくる run（2026-09-24 extras）: ポイントが終わってカメラが引くと、手前の柵・看板が画面の下端から上へせり上がり、
     // 自分側の dir up の run（多くは slice）になる。本物の自分のトレイルはラケット（画面の中）から始まるので、最初のコマが下端にあり、
@@ -316,9 +367,80 @@ window.RallyFuse = (() => {
       //     （追跡が 188.533 の最下点から滑らかに上がり続ける＝打点は 188.53）／偽 全体走 0908 p1 74.14→73.88 は −6px（重心 (352,347) が打ち出し (391,336) の真横。
       //     打ち出しの前 0.3 秒は 3px/コマで地面を這う物・後は画面上端 (373,90) で止まる物で、球ではない）。例が 3 本だけなので閾値は粗い
       const progress = (h) => h.c0 && L.ux != null ? (h.c0.x - L.x) * L.ux + (h.c0.y - L.y) * L.uy : null;
-      const late = hits.find(h => h.side === 'me' && h.t - L.t >= 0.25 && h.t - L.t <= 0.6);
-      if (late && !(progress(late) != null && progress(late) < 60) && !hits.some(h => h !== late && h.t > L.t - 0.25 && h.t < late.t) && !hits.some(h => h.side === 'me' && Math.abs(h.t - L.t) < 0.25)) {
+      // 下限 0.25 → 0.10（2026-09-24 第 4 ラウンド nearstart・x0908b 診断の変種 A）: 自分側のトレイル由来の時刻は系統的に遅く（GT との差の中央値 x0908b +0.09・x151815 +0.12・x0908 +0.1）、
+      //   打ち出しがある所では打ち出しの方が GT に近い（x0908b の launches: −0.05〜+0.05）。0.10〜0.25 秒の遅れも寄せる（x0908b p0 85.603→85.467（GT 85.43・白いドロップは紫白のバーストの後から）・
+      //   75.67→75.57（75.55）・78.07→77.93（77.98）・x0911 147.54→147.38（147.4））。ただし 0.25 秒未満は「同じ打球の筋」の確かめとして、トレイルの最初の重心が打ち出し点から
+      //   80px（960）以内（前進の門 60px は 0.25 秒以上飛んだ後の筋の前提なので使えない）。0.10 未満は寄せても差がトレイルの LEAD 程度で意味が無い。
+      //   比較は ms の整数（dms）。同じ打点の自分側の重複の門から late 自身を除く（旧版は late が L.t から 0.25 秒以上離れているので素通りしていた）
+      const nearC = (h) => h.c0 ? Math.hypot(h.c0.x - L.x, h.c0.y - L.y) : null;
+      const late = hits.find(h => h.side === 'me' && dms(L.t, h.t) >= 100 && dms(L.t, h.t) <= 600 && (dms(L.t, h.t) >= 250 || h.src === 'trail'));
+      const okLate = late && (dms(L.t, late.t) >= 250 ? !(progress(late) != null && progress(late) < 60) : (nearC(late) != null && nearC(late) <= 80));
+      if (okLate && !hits.some(h => h !== late && h.t > L.t - 0.25 && h.t < late.t) && !hits.some(h => h !== late && h.side === 'me' && Math.abs(h.t - L.t) < 0.25)) {
         late.tTrail = late.tTrail != null ? late.tTrail : late.t; late.t = L.t; late.launch = true; late.launchShift = true; continue;
+      }
+      // (2c) トレイルが打ち出しより先に立つ（2026-09-24 第 4 ラウンド nearstart）: 自分側のトレイル打点が打ち出しの 0〜0.25 秒前にあり、その run の 2 コマ目の重心が 1 コマ目より下
+      //   （画面の下＝手前へ動く）なら、run の頭は出球ではなく「入ってくる球の筋」か「チャージのオーラ・閃光」で、出球はその後の打ち出しから。時刻を打ち出しへ寄せる（種別はトレイルのまま）。
+      //   自分の出球の筋は出だしから画面の上へ進むので、2 コマ目が下がるのは出球ではない（規則 2 と対になる向きの確かめ）。位置は規則 2 の近い側と同じ 80px（960）以内。
+      //   実例（全体走・目視）: 0908b p4 194.34→194.53（x0908b GT 194.5・run の頭 334→359 は落ちてくる入射球・img/x0908b 診断 p4_1933.png）・0908 p12 307.47→307.72
+      //   （307.37〜.64 はチャージのオーラ・接触 307.72〜.74・img/EH_s0908_307.72.png。v38 の misses が 307.71→307.47 と悪化させていた所）・0908b p1 95.87→96.08
+      //   （95.87〜.97 は MAX の閃光・接触 ≈96.05・img/EH_s0908b_96.08.png）・0908b p7 277.54→277.57（0.03 秒・同程度）。発火はベンチ＋x＋全体走でこの 4 本だけ
+      const early = hits.find(h => h.side === 'me' && h.src === 'trail' && !h.launch && dms(h.t, L.t) > 0 && dms(h.t, L.t) <= 250 && h.c0 && h.c1 && h.c1.y - h.c0.y > 0 && Math.hypot(h.c0.x - L.x, h.c0.y - L.y) <= 80);
+      if (early && !hits.some(h => h !== early && h.t > early.t && h.t < L.t)) { early.tTrail = early.t; early.t = L.t; early.launch = true; early.launchShift = true; early.earlyHead = true; continue; }
+    }
+    // (2d) 切れ目の反転（gaprev）の直後に立つ自分側トレイル（2026-09-25 統合 exp-int4・段 4 の相殺を直す）: gaprev（手前へ来た球が奥へ戻る所・960 の追跡）は自分の接触の直接の印で
+    //   GT との差は +0.01〜+0.05（上の gapReversals の 6 本）、自分側トレイルの時刻は系統的に遅い（規則 2 の下限 0.10 の根拠・中央値 +0.09〜+0.12）。同じ打球なら gaprev の時刻へ寄せる（種別はトレイルのまま）。
+    //   窓と位置は規則 2 の近い側と同じ: トレイルが gaprev の 0.10〜0.25 秒後・run の最初の重心が切れ目の点から 80px（960）以内・間に他の打点が無い。
+    //   実例は 1 本（x0911 p4: gaprev 142.283・トレイル 142.470・48px・GT 142.3）。netvolley 単独では gapPair が 142.283m を入れていたが、nearstart のトレイル 142.47m が
+    //   立つと gapPair の門（前後 0.3 秒）に掛からず 142.47m（+0.17）だけが残った。ベンチ＋x の他の gaprev→トレイルの並びは 15-18-15 p8 205.467→205.537（0.07 秒・寄せる必要が無い）と
+    //   x151815 p9 216.883→217.237（0.35 秒・159px・GT 217.05 でどちらも ±0.17〜0.19: 窓の外）だけで、この規則は 1 本にしか掛からない。2b（消え際）は掛けない（launch と同じ扱い）
+    for (const g of events.filter(e => e.src === 'gaprev')) {
+      const h = hits.find(o => o.side === 'me' && o.src === 'trail' && !o.launch && !o.gaprevShift && dms(g.t, o.t) >= 100 && dms(g.t, o.t) <= 250 && o.c0 && Math.hypot(o.c0.x - g.x, o.c0.y - g.y) <= 80);
+      if (!h || hits.some(o => o !== h && o.t > g.t - 0.25 && o.t < h.t)) continue;
+      h.tTrail = h.tTrail != null ? h.tTrail : h.t; h.t = g.t; h.gaprevShift = true;
+    }
+    // (2b) 入ってくる球の消え際（2026-09-24 第 4 ラウンド nearstart）: 砂のチャージショットは接触の後に白い輪→青い輪→破裂が 0.15〜0.2 秒続き、筋（トレイル）は破裂の後から出る
+    //   （x0908 p17 443.17: 443.20〜443.23 白い輪・443.27 青い輪・443.30〜443.37 破裂・筋は 443.40 から＝img/x0908_443.png）。960 の追跡は輪の中の球を追えず、
+    //   手前へ降りてきた球がラケットの所で途切れ、打ち出し（上の規則 2）が立たない。そこで「手前（Z<0）へ 6px/コマ（960）以上で降りてきた追跡が 5 コマ以上途切れる点」が
+    //   自分側トレイル打点の 0.15〜0.26 秒前・トレイルの最初の重心から 120px（960）以内にあり、間に他の打点が無ければ、途切れた時刻へ寄せる（種別はトレイルのまま）。
+    //   実測（work/endstudy-v38.txt・GT の自分側トレイル打点の前 0.03〜0.5 秒の途切れ全部）: 当たり 4 本＝0908 p2 99.183（トレイル 99.437・GT 99.2）・x0908 p17 433.050（433.303・433.1）・
+    //   434.383（434.637・434.45）・443.150（443.37・443.17）は先行 0.220〜0.254 秒で GT との差 −0.067〜−0.017。
+    //   外れ 4 本＝0908 p16 414.250（先行 0.420・GT 414.65 の 0.40 秒前の手前のバウンド）・0911 p5 156.200（0.437）・x0908 p17 428.433（0.370）・x0908b p0 75.333（0.337）は
+    //   先行 0.337 以上（上限は輪と破裂 0.15〜0.2 秒＋トレイルの LEAD の遅れ分・全体走の目視で下の 0.26 まで詰めた）。下限 0.15: それより近い途切れ（0908 p8 225.867 0.036・p16 420.033 0.070・
+    //   x0908 p17 436.733 0.137）はトレイルがもともと接触から 0.15 秒以内で寄せる必要が無い（436.733 は寄せると −0.09 で悪くなる）。
+    //   6px/コマ: 当たりは 6.5〜12.5・止まっている球（0908 p0 57.050 vy 0.0: 静止）や上へ動く球の途切れを除く。120px: 当たりの距離は 39〜98（破裂の後の筋は輪の分だけ上から出る）
+    //   上限 0.26（全体走の目視で 0.30 から詰めた・img/s0908*_*.png）: 先行 0.270〜0.287 の途切れは、球がラケットへ届く前に MAX チャージの白い閃光や大きな筋に隠れて消えた所で、
+    //   寄せると接触の 0.13〜0.20 秒前になる（0908 p12 284.00（接触 284.17〜.20）・289.23（289.40〜.43）・0908b p8 314.35（314.55）／0908b p5 230.87 は −0.13 で旧 +0.14 と同程度）。
+    //   先行 0.254 以下の 10 本は目視で改善（0908 99.18・433.05・434.38・443.15・261.33・364.95・0908b 229.62・287.55・291.30・365.45: 接触との差 −0.07〜0）、2 本は同程度
+    //   （0908b 363.67 −0.11 ⇔ 旧 +0.09・381.02 −0.14 ⇔ 旧 +0.11: どちらも閃光で球が隠れる型）。境 0.26 は 0.254 と 0.270 の間
+    //   途切れの y ≥ 最初の重心の y − 20px: 自分の出球の筋はラケット（接触点）から画面の上へ伸びるので、筋の最初の重心は接触点より上に出る。途切れがそれより 20px 以上上なら
+    //   球はまだラケットに届いていない（0908 p12 284.00: 途切れ y 290・重心 y 377・球は 284.20 に y 410 で再び捕まる／0908b p7 279.60: 280・357＝フィーバーの着弾演出で消えた所）。
+    //   当たりの差は −5〜+69（0908b 287.55 が −5）。20px は 960 での球と筋の端のずれの目安（暫定）
+    //   打ち出し（規則 1・2）で直した打点は対象外。時刻の比較は ms の整数（dms）
+    {
+      const ends = [];
+      for (let i = 0; i < track.length; i++) {
+        const q = track[i], nx = track[i + 1];
+        if (nx && Math.round((nx.t - q.t) * 60) < 5) continue;
+        const pre = track.filter(o => dms(o.t, q.t) <= 100 && o.t < q.t);
+        if (pre.length < 3) continue;
+        const vy = (q.y - pre[0].y) / Math.max(1, Math.round((q.t - pre[0].t) * 60));
+        if (vy < 6) continue;
+        const cam = camAt ? camAt(q.t) : null;
+        if (!cam || !cam.ok || typeof Court === 'undefined' || !(Court.toCourt(q.x * 2, q.y * 2, cam).Z < 0)) continue;
+        // 途切れの後（0.4 秒以内）に追跡が球を再び捕まえた最初の点が、途切れより 10px（960）以上下（手前）なら、球は途切れた後もラケットへ降り続けていた（途切れは閃光に隠れた所）
+        //   （全体走 0908b p11: 途切れ 360.317 (439,340) は MAX チャージの閃光 360.47〜.53 に隠れた所で、次の点 360.533 (388,383) がラケットの所・接触 ≈360.54＝img/A_s0908b_360.53.png／
+        //    0908 p12 284.00 (506,290) → 284.200 (542,410)・接触 284.17〜.20）。当たり（99.183→99.350・433.050→433.233・434.383→434.567）は次の点が上（出球）
+        if (nx && nx.t - q.t <= 0.4 && nx.y - q.y > 10) continue;
+        ends.push(q);
+      }
+      for (const h of hits) {
+        if (h.side !== 'me' || h.src !== 'trail' || h.launch || h.gaprevShift || !h.c0) continue;
+        const e = ends.filter(q => dms(q.t, h.t) >= 150 && dms(q.t, h.t) <= 260 && Math.hypot(q.x - h.c0.x, q.y - h.c0.y) <= 120 && q.y >= h.c0.y - 20).pop();
+        if (!e) continue;
+        // 間に他の打点が無いこと: 途切れ〜トレイルの間に何かあれば寄せない。相手の打点は途切れより前にあって当然（球が届く前）なので、途切れの前は自分側だけ 0.3 秒見る
+        //   （x0908 p17 443.37: 相手のトレイル打点 442.903（far 寄せ前）が途切れ 443.150 の 0.25 秒前に入っていて、規則 2 と同じ「L.t − 0.25 から」の門では寄せられなかった）
+        if (hits.some(o => o !== h && o.t < h.t && (o.t > e.t || (o.side === 'me' && o.t > e.t - 0.3)))) continue;
+        h.tTrail = h.t; h.t = +e.t.toFixed(3); h.endShift = true;
       }
     }
     hits.sort((a, b) => a.t - b.t);
@@ -327,6 +449,14 @@ window.RallyFuse = (() => {
     // 近すぎる 2 本の解決（MIN_GAP）の後に掛ける: 先に寄せると、本来落ちるはずの小さい断片（砂 0911 p5 160.20 n432）が別の時刻へ逃げて残る
     // 相手側のトレイル打点の直前（窓は上の farCands: 1.0 秒前〜トレイルの時刻）にそれがあれば時刻をそちらへ寄せる（種別はトレイルのまま）。直前の打点より minGap 以上後のものだけ。
     // qc 1.0 以上（折り返し後に手前へ向かう球）を優先し、同じ段なら最も遅いもの（バウンドの折り返しは打点より前に出る）
+    // snapOne: 1 本の寄せ（下の同側の組の解決で、捨てた前の 1 本が寄せの下限を塞いでいた残りの 1 本にもう一度掛ける・2026-09-24 第 4 ラウンド regress）
+    const snapOne = (h, prevH) => {
+      const cands = farCands(h, prevH);
+      if (!cands.length) return;
+      const strong = cands.filter(e => (e.qc || 0) >= 1.0);
+      const pick = (strong.length ? strong : cands).sort((x, y) => y.t - x.t)[0];
+      h.tTrail = h.t; h.t = +pick.t.toFixed(3); h.farFix = pick.src; h.farQc = pick.qc; if (pick.rise) h.farRise = pick.rise;
+    };
     for (let i = 0; i < hits.length; i++) {
       const h = hits[i];
       if (h.side !== 'opp') continue;
@@ -339,9 +469,35 @@ window.RallyFuse = (() => {
       if (!cands.length) continue;
       const strong = cands.filter(e => (e.qc || 0) >= 1.0);
       const pick = (strong.length ? strong : cands).sort((x, y) => y.t - x.t)[0];
-      h.tTrail = h.t; h.t = +pick.t.toFixed(3); h.farFix = pick.src; h.farQc = pick.qc; if (pick.rise) h.farRise = pick.rise;
+      h.tTrail = h.t; h.t = +pick.t.toFixed(3); h.farFix = pick.src; h.farQc = pick.qc; if (pick.rise) h.farRise = pick.rise; h.farEv = pick;
     }
     hits.sort((a, b) => a.t - b.t);
+    // 相手→相手→相手の真ん中のネット際の折り返し（2026-09-24 netvolley）: 相手側の打点が 3 本続くことは無い（側は交替する）。真ん中が far の折り返し（far-turn）へ寄せた打点で、
+    // その折り返しが見かけ Z < 7（ネット際・相手の打点は Z 8〜15）で、折り返す前の球が手前へ降りていた（前 0.12 秒の正味 vy > +3px/コマ・FHD）なら、
+    // 降りてくるロブを自分がネット際で跳んで打った所（ジャンプスマッシュ）。球は打点の高さで奥の帯に入るので far-turn は常に opp と出る（farball）。
+    // 実測: x0908 p17 430.417（Z 4.18・前 vy +12.6・マリオのジャンプスマッシュ 430.40〜430.50 の白い輪＝GT 430.45m・exp-diag-x0908 p17_430near）で、
+    // 前後は 429.47o（相手の飛びつきロブ 429.45 の時刻に立った SMASH 表示の run）・431.28o（相手の本物）。
+    // 真ん中以外（前後）が本物かどうかは問わない（どれか 1 本は側が違う。側を変えて筋が通るのが、ネット際で降りてくる球を打った真ん中だけ）。
+    // 相手の本物のネット際の接触（0908 p16 419.633: Z 6.45・前 +4.6）は前が自分の打点なので当たらない。間隔は 0.3 秒以上（ms の整数）
+    // 発火はベンチ＋x＋全体走の全データで 1 回（x0908 p17 ＝全体走 s0908 p17 の 430.42。exp-r4-netvolley/LOG [段8]）。x0908 p17 440.167（マリオのもう 1 本のジャンプスマッシュ）は前後が
+    // 439.60m・440.47m の junk（自分の赤い体・振り抜き）で m-o-m に見えて掛からない（trail の junk 除去が先）
+    {
+      const preVy = (e) => { const ex = e.x * 2, ey = e.y * 2; for (const p of farPts) { const near = p.find(q => Math.abs(q.t - e.t) <= 0.02 && Math.hypot(q.x - ex, q.y - ey) <= 60); if (!near) continue;
+        const pre = p.filter(q => q.t >= e.t - 0.12 && q.t <= e.t + 0.001); if (pre.length < 2) return null; const a = pre[0], b = pre[pre.length - 1]; return (b.y - a.y) / Math.max(1, Math.round((b.t - a.t) * 60)); } return null; };
+      for (let i = 1; i + 1 < hits.length; i++) {
+        const a = hits[i - 1], h = hits[i], b = hits[i + 1];
+        if (a.side !== 'opp' || h.side !== 'opp' || b.side !== 'opp' || h.farFix !== 'far-turn' || !h.farEv) continue;
+        if (dms(a.t, h.t) < 300 || dms(h.t, b.t) < 300) continue;
+        // 前の相手打点から 1.5 秒以上離れていれば、間の自分の打点の取りこぼしで o-o-o に見えているだけ（2026-09-29 統合の全体走 s0908 p7: 170.30o→172.267o は 1.97 秒で、
+        // 間の 171.17m（マリオの白い輪 171.10〜171.15）が落ちた所。172.267 はルイージのスライスの接触 172.20〜172.25 で本物の opp）。本物の 430.417 は前が 0.97 秒。
+        // 後ろ側は見ない（統合では 430.417 の後ろの 431.28o が nearjunk の副作用で落ち、次の 432.533o まで 2.1 秒ある）
+        if (dms(a.t, h.t) >= 1500) continue;
+        const e = h.farEv; if (e.Z == null || !(e.Z < 7)) continue;
+        const v = preVy(e); if (v == null || !(v > 3)) continue;
+        h.sideFar = h.side; h.side = 'me'; h.netSmash = true; delete h.farRise;
+      }
+    }
+    for (const h of hits) delete h.farEv;
     // コートの横の外（観客席・柵）から始まる run（2026-09-24 extras）: run の尾（打った側の端）の X が ±7.5m 以上（ダブルスのサイドライン 5.5m の 2m 外）。
     // 実測: GT に当たったトレイル打点の尾は |X| ≤ 5.97（15-18-15 p9 218.44）。|X| ≥ 7.5 の GT 素材の 4 本は全部偽物
     // （砂 0911 p7 192.70・193.67＝右端の観客席・柵（img/p7_193.png）・x0911 p6 177.80・p4 148.60＝パッシングの橙が左端へ抜ける所）。
@@ -355,7 +511,8 @@ window.RallyFuse = (() => {
     // far 寄せ（上）の後に掛ける。先に捨てると、192.70 が消えて 193.07（本物の紫・トレイルの時刻は GT 193.0 に +0.07）の far 寄せの下限（直前の打点）が
     // 191.35 まで下がり、192.50 の far-turn（ヨッシーの低い球がパックンの前で跳ねた所・Z 6.96）へ −0.57 秒引かれて GT を外す（far 寄せの窓の問題・別レーン）。
     // far で寄せられた run は奥側の裏付けがあるので対象外
-    {
+    // offCourt の除去は関数にして sideFix の後にもう一度掛ける（2026-09-24 第 4 ラウンド regress・x セット診断 x0911 177.80）
+    const dropOffCourt = () => {
       const offCourt = h => h.src === 'trail' && !h.launch && h.sideTrail == null && !h.farFix && h.from && h.from.X != null && Math.abs(h.from.X) >= 7.5;
       const drop = new Set();
       for (let i = 0; i < hits.length; i++) {
@@ -367,7 +524,8 @@ window.RallyFuse = (() => {
         if (sameNear || (p && p.side !== h.side && dms(p.t, h.t) < gapMinMs)) { h.offCourtDrop = true; drop.add(h); }
       }
       if (drop.size) hits = hits.filter(h => !drop.has(h));
-    }
+    };
+    dropOffCourt();
     // sideFix（2026-09-24 opp0908）: 同じ側のトレイル打点が 0.6 秒以内に並ぶことは無い（反対側で打ち返されて戻るまでの 2 打の間隔は GT 3 素材で最短 0.95 秒）。
     // 前の 1 本の直前 0.15 秒以内に反対側の 960 追跡 hit があれば、前の 1 本は反対側の打点のトレイルの側を取り違えたもの
     // （0908 砂 p16 417.87 opp topspin n5 nMax 253: 実際は 417.8 の自分のチャージ打点の橙の筋。筋が奥へ伸びる途中から run になり
@@ -383,15 +541,48 @@ window.RallyFuse = (() => {
       const ev = events.filter(e => e.kind === 'hit' && e.side === other && !(e.src && e.src.startsWith('far-')) && e.t >= a.t - 0.15 && e.t <= a.t).sort((x, y) => y.t - x.t)[0];
       if (ev) { a.sideFix = a.side; a.side = other; }
     }
+    // offCourt（上）をもう一度: sideFix で側が直った打点を相手に (a)（同じ側 0.6 秒以内）を見直す。x0911 p6 177.80o（右のコート外の飾り・X 7.83）は、
+    // 同じ側の本物 178.40 がまだ me と読まれていた（sideFix で opp に直るのは offCourt の後）ので 1 回目では捨てられなかった（exp-diag-x0911 #23）
+    dropOffCourt();
+    // 同じ側のトレイル打点の組（2026-09-24 第 4 ラウンド regress・x セット診断の SAMESIDE2 を広げた）: sideFix の後もまだ同じ側のトレイルの run が 0.6 秒未満に 2 本立っていれば
+    // 両方は本物でない（同じ側の 2 打は GT で最短 0.95 秒・sideFix／extras (a) と同じ根拠）。launch・挿入・規則 1 で側を反転したものは対象外（トレイルの run 同士だけ）。
+    // 間隔はトレイルの時刻（far 寄せの前・tTrail）で見る: 砂 0911 p5 155.60o（青のスライス・155.36 へ寄る）と 156.10o（パックンの赤い体）は寄せた後だと 0.74 秒離れて見えるが run は 0.50 秒。
+    // far 寄せの前に掛けると、extras (a) より先に 192.70o（観客席）が消えて 193.07o が 192.50 の far-turn へ引かれた（0911 p7・extras のコメントと同じ仕組み）ので、この位置に置く。
+    //  (i) 同じ色族で 0.45 秒未満 → 後ろを捨てる: 同じ打球の筋が 2 本の run に割れたもの（芝ランクマ 15-18-15 p9 218.40m→218.70m の黄＝同じスマッシュ・x151815 GT 218.5 は 1 本／
+    //      砂 0911 p0 20.14o→20.50o の橙）。0.45 秒は同じ打球の筋が画面に残る長さ（ネットを越えるまで 0.3〜0.5 秒）の内側
+    //  (ii) それ以外は blob の最大（nMax）が相手の半分未満の方を捨てる（本物の筋は大きい: 0911 p7 193.40m 3524 に対する 193.87m 541（自分の橙の筋の割れ・GT 1 本）／
+    //      x0908 p17 434.64m 4888 に対する 435.17m 2042（GT 434.45 だけ）／0911 p5 の青 8030 に対するパックンの赤い体 1288（img/g0911_155.png））。
+    //      大きさが同じくらい（半分以上）なら決めず両方残す（全体走 0908 p13 339.94o 7397 / 340.30o 8152）
+    //  境（exp-r4-regress-verify/VERIFY.txt）: 600ms は 0.60 ちょうどの組 124.64/125.12・499.80/500.40（≥600 で規則の外）と 0.63 の組 214.70/215.34・27.15/28.07 が最も近い。
+    //  (ii) の比 2 は 471.07/471.60（2.09・0908 p19: 落として正解だったが余裕 5%）が最も近い
+    //  前の 1 本を捨てて後ろの相手側が残り、まだ far で寄せていなければ寄せ直す（捨てた junk が寄せの下限を塞いでいた: 芝ランクマ 15-18-15 p12 248.24o の白い帯の run → 248.57o の橙）
+    {
+      const trailT = h => h.tTrail != null ? h.tTrail : h.t;
+      for (let i = 1; i < hits.length; i++) {
+        const a = hits[i - 1], b = hits[i];
+        if (a.side !== b.side || a.src !== 'trail' || b.src !== 'trail' || a.launch || b.launch || a.sideTrail != null || b.sideTrail != null) continue;
+        const gap = Math.abs(dms(trailT(a), trailT(b)));
+        if (gap >= 600) continue;
+        const sameFam = FAM[a.cls] === FAM[b.cls] && FAM[a.cls] !== 'any';
+        let drop = null;
+        if (sameFam && gap < 450) drop = i;
+        else if ((a.nMax || 0) * 2 < (b.nMax || 0)) drop = i - 1;
+        else if ((b.nMax || 0) * 2 < (a.nMax || 0)) drop = i;
+        if (drop == null) continue;
+        hits.splice(drop, 1);
+        if (drop === i - 1 && b.side === 'opp' && !b.farFix) { snapOne(b, i - 2 >= 0 ? hits[i - 2] : null); hits.sort((x, y) => x.t - y.t); }
+        i = Math.max(0, i - 2);
+      }
+    }
     // 規則 (3)（2026-09-24 near）は far 寄せの後（相手側トレイルの遅れ 0.25〜0.95 秒を寄せてから「±0.3 秒に打点が無い」を見る: 砂 0911 p5 158.87 opp → 158.57 のあとに 159.13 の打ち出しが空く）
-    for (const L of allLaunches) {
+    const rule3 = (arr, mark = null) => { for (const L of allLaunches) {
       // (3) 近くに打点が無い（±0.3 秒）打ち出しは、直前の打点が相手なら自分の打点として補う（黄トレイルが砂に溶ける 0911 p1 51.05 のロブ）。
       //     直前が自分なら入れない（打ち合いの後の追跡の乗り移り: 15-18-15 p8 209.57）。
       //     ジャンプ・ガード（検証役）: 960 の打ち出しで、窓の先頭の点へ直前の追跡点から 45px/コマ（軌道の連結の上限と同じ）を超えて跳んできたものは、
       //     別物から球へ乗り移った所を「上がり始め」と読んでいるので入れない（規則 1・2 は既存の打点を直すだけなので掛けない）
       if (!L.far && L.pj > 45) continue;
-      if (hits.some(h => Math.abs(h.t - L.t) <= 0.3)) continue;
-      const prev = hits.filter(h => h.t < L.t).pop();
+      if (arr.some(h => Math.abs(h.t - L.t) <= 0.3)) continue;
+      const prev = arr.filter(h => h.t < L.t).pop();
       if (!prev || prev.side !== 'opp') continue;
       // 2026-09-24 chain: フル解像度の打ち出しは帯に球が入ってから立つので遅れることがある（上の「時刻は 960 より遅れがち」）。直前 0.3 秒以内に自分側の 960 の追跡 hit が
       // 強く（qc ≥ 0.8＝空白補完の鎖の候補と同じ基準）出ていれば、その時刻（複数なら最も遅いもの）を打点にする。
@@ -400,10 +591,11 @@ window.RallyFuse = (() => {
       // 弱い kink は採らない: 砂 0911 p3 112.483 kink 0.58（接触 112.55〜112.60・launch-far 112.633 の方が近い）・0911 p10 240.685 kink −0.08
       // 寄せた先が既存の打点と 0.3 秒以内になるときは寄せない（砂 0911 p2: 60.950 は 60.67 opp の 0.28 秒後。寄せると 61.05 の挿入ごと消えていた）
       const pre = L.far ? events.filter(e => e.kind === 'hit' && e.side === 'me' && !(e.src && e.src.startsWith('far-')) && (e.qc || 0) >= 0.8 && e.t >= L.t - 0.3 && e.t < L.t
-                                          && !hits.some(h => Math.abs(h.t - e.t) <= 0.3)).sort((x, y) => y.t - x.t)[0] : null;
-      hits.push({ t: pre ? +pre.t.toFixed(3) : L.t, side: 'me', cls: 'unknown', src: L.far ? 'launch-far' : 'launch', from: { X: L.X, Z: L.Z }, launch: true, tLaunch: pre ? L.t : undefined });
-      hits.sort((a, b) => a.t - b.t);
-    }
+                                          && !arr.some(h => Math.abs(h.t - e.t) <= 0.3)).sort((x, y) => y.t - x.t)[0] : null;
+      arr.push(Object.assign({ t: pre ? +pre.t.toFixed(3) : L.t, side: 'me', cls: 'unknown', src: L.far ? 'launch-far' : 'launch', from: { X: L.X, Z: L.Z }, launch: true, tLaunch: pre ? L.t : undefined }, mark || {}));
+      arr.sort((a, b) => a.t - b.t);
+    } };
+    rule3(hits);
     // 同側連続の間の 1 本補完（prev と h は同じ側）。反対側の追跡 hit を 1 本選んで返す（無ければ null）
     const farRank = e => (e.src && e.src.startsWith('far-') ? ((e.qc || 0) >= 1.0 ? 10 : 5) : 0) + (e.qc || 0);   // 同側補完の順位（下の fillOne）
     const fillOne = (prev, h) => {
@@ -430,7 +622,10 @@ window.RallyFuse = (() => {
         }) : null;
         // 相手のロブ（far-lobpair）は星の直前まで許す（2026-09-24 snap）: ロブを打ち上げた瞬間に自分側へスマッシュの着弾予告の星が出るので、「着弾まで 0.3 秒」が成り立たない
         // （0908 p16: ロブの接触 416.25（GT・far-lobpair の出射の始まり 416.25）・自分側の星 416.47 は 0.22 秒後。lobpair の時刻を中点 416.125 から出射へ直したら 0.3 秒の篩で落ち、416.75 の far-appear が入った）
-        if (star) { const before = pool.filter(e => e.src === 'far-lobpair' ? e.t < star.t0 : e.t <= star.t0 - 0.3); if (before.length) pool = before; }
+        // far-lobappear（奥側の打ち上げの出現・2026-09-25 farcontact）も同じ: 出現の条件に「自分側の星が 0.1〜0.7 秒後」を課しているので、0.3 秒の篩では必ず落ちる
+        // （farcontact レーン単独の実例: 砂 0908 p17 435.35 far-lobappear・星 435.60 → 旧は降りてくるロブの far-appear 435.883 を採っていた・GT 435.32。
+        //  統合では 435.35 を出す censored を採っていないのでこの例は立たない。統合の 67 ポイントでこの緩めが効いた実例は未確認・2026-09-29 レビュー）
+        if (star) { const before = pool.filter(e => e.src === 'far-lobpair' || e.src === 'far-lobappear' ? e.t < star.t0 : e.t <= star.t0 - 0.3); if (before.length) pool = before; }
         let cand = pool.sort((a, b) => rank(b) - rank(a) || b.t - a.t)[0];   // 同段なら遅い方（入射中の軌道の切れ目で出る偽のペアは打点より前に出る: 0908 p0 57.63 と 57.96）
         // 2026-09-24 chain: 採った候補より 0.25 秒以上後に、相手コートの中（Z > 5）で球の向きが変わる far-turn があれば、採った候補の時点で球はまだ相手に届いていない
         // （相手が打った球は手前へ飛び、次に跳ねるのは自分のコート。相手コートで向きが変わるのは入ってくる球の着弾か相手の接触）。その far-turn 以降の候補から採り直す。
@@ -453,7 +648,7 @@ window.RallyFuse = (() => {
         }
         // far-lobpair（奥側で速い入射球が途切れ、半分以下の速さで上へ上がる球が出る）は打ち上げた球＝ロブとして種別を付ける。
         // src は far-* のまま残す（2026-09-24 統合: 以前は 'track' にしていて、後段（shotcolor）や集計で far 由来が見えなかった）。960 の追跡 hit は 'track'
-        return cand ? { t: cand.t, side: cand.side, cls: cand.src === 'far-lobpair' ? 'lob' : 'unknown', src: cand.src && cand.src.startsWith('far-') ? cand.src : 'track', from: { X: cand.X, Z: cand.Z }, qc: cand.qc, farRise: cand.rise } : null;
+        return cand ? { t: cand.t, side: cand.side, cls: cand.src === 'far-lobpair' ? 'lob' : 'unknown', src: cand.src && cand.src.startsWith('far-') ? cand.src : 'track', from: { X: cand.X, Z: cand.Z }, qc: cand.qc, farRise: cand.rise, gaprev: cand.src === 'gaprev' || undefined } : null;
       }
     };
     // 同側連続 → 間に反対側の追跡 hit があれば補完
@@ -503,10 +698,22 @@ window.RallyFuse = (() => {
         const e = cands[k]; if (e.side !== side || e.t < tLast + 0.3) continue;
         const cut = cutFor(side, tLast); if (e.t > cut) continue;
         // 同じ側の候補が 0.3 秒以内に並ぶときは qc 最大を採る（奥側のボール追跡: far-appear 0.9 の 0.1 秒後に far-turn 1.2 が出る）
+        // やって戻した（2026-09-24 netvolley）: 同じ qc の far-turn が 0.3 秒以内に並ぶとき遅い方を採る案（砂 0911 p4 145.983＝自分のスライスがパックンの前で跳ねた所 vs 146.233＝接触・GT 146.2）。
+        //   0911 p7 のロブ 189.18 far-turn 1.2 の 0.05 秒後の far-turn 1.2（ロブの光の縁）を採って lob が unknown に落ちた（C −1）。1 例の改善と 1 例の悪化で入れない
         let best = e; for (let m = k + 1; m < cands.length && cands[m].t <= e.t + 0.3; m++) if (cands[m].side === side && cands[m].t <= cut && (cands[m].qc || 0) > (best.qc || 0)) best = cands[m];
         // 入れなかった（2026-09-24 chain の fix3・第 3 ラウンドの反証役が止めた）: 同じ側の候補が続く区間に奥側のフル解像度の hit があれば、fillOne と同じ段（far qc≥1.0 ＞ far ＞ 960）の
         // 最上段を 0.2 秒の切れ目で塊に分け、最後の塊の先頭から採る案（ハード 0908b p4 189.283 far-turn 0.85 → 190.55 far-turn 1.2・砂 0911 p2 101.933 → 102.217）。
         // ベンチの改善は 0 で、0911 p7 187.58（GT 187.65）を 187.80 far-appear（+0.15・T の境界ちょうど）に悪化させた。0908b p4 の 189.28 と 190.55 はどちらも本物の入れ替え（中立）
+        // 960 の追跡 hit を採りかけたとき、次の反対側の候補（の 0.3 秒前）までに同じ側の強い far（qc ≥ 1.0＝奥で折り返して手前へ向かう球）があれば、最も遅いそれを採る（2026-09-24 netvolley）。
+        //   960 の奥側の hit は球が相手に届く前の軌道の切れ目で出る（fillOne の far 優先と同じ理由）。gaprev（自分のボレー）で鎖が組めるようになって表に出た:
+        //   全体走 0911 p2: 自分のロブ 101.25 → 101.483 kink qc 1.21（Z 21＝上がっていくロブ・exp-r4-netvolley/img/c2_101.png）を相手の打点に採り、102.30 far-turn 1.2（パックンの接触 ≈102.35〜102.45）を落としていた。
+        //   qc < 1.0 の far（far-appear 0.9）には替えない: 0911 p7 187.58 kink → 187.80 far-appear は GT 187.65 から +0.15 へ悪化した（第 3 ラウンドの fix3）
+        if (!(best.src && best.src.startsWith('far-'))) {
+          const nx = cands.find(c => c.t > best.t && c.side !== side);
+          const lim = nx ? nx.t - 0.3 : Infinity;
+          const fs = cands.filter(c => c.side === side && c.t > best.t && c.t <= lim && c.t <= cut && (c.qc || 0) >= 1.0 && c.src && c.src.startsWith('far-')).sort((x, y) => y.t - x.t)[0];
+          if (fs) best = fs;
+        }
         chain.push(best); tLast = best.t; side = side === 'me' ? 'opp' : 'me';
       }
       if (chain.length && chain[chain.length - 1].side === h.side) {
@@ -521,9 +728,39 @@ window.RallyFuse = (() => {
         if (one) { out.splice(i, 0, one); i++; } else h.suspect = 'same-side';
         continue;
       }
-      const ins = chain.map(c => ({ t: c.t, side: c.side, cls: "unknown", src: c.src && c.src.startsWith('far-') ? c.src : "track", from: { X: c.X, Z: c.Z }, qc: c.qc, gapFill: true, suspect: c.keptSameSide ? 'same-side' : undefined, farRise: c.rise }));
+      const ins = chain.map(c => ({ t: c.t, side: c.side, cls: "unknown", src: c.src && c.src.startsWith('far-') ? c.src : "track", from: { X: c.X, Z: c.Z }, qc: c.qc, gapFill: true, suspect: c.keptSameSide ? 'same-side' : undefined, farRise: c.rise, gaprev: c.src === 'gaprev' || undefined }));
       out.splice(i, 0, ...ins); i += ins.length;
     }
+    // 交互の短い空白の中の往復（2026-09-24 netvolley）: 側が交互に並ぶ 2 打の間に自分のボレー（gaprev）があれば、1 往復（2 打）が抜けている。
+    // 上の補完はどれも「同側が並ぶ」か「2.2 秒超」でしか動かないので、ネットの打ち合い（1 打 0.40〜0.50 秒）で 2 打抜けると拾えない
+    // （x0911 p4: 141.95o → 143.20m（1.25 秒）の中に 142.3m（gaprev 142.283）と 142.72o（far-turn 142.650 qc 0.85）・GT は x0911 DIAG の E）。
+    // gaprev は「手前へ来た球が奥へ戻る」＝自分が打った物理的な印なので、それを入れるなら側の交替のために反対側の打点も 1 本要る。
+    // 相棒の相手側の候補（qc ≥ 0.8・空白補完の鎖と同じ基準）は fillOne と同じ順位（far qc≥1.0 ＞ far ＞ 960・同段なら遅い方）で採る。相棒が無ければどちらも入れない。
+    // 間隔はどれも 0.3 秒以上（MIN_GAP・ネットを越える時間）。ms の整数で比べる
+    // 発火は netvolley 単独では全データで 1 回（x0911 p4 ＝全体走 s0911 p4 の 142.3m／142.72o の 1 往復）。統合 exp-int4 では nearstart のトレイル 142.47m が先に立って門（両端 0.3 秒）に掛からず、
+    // 代わりに上の (2d)（gaprev の直後のトレイルを gaprev の時刻へ寄せる）が 142.283m を出す。相棒の 142.65o は空白補完の far-turn として入る
+    // 統合で入れ替わった 1 例（2026-09-25 exp-int4・全体走 0908b p3・img/b3_144.78.png 146.00 146.65）: 実際は 144.7m（ヨッシーのネット際の青いボレー）→ 146.0o（クッパJr.）→ 146.6m（もう 1 本の青いボレー）→ 147.82o。
+    //   gaprev は 144.658 と 146.542 の 2 本とも立つ。netvolley 単独は 144.10o/144.44o の同側の対から鎖の補完が動き、144.658 は 144.44 の 0.3 秒以内で外れて 146.54m だけが入った（LOG の +146.54m）。
+    //   統合では regress の samePair が 144.44o を落とし、144.467o のトレイルが far-turn 144.05 へ寄るので、鎖は 144.658m（本物）を採って止まる: 相棒になる相手側の候補が 145.84 kink 0.56・145.99 kink 0.62 で 0.8 に届かない。
+    //   ここも同じ門（qc ≥ 0.8）で 146.542 を入れない。2 本の gaprev（自分の物理的な印）が 1.5 秒以上離れて並べば間に相手の打点が 1 本要る、という規則は書けるが、実例が全データでこの 1 本（GT 無し）なので入れない
+    for (let i = 1; i < out.length; i++) {
+      const a = out[i - 1], b = out[i];
+      if (!a.side || !b.side || a.side === b.side) continue;
+      const g = events.filter(e => e.src === 'gaprev' && dms(a.t, e.t) >= 300 && dms(e.t, b.t) >= 300).sort((x, y) => x.t - y.t)[0];
+      if (!g) continue;
+      const lo = a.side === 'opp' ? g.t : a.t, hi = a.side === 'opp' ? b.t : g.t;
+      const mate = events.filter(e => e.kind === 'hit' && e.side === 'opp' && (e.qc || 0) >= 0.8 && dms(lo, e.t) >= 300 && dms(e.t, hi) >= 300)
+                         .sort((x, y) => farRank(y) - farRank(x) || y.t - x.t)[0];
+      if (!mate) continue;
+      const mk = c => ({ t: c.t, side: c.side, cls: c.src === 'far-lobpair' ? 'lob' : 'unknown', src: c.src && c.src.startsWith('far-') ? c.src : 'track', from: { X: c.X, Z: c.Z }, qc: c.qc,
+                         gapPair: true, farRise: c.rise, gaprev: c.src === 'gaprev' || undefined });
+      const ins = [mk(g), mk(mate)].sort((x, y) => x.t - y.t);
+      out.splice(i, 0, ...ins); i += ins.length;
+    }
+    // 規則 (3) をもう一度（2026-09-24 第 4 ラウンド regress・x セット診断 I）: 空白補完の鎖・同側補完で入った相手の打点の後の打ち出しは、1 回目（鎖の前）には
+    // 「直前の打点が相手」を満たさず入らなかった（x0908 p17 438.62: 960 の打ち出し 438.667 の直前は 436.87m で、相手の 437.717 far-turn は鎖でしか入らない）。
+    // 条件は 1 回目と同じ（±0.3 秒に打点が無い・直前が相手・ジャンプ・ガード）
+    rule3(out, { launch2: true });
     // tailFill（2026-09-24 opp0908）: 最後の打点の後に、打った側の自分のコートに星（着弾・スマッシュの着弾予告）が出たら、間で相手が打ち返している（自分の打球は自分のコートに落ちない）。
     // 反対側の追跡 hit を 1 本補う（星の 0.3 秒前まで）。0908 芝 p2: 103.77 me のあと 104.15 の相手のロブ（ルイージが飛びついて打ち上げ・104.1 に SMASH 表示）が
     // 最後の打点の後なので同側補完・空白補完のどちらにも掛からず落ちていた。自分側の星 104.90（k 16）。
@@ -561,7 +798,10 @@ window.RallyFuse = (() => {
       const seg = track.filter(p => p.t > tA + 0.1 && p.t < tNext - 0.1);
       // サーブはロブにならない。最後の打点（次の打点が無い）は場外へ飛ぶ球まで含むので色が lob のときだけ
       const last = i + 1 >= out.length;
-      if (i > 0 && !last && seg.length >= 4 && tNext - tA >= 0.7 && camAt && typeof Court !== 'undefined') {
+      // ネット際のボレー（gaprev・2026-09-24 netvolley）には掛けない: ネットからラケットの高さで浮かせたスライスは、奥の相手の打点の高さでもベースライン行より上に見える
+      //   （全体走 0908b p3 138.43（apex −104）・150.37（−90）はどちらも目視で青いスライスのボレー（exp-r4-netvolley/img/b3_138.png・b3_150.png: 白い輪 138.40〜138.45・150.40）なのに lob になった）。
+      //   頂点規則の閾値（−50）はベースラインから打った球で測ったもの
+      if (i > 0 && !last && !h.gaprev && seg.length >= 4 && tNext - tA >= 0.7 && camAt && typeof Court !== 'undefined') {
         const mn = seg.reduce((a, p) => p.y < a.y ? p : a);
         const cam = camAt(mn.t);
         if (cam && cam.ok) {
@@ -606,8 +846,14 @@ window.RallyFuse = (() => {
       // 砂 0911 p0 26.67: 26.917 far-turn 1.2 がパックンの打点）。本物のロブ（クレイ 227.53・芝 0908 p13 344.90）は上がりの途中に強いイベントが無い。
       // 砂 189.18 の後の 189.233/189.283（+0.05/+0.10・ロブの光の縁）を拾わないよう +0.15 秒から見る（2026-09-24 opplob 検証役のガード）
       const fr0 = h.farRise;
-      const fr = fr0 && !events.some(e => e.kind === 'hit' && e.src && e.src.startsWith('far-') && (e.qc || 0) >= 1.0 && e.t > h.t + 0.15 && e.t <= h.t + fr0.s + fr0.D + 0.1) ? fr0 : null;
-      if (i > 0 && h.side === 'opp' && fr && !fr.down && fr.D >= 0.25 && fr.R >= 30 && fr.grow != null && fr.grow >= 0.85 && (h.cls === 'topspin' || h.cls === 'lob' || h.cls === 'unknown' || h.cls === 'drop')) {
+      // far-lobappear（奥側の打ち上げの出現・2026-09-25 farcontact）で決めた打点はこのガードを掛けない: ガードは「寄せた先が入射球の上がり」を落とすためのものだが、
+      // lobappear は自分側の星（スマッシュの着弾予告）が 0.1〜0.7 秒後に出ることを課しており、入射球の上がり・バウンドの上がりではない。
+      // 実例: ハード 0908b p5 225.87（接触 225.82〜225.85・黄の球が上へ）は頂点の手前で画面上端に抜ける所に far-turn 226.25 qc 1.2（Z 23.4）が立ち、ガードで lob を外していた
+      const lobApp = h.farFix === 'far-lobappear' || h.src === 'far-lobappear';
+      const fr = fr0 && (lobApp || !events.some(e => e.kind === 'hit' && e.src && e.src.startsWith('far-') && (e.qc || 0) >= 1.0 && e.t > h.t + 0.15 && e.t <= h.t + fr0.s + fr0.D + 0.1)) ? fr0 : null;
+      // far-lobappear はそれ自体が「打ち上げ＋自分側の星」なので上がり方の閾値を見ずに lob（farball.js の出現の条件で D ≥ 0.25・R ≥ 30・grow ≥ 0.85 を課している。
+      //   上がったまま軌道が切れた出現（砂 0908 p17 435.35 D 0.133・441.98 D 0.167）を通す変種 censored は統合で採っていないので、ここへ来る lobappear は D ≥ 0.25）
+      if (i > 0 && h.side === 'opp' && (lobApp || (fr && !fr.down && fr.D >= 0.25 && fr.R >= 30 && fr.grow != null && fr.grow >= 0.85)) && (h.cls === 'topspin' || h.cls === 'lob' || h.cls === 'unknown' || h.cls === 'drop')) {
         if (h.cls !== 'lob') h.clsColor = h.cls;
         h.cls = 'lob'; h.lobBy = 'far';
       }
@@ -618,5 +864,5 @@ window.RallyFuse = (() => {
     }
     return { shots: out };
   }
-  return { fuse, landingFromTrack, landingFromStar, purgeStatic };
+  return { fuse, landingFromTrack, landingFromStar, purgeStatic, gapReversals, nearLaunches };
 })();

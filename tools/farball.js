@@ -365,11 +365,75 @@ function events(tracks, band, Court, camAt, markers = [], weakTracks = []) {
       // （砂 0911 p1 50.667: 0.32 秒前に静止した候補 (873,376) があってペア不成立→出現も見ずに 0 本・p1 サーブ 48.65: 先行はトス）
       prevSlow = speed(va) < 2.5;
     }
+    // 弱い層との軌道のペア（far-wpair・2026-09-25 farcontact）: 入射か出射の片方が淡い（スライスの青い尾が核に重なる）と、その側は弱い候補の層（weakTracks）でしか
+    // 繋がらず、強い層どうしのペアが立たない。ここでは入射＝弱い層・出射＝強い層（下の weakTracks のループが逆向き）。条件はペアと同じ（0.35 秒・120px・向き 45°/60°）。
+    // 実例: 芝ランクマ 15-18-15 p9 217.62 の相手の飛びつきロブ（GT・x151815）: 入射の淡い青スライスは弱い層 217.183〜217.400 だけ（(1004,448)→(824,314)・約 14px/コマで上へ）、
+    // 出射は強い層 217.617〜217.700（上へ・向きの差 約 96°）。先行軌道に弱い層を見ないのでペアも出現も立たず、fillOne の窓に相手側の候補が 0 本だった
+    if (!pairOk) {
+      const pw = weakTracks.filter(o => dms(o.t1, tr.t0) >= -17 && dms(o.t1, tr.t0) <= 350 && dms(o.t0, tr.t0) > 0 && Math.hypot(o.pts[o.pts.length - 1].u - p[0].u, o.pts[o.pts.length - 1].v - p[0].v) <= 120);
+      const o = pw[pw.length - 1];
+      if (o) {
+        const va = velAt(o.pts, o.pts.length - 1, -1);
+        if (process.env.FARDBG) console.error('wpair-in?', tr.t0.toFixed(3), 'prev', o.t0.toFixed(3), 'va', va, 'v0', v0, 'ang', angle(va, v0).toFixed(1));
+        if (speed(va) >= 2.5 && speed(v0) >= 2.5 && angle(va, v0) >= (v0.vy > 0 ? 45 : 60)) { const q = o.pts[o.pts.length - 1]; push(Math.max(q.t, p[0].t - 1 / 60), (q.x + p[0].x) / 2, (q.y + p[0].y) / 2, v0.vy > 0 ? 1.1 : 0.85, 'wpair', { pts: p, i: 0 }); pairOk = true; }
+      }
+    }
     // 出現: 直前に軌道が無く、手前へ向かって動き出す（入射球はラケット・閃光・相手の体に隠れて見えないことが多い＝砂 0911 p5 157.1）
     // 奥へ向かう出現（自分の打球が途中から見える）は打点ではないので採らない。ロブは上へ上がるので折り返し／ペアに任せる
     // やって戻した（2026-09-24 farjunk）: 出現の起点が空中の大きさ（最初の 0.1 秒に地面の径の 4 倍超）なら採らない案。0908b p4 196.017（降りてくるロブ）は消えたが、
     // 打った直後の球が光と一体で大きく写る本物の出現を 3 本失った（芝 0908 p6 155.08・160.97（接触 155.05・160.97 前後）／ハード 0908b p3 147.82（接触 147.80））。大きさでは区別できない
-    if ((!prevTr.length || (!pairOk && prevSlow)) && !contAir && speed(v0) >= 2.5 && v0.vy >= 1 && tr.t1 - tr.t0 >= 0.1) push(Math.max(0, p[0].t - 1 / 60), p[0].x, p[0].y, 0.9, 'appear', { pts: p, i: 0 });
+    // 弱い層の飛行の途中（2026-09-25 farcontact・WEAKCONT）: 淡いスライスは弱い候補の層（weakTracks）でだけ 1 本の飛行として繋がり、途中で核が明るくなった数コマだけが
+    // 強い層の短い軌道になる。その先頭は出現ではない（同じ球が 0.1 秒以上前から飛んでいる）。弱い層の軌道が 0.1 秒以上前から続き、この軌道の先頭と
+    // 同じコマ（±1 コマ）・30px 以内に点を持つなら出現にしない。実例: 芝ランクマ 15-18-15 p10 225.92 の相手のスライス（GT・x151815）: 弱い層 226.033〜226.567（31 点）の
+    // 途中 226.300〜226.417 に強い層の断片 → far-appear 226.283（+0.36）が立ち、far 寄せ（同段なら遅い方）が far-weak 226.017（+0.10）より優先していた。
+    // 30px: 弱い層の点と強い層の点は同じ候補（弱い連結は強い候補も含む）なので同じコマなら距離 0。±1 コマのずれでも球の速さ（奥側 6〜30px/コマ）程度
+    const weakCont = weakTracks.some(o => dms(o.t0, p[0].t) >= 100 && o.pts.some(q => Math.abs(dms(q.t, p[0].t)) <= 17 && Math.hypot(q.u - p[0].u, q.v - p[0].v) <= 30));
+    if ((!prevTr.length || (!pairOk && prevSlow)) && !contAir && !weakCont && speed(v0) >= 2.5 && v0.vy >= 1 && tr.t1 - tr.t0 >= 0.1) push(Math.max(0, p[0].t - 1 / 60), p[0].x, p[0].y, 0.9, 'appear', { pts: p, i: 0 });
+    // 止まった球からの出現（far-holdappear・2026-09-25 farcontact）: 軌道が「ラケット上に止まった球」から始まると、出だし 3 点の速さが 2.5px/コマに届かず上の出現にならない。
+    // 先頭 0.15 秒までの静止（1 コマの歩み 4px 未満＝上の pair の「停止」と同じ: 飛んでいる球は奥側でも 6px/コマ以上）を飛ばし、動き出した点から手前へ速く出る（その後 0.15 秒の平均の縦の速さ 4px/コマ以上）なら、動き出しの 1 コマ前を出現とする。
+    // 実例: 芝 0908 p5 140.15 のルイージのスライス（GT・x0908）: 軌道 140.050〜 が (1181,97)→140.083〜140.150 に (1183〜1185,92) で止まり、140.183 から手前へ 5〜10px/コマ。
+    // 4px/コマ: 奥側のサーブのトスの落下は 1〜2px/コマ（砂 0911 p5 155.30〜155.38・far-accel のコメント）で、トスの頂点から始まる軌道を出現にしないため
+    if ((!prevTr.length || (!pairOk && prevSlow)) && !contAir && !weakCont && speed(v0) < 2.5) {
+      const stepAt = j => Math.hypot(p[j].u - p[j - 1].u, p[j].v - p[j - 1].v) / Math.max(1, Math.round((p[j].t - p[j - 1].t) * 60));
+      let k = 1; while (k < p.length && stepAt(k) < 4 && dms(p[0].t, p[k].t) <= 150) k++;
+      k--;   // 静止の最後の点
+      if (k >= 1 && k + 3 < p.length) {
+        const vk = velAt(p, k, +1), far = p.filter(q => q.t > p[k].t && dms(p[k].t, q.t) <= 150).pop();
+        const vyAvg = far ? (far.v - p[k].v) / Math.max(1, Math.round((far.t - p[k].t) * 60)) : 0;
+        if (process.env.FARDBG) console.error('holdappear?', p[0].t.toFixed(3), 'k', p[k].t.toFixed(3), JSON.stringify(vk), vyAvg.toFixed(2));
+        if (speed(vk) >= 2.5 && vk.vy >= 1 && vyAvg >= 4) push(p[k].t, p[k].x, p[k].y, 0.9, 'holdappear', { pts: p, i: k });
+      }
+    }
+    // ロブの出現（far-lobappear・2026-09-25 farcontact）: 相手が飛びつきでロブを打ち上げると、入射球は体と閃光に隠れて先行軌道が無く、打ち上げた球は画面を上へ動くので
+    // 上の出現（手前向き vy ≥ 1 だけ）にならない。出だしが上向きで、その後の上がり方が相手のロブの型（rally-fuse の farRise と同じ: 0.3 秒以内に 15px 以上降りない・
+    // 頂点まで 0.25 秒以上・30px 以上上がる・見かけの大きさが縮まない grow ≥ 0.85）なら打ち上げとして出す。自分の打球が奥へ遠ざかる途中の出現は球が縮む（grow < 0.85）。
+    // 実例: 砂 0908 p17 429.45 のルイージの飛びつきロブ（GT・x0908）: 軌道 429.467〜 が (770,218) から 0.35 秒上がって頂点 (774,154)→降下。
+    if ((!prevTr.length || (!pairOk && prevSlow)) && !contAir && !weakCont && speed(v0) >= 2.5 && v0.vy <= -1) {
+      const r = riseAfter([tr], { t: p[0].t, x: p[0].x / SC, y: p[0].y / SC });
+      if (process.env.FARDBG) console.error('lobappear?', p[0].t.toFixed(3), JSON.stringify(r));
+      // 自分側の星（スマッシュの着弾予告）が 0.1〜0.7 秒後に出ることも課す。自分の打球が相手コートで跳ねて上がる所（バウンドの上がり）も同じ上がり方をするが、
+      // 星は出ない（目視: ハード 0908b p3 131.77（跳ね 131.73・接触 132.2）・142.12（跳ね 142.10・接触 ≈142.53）・157.13（跳ね ≈157.1・接触 157.55）／
+      // 砂 0908 p19 505.72（跳ね 505.50〜505.53）の 4 本すべて星なし・exp-r4-farcontact/img/la_*.png）。
+      // 本物の打ち上げは星が出る: 砂 0908 p17 429.45 → 星 429.70（+0.25）／0908b p5 225.87（接触 225.82〜225.85・黄の球が上へ）→ 226.47（+0.60）／
+      // 0908b p7 288.37（接触 288.37〜288.40）→ 288.70（+0.33）／docs の 0908 p16 416.25 → 416.47（+0.22）。窓の上端 0.7 は最も遅い 0.60 に 0.1 の余裕
+      const starSoon = markers.some(m => { const d = dms(p[0].t, m.t0); if (d < 100 || d > 700) return false; const cam = camAt ? camAt(m.t0) : null; if (!cam || !cam.ok) return false; const c = Court.toCourt(m.x * SC, m.y * SC, cam); return isFinite(c.Z) && c.Z < 0; });
+      // 上がったまま軌道が切れた（頂点が最後の点・D が軌道の長さで打ち切られる）ものを「0.1 秒以上・30px 以上上がり続けた」で通す変種（farcontact レーンの censored）は
+      // 統合（2026-09-25 exp-int4）では採らない: 実例が砂 0908 p17 435.32 の 1 件で、D と grow の篩を外した分だけバウンドの上がりとの境が薄い
+      if (r && !r.down && r.D >= 0.25 && r.R >= 30 && r.grow != null && r.grow >= 0.85 && starSoon) push(Math.max(0, p[0].t - 1 / 60), p[0].x, p[0].y, 0.85, 'lobappear', { pts: p, i: 0 });
+    }
+  }
+  // 弱い層との軌道のペア（逆向き・far-wpair）: 入射＝強い層・出射＝弱い層（淡いスライスの返球）。強い層の先行軌道が 0.35 秒・120px 以内で終わり、向きが変わる。
+  // 実例: 全体走 0908 p14 372.2（入射の強い層 371.767〜372.217 が上へ遠ざかり、同じ所から弱い層 372.233〜372.900 が手前へ降りる）
+  for (const wt of weakTracks) {
+    const p = wt.pts, v0 = velAt(p, 0, +1);
+    const prev = tracks.filter(o => dms(o.t1, p[0].t) >= -17 && dms(o.t1, p[0].t) <= 350 && dms(o.t0, p[0].t) > 0 && Math.hypot(o.pts[o.pts.length - 1].u - p[0].u, o.pts[o.pts.length - 1].v - p[0].v) <= 120);
+    const o = prev[prev.length - 1]; if (!o) continue;
+    const va = velAt(o.pts, o.pts.length - 1, -1);
+    if (process.env.FARDBG) console.error('wpair-out?', p[0].t.toFixed(3), 'prev', o.t0.toFixed(3), 'va', va, 'v0', v0, 'ang', angle(va, v0).toFixed(1));
+    if (!(speed(va) >= 2.5 && speed(v0) >= 2.5 && angle(va, v0) >= (v0.vy > 0 ? 45 : 60))) continue;
+    const q = o.pts[o.pts.length - 1], t = Math.max(q.t, p[0].t - 1 / 60);
+    if (out.some(e => (e.src === 'far-pair' || e.src === 'far-wpair' || e.src === 'far-turn' || e.src === 'far-stall') && Math.abs(dms(e.t, t)) <= 100)) continue;
+    push(t, (q.x + p[0].x) / 2, (q.y + p[0].y) / 2, v0.vy > 0 ? 1.1 : 0.85, 'wpair', { pts: p, i: 0 });
   }
   // 弱い軌道の出だし（far-weak・2026-09-24 oppsand）: 手前へ滑らかに進み出す淡いスライスの返球（砂 0911 p7 185.7）。通常の軌道が同じ時刻・場所を覆っていれば見ない。
   // qc 0.75（空白補完の鎖 qc ≥ 0.8 には入れず、同側補完でだけ使う）。smoothWeak の境界・丸めへの敏感さに注意（上のコメント）
