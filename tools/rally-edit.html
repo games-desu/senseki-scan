@@ -65,6 +65,7 @@
       <button data-step="-6">-0.1秒</button>
       <button data-step="6">+0.1秒</button>
       <label class="sub"><input type="checkbox" id="zoom"> 奥を拡大 <kbd>Z</kbd></label>
+      <button id="bReload" title="映像が黒いままのとき（編集内容は消えません）">動画を再読み込み <kbd>R</kbd></button>
       <span style="flex:1"></span>
       <button id="bReset">検出結果に戻す</button>
       <button class="primary" id="bDone">確認済みにして次へ <kbd>Enter</kbd></button>
@@ -250,6 +251,13 @@ $('bReset').onclick = () => {
   if (!confirm(`p${cur.idx} の手直しを捨てて検出結果に戻しますか？`)) return;
   hits = cur.rally.map(h => ({ ...h, orig: h.t })); sel = hits.length ? 0 : -1; changed();
 };
+// 多数のシーク後に、デコードは生きているのに画面へ描かれず黒くなることがある（2026-09-30）。
+// ソースを張り直して同じ時刻に戻す。編集内容（hits）には触れない。
+$('bReload').onclick = () => {
+  const t = v.currentTime;
+  v.src = '/video?r=' + Date.now();
+  v.addEventListener('loadedmetadata', () => { v.currentTime = t; }, { once: true });
+};
 $('bDone').onclick = async () => {
   if (!await save(true)) return;
   const i = D.points.findIndex(p => p.idx === cur.idx);
@@ -275,6 +283,7 @@ document.addEventListener('keydown', e => {
   else if (k === 'v' || k === 'V') $('bServe').click();
   else if (k === 'z' || k === 'Z') { $('zoom').checked = !$('zoom').checked; $('zoom').onchange(); }
   else if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); $('bDel').click(); }
+  else if (k === 'r' || k === 'R') $('bReload').click();
   else if (k === 'Enter') { e.preventDefault(); $('bDone').click(); }
   else if (/^[1-9]$/.test(k)) withSel(h => { h.cls = CLS[+k - 1][0]; });
 });
