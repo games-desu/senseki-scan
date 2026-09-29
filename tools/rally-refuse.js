@@ -28,7 +28,7 @@ async function refuse(file, mods, opts = {}) {
   }
   const track = []; (r.segPts || []).forEach(s => s.pts.forEach(p => track.push(p))); track.sort((a, b) => a.t - b.t);
   const before = (r.rally || []).map(h => `${h.t.toFixed(2)}${h.side[0]}`).join(' ');
-  r.rally = RallyFuse.fuse({ shots: r.shots || [], events: r.events || [], track, camAt, t0: r.t0, t1: r.t1, markers: r.markers || [], farTracks: (r.farBall && r.farBall.tracks) || [] }).shots;
+  r.rally = RallyFuse.fuse({ shots: r.shots || [], events: r.events || [], track, camAt, t0: r.t0, t1: r.t1, markers: r.markers || [], farTracks: (r.farBall && r.farBall.tracks) || [], segs: r.segPts || [] }).shots;
   const after = r.rally.map(h => `${h.t.toFixed(2)}${h.side[0]}`).join(' ');
   let sc = null;
   const video = opts.video || (r.video ? path.join(REPO, 'samples', r.video) : null);
@@ -60,6 +60,7 @@ const scText = sc => !sc ? '' : sc.skipped ? ` shotcolor skipped (${sc.skipped})
 if (require.main === module) (async () => {
   const a = process.argv.slice(2);
   const dir = a[0];
+  if (!dir) { console.error('usage: node rally-refuse.js <dir> [--only 0,2] [--refar]'); process.exit(2); }
   const get = (k, d) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : d; };
   const only = get('--only') ? new Set(get('--only').split(',').map(Number)) : null;
   const mods = loadModules(null);

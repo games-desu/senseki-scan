@@ -189,7 +189,7 @@ async function analyze(opts) {
       events.push(...farBall.events); events.sort((a, b) => a.t - b.t);
     }
   }
-  const rally = shots ? RallyFuse.fuse({ shots, events, track, camAt, t0, t1, markers, farTracks: farBall ? farBall.tracks : [] }).shots : null;
+  const rally = shots ? RallyFuse.fuse({ shots, events, track, camAt, t0, t1, markers, farTracks: farBall ? farBall.tracks : [], segs }).shots : null;
   // 追跡由来の打点（src track / far-* / launch*・種別 unknown）の種別を、打点直後の球の通り道の色（フル解像度）で読む後段（tools/shotcolor.js・1 打 0.3〜0.6 秒）。
   // fuse の後に掛ける（rally-refuse.js も fuse の後に掛け直す）
   let shotColor = null;

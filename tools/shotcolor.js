@@ -130,7 +130,12 @@ async function readPath(video, pts, t0, t1, camOk = null, dbg = null, tFrom = -I
     // コマのラベル: 断面の 40% 以上が同じ種類
     const byK = {}; for (const l of labs) (byK[l.k] = byK[l.k] || []).push(l);
     const top = Object.entries(byK).sort((a, b) => b[1].length - a[1].length)[0];
-    if (!top || top[1].length < 0.4 * nS) { out.push({ t: fr.t, k: null }); continue; }
+    // ただし断面のラベルが 1 種類しか無い（ほかの種類が 1 つも無い）コマは 25% 以上かつ 8 断面以上で採る（2026-09-23 第 4 ラウンド color レーン）:
+    //   砂の淡い黄ロブは筋が尾へ向かって砂に溶け、帯が脇と見分けられる断面が 3〜4 割に留まる（x0911 p6 176.33 の自分のロブ: 13 コマすべてが sat 50〜57 だけで 7〜25/32〜48 断面・
+    //   40% に届くのは 2 コマで decide の 4 コマに届かず unknown）。ラベルの無い断面は「帯が脇と同じ」で、別の種類を指しているわけではない。
+    //   実例はこの 1 本だけ（ベンチ＋x＋全体走で 25% の門で新たに決まった打点は 176.33m のみ・2026-09-25 統合の注記）。25%・8 断面は 176.33 の 7〜25/32〜48 から置いた値で、他の例で振っていない
+    const only = top && Object.keys(byK).length === 1;
+    if (!top || (top[1].length < 0.4 * nS && !(only && top[1].length >= 8 && top[1].length >= 0.25 * nS))) { out.push({ t: fr.t, k: null }); continue; }
     const k = top[0], H = k === 'white' ? null : circMed(top[1].map(l => l.h));
     const gHs = top[1].filter(l => l.g != null).map(l => l.g);
     // 先端側 1/3（球に近い側）の色相。筋は尾へ行くほど薄れてコートの色に引かれる（クレイ 全体走 0908 p12 304.30 の相手の黄ロブ: 尾 22〜27 → 先端 47〜53・
