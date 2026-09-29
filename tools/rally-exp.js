@@ -2,7 +2,7 @@
 // 規則を試して「0908 ベンチ＋砂 4 ポイント＋芝ランクマ 15-18-15 p8＋ロブの退行チェック（0908b p4・芝 0908 p5）」を 1 コマンドで採点する。
 // 本体の tools/ を触らずに並行して試せる（loadModules は __dirname から読むので、コピー側の rally-fuse.js / farball.js が使われる）。
 //
-//   node tools/rally-exp.js init <root> [--from <root0>]   tools/ と基準の結果（既定: v38）を <root> にコピー（--from なら別の実験場から）
+//   node tools/rally-exp.js init <root> [--from <root0>]   tools/ と基準の結果（既定: v39）を <root> にコピー（--from なら別の実験場から）
 //   node tools/rally-exp.js refuse <root> [--refar] [--sets 0908,0911]   <root>/tools で fuse だけ掛け直す（--refar: 保存済み軌道から far イベントも）
 //   node tools/rally-exp.js refarball <root> [--sets 0908,0911] [--only 2,16]   <root>/tools/farball.js で奥側のボール追跡を動画から取り直す→fuse
 //   node tools/rally-exp.js rerun <root> [--sets ...] [--only ...]   <root>/tools で rally-node を丸ごと走らせ直す（トレイル・追跡を変えたとき・1 ポイント 1〜3 分）
@@ -17,23 +17,23 @@ const path = require('path');
 // 実験場の tools コピー（samples/rally/exp-*/tools）から走らせても本体のリポジトリを指すように、samples/rally がある所まで上がる
 const REPO = (() => { let d = path.resolve(__dirname, '..'); for (let k = 0; k < 6; k++) { if (fs.existsSync(path.join(d, 'samples', 'rally'))) return d; d = path.dirname(d); } return path.resolve(__dirname, '..'); })();
 const SR = path.join(REPO, 'samples', 'rally');
-// 基準の結果（2026-09-24 v38＝第 3 ラウンドの統合 exp-int3f・全体走は exp-sv38＝y セットの 9 ポイントを抜いた 47 ポイント）。d* = ベンチ（0908・0911 は GT ファイル・151815 は下の GT_151815・0908b/0908p5 はロブチェック）、
+// 基準の結果（2026-09-29 v39＝第 4 ラウンドの統合 exp-int4・全体走は exp-sv39＝y セットの 9 ポイントを抜いた 47 ポイント）。d* = ベンチ（0908・0911 は GT ファイル・151815 は下の GT_151815・0908b/0908p5 はロブチェック）、
 // x* = 全体走から目視 GT を足したポイント（gt-x*.json・2 人が独立にラベル付け→突き合わせ）。GT ファイルが無いセットは採点しない。
-// v37 の基準は samples/rally/exp-v37（全体走 exp-sv37）、v36 は samples/rally/exp-base（init --from <root>・score --base <root> で比べられる）
+// v38 の基準は samples/rally/exp-v38（全体走 exp-sv38）、v37 は samples/rally/exp-v37（全体走 exp-sv37）、v36 は samples/rally/exp-base（init --from <root>・score --base <root> で比べられる）
 const SETS = {
-  '0908':    { dir: 'd0908',    base: 'exp-v38/d0908',    gt: 'gt-0908.json' },
-  '0911':    { dir: 'd0911',    base: 'exp-v38/d0911',    gt: 'gt-0911.json' },
-  '151815':  { dir: 'd151815',  base: 'exp-v38/d151815',  gt: null },
-  '0908b':   { dir: 'd0908b',   base: 'exp-v38/d0908b',   gt: null },
-  '0908p5':  { dir: 'd0908p5',  base: 'exp-v38/d0908p5',  gt: null },
-  'x0908':   { dir: 'x0908',    base: 'exp-v38/x0908',    gt: 'gt-x0908.json' },     // 芝 p5・砂 p17
-  'x0908b':  { dir: 'x0908b',   base: 'exp-v38/x0908b',   gt: 'gt-x0908b.json' },    // ハード p0（1 試合目・ドロップ）・p4（2 試合目・相手ロブ）
-  'x0911':   { dir: 'x0911',    base: 'exp-v38/x0911',    gt: 'gt-x0911.json' },     // 砂 p4・p6
-  'x151815': { dir: 'x151815',  base: 'exp-v38/x151815',  gt: 'gt-x151815.json' },   // 芝ランクマ p9・p10・p12
+  '0908':    { dir: 'd0908',    base: 'exp-v39/d0908',    gt: 'gt-0908.json' },
+  '0911':    { dir: 'd0911',    base: 'exp-v39/d0911',    gt: 'gt-0911.json' },
+  '151815':  { dir: 'd151815',  base: 'exp-v39/d151815',  gt: null },
+  '0908b':   { dir: 'd0908b',   base: 'exp-v39/d0908b',   gt: null },
+  '0908p5':  { dir: 'd0908p5',  base: 'exp-v39/d0908p5',  gt: null },
+  'x0908':   { dir: 'x0908',    base: 'exp-v39/x0908',    gt: 'gt-x0908.json' },     // 芝 p5・砂 p17
+  'x0908b':  { dir: 'x0908b',   base: 'exp-v39/x0908b',   gt: 'gt-x0908b.json' },    // ハード p0（1 試合目・ドロップ）・p4（2 試合目・相手ロブ）
+  'x0911':   { dir: 'x0911',    base: 'exp-v39/x0911',    gt: 'gt-x0911.json' },     // 砂 p4・p6
+  'x151815': { dir: 'x151815',  base: 'exp-v39/x151815',  gt: 'gt-x151815.json' },   // 芝ランクマ p9・p10・p12
 };
 const GTSETS = () => ['0908', '0911', '151815', ...Object.keys(SETS).filter(k => k.startsWith('x') && fs.existsSync(path.join(SR, SETS[k].gt)))];
 // 評価専用（調整に使わない）: y* = 全体走から 2 人独立ラベル→突き合わせで作った目視 GT（gt-y*.json・2026-09-24・計 102 打）。
-// 第 4 ラウンド以降のレーンには見せない: score --holdout のときだけ採点し、init はコピーしない（全体走の基準 exp-sv38 からもこの 9 ポイントを抜いてある）。
+// 第 4 ラウンド以降のレーンには見せない: score --holdout のときだけ採点し、init はコピーしない（全体走の基準 exp-sv38・exp-sv39 からもこの 9 ポイントを抜いてある）。
 // 統合の評価で <root>/y* に置いた結果を採る（copyin --src <全体走>/s0908 --as y0908 --only 9,18 など）
 const HOLDOUT = {
   'y0908':   { dir: 'y0908',   gt: 'gt-y0908.json' },     // クレイ p9・砂 p18
