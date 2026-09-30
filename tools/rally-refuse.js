@@ -10,6 +10,7 @@ const path = require('path');
 const { loadModules } = require('./rally-node.js');
 const FarBall = require('./farball.js');
 const ShotColor = require('./shotcolor.js');
+const Slide = require('./slide.js');
 
 // 実験場の tools コピー（samples/rally/exp-*/tools）から走らせても本体のリポジトリを指すように、samples/rally がある所まで上がる（rally-exp.js と同じ）
 const REPO = (() => { let d = path.resolve(__dirname, '..'); for (let k = 0; k < 6; k++) { if (fs.existsSync(path.join(d, 'samples', 'rally'))) return d; d = path.dirname(d); } return path.resolve(__dirname, '..'); })();
@@ -50,6 +51,7 @@ async function refuse(file, mods, opts = {}) {
     // 読んだ記録（打点ごとの票・読んだ軌道）を残す（rally-node と同じ形）
     r.shotColor = { changed: sc.changed, n: sc.skipped ? sc.n : sc.log.length, ms: sc.ms, skipped: sc.skipped, log: sc.log };
   }
+  Slide.apply(r.rally);   // 2026-09-30: shotcolor の後にスライドの種別（tools/slide.js・rally-node と同じ順序）
   fs.writeFileSync(file, JSON.stringify(r, null, 1));
   // 読まなかったとき（FHD 60fps 以外・動画なし）は skipped と印を付けた打点の数 n を返す（2026-09-24 exp-int3f・レビューの note: 以前は「shotcolor 0/0」と出ていた）
   return { before, after, sc: sc ? { changed: sc.changed, n: sc.skipped ? sc.n : sc.log.length, ms: sc.ms, log: sc.log, skipped: sc.skipped } : null };

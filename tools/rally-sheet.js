@@ -71,7 +71,7 @@ async function build(opts) {
     events = r.events || [];
     trailLog = r.trailLog || []; shots = r.shots || [];
   }
-  const CLS_RGB = { topspin: [255, 90, 0], slice: [0, 200, 255], flat: [230, 0, 255], lob: [255, 230, 0], drop: [255, 255, 255], unknown: [0, 0, 0] };
+  const CLS_RGB = { topspin: [255, 90, 0], slice: [0, 200, 255], flat: [230, 0, 255], lob: [255, 230, 0], drop: [255, 255, 255], unknown: [0, 0, 0], slide: [127, 200, 180], dive: [201, 162, 122] };
   const sx = w / FW, sy = h / FH;   // FHD→タイル
   let count = 0;
   for await (const fr of frames(video, t0, t1, fps, w, h)) {
