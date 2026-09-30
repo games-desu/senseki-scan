@@ -11,6 +11,7 @@ const vm = require('vm');
 const { spawn } = require('child_process');
 const FarBall = require('./farball.js');
 const ShotColor = require('./shotcolor.js');
+const Slide = require('./slide.js');
 
 const W = 960, H = 540, FRAME_BYTES = W * H * 4;
 // 実験場の tools コピー（samples/rally/exp-*/tools）から走らせても本体のリポジトリを指すように、samples/rally がある所まで上がる（rally-exp.js・rally-refuse.js と同じ）
@@ -200,6 +201,7 @@ async function analyze(opts) {
                                        camOk: ShotColor.makeCamOk(cams, Court) });
     shotColor = { changed: sc.changed, n: sc.skipped ? sc.n : sc.log.length, ms: sc.ms, skipped: sc.skipped, log: sc.log };   // skipped: FHD 以外で読まなかった（2026-09-24）
   }
+  if (rally) Slide.apply(rally);   // 2026-09-30: shotcolor の後にスライドの種別（tools/slide.js）
 
   return {
     rally, shots, trailRuns, markers, farBall, shotColor, trailLog: opts.trail ? trailLog : undefined,
