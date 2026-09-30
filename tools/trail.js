@@ -756,7 +756,9 @@ window.Trail = (() => {
              //   丸めてから ≥ 0.8 と比べると実質 0.795 で 39/49 も通っていた。76 ポイントでは丸め前 < 0.8・丸め後 ≥ 0.8 の run は 0 本＝出力は変わらない: exp-int3f/work/precheck.js）
              // courtH: コートの色相（courtRef の Hmed・run のコマの中央値）。芝 84〜86・砂 51〜55・クレイ 11・ハード 188〜205（v38 の全体走の trailLog）。shots の緑ガードの例外（淡い青スライス）に使う
              courtH: (() => { const hs = fr.map(f => f.cH).filter(v => v != null); return hs.length ? median(hs) : null; })(),
-             nMax: Math.max(...fr.map(f => f.b.n)), cZ0: first.cZ, nTape: fr.filter(f => f.b.tape).length, nTapeArea: fr.filter(f => f.b.tape).reduce((a, f) => a + f.b.n, 0), nArea: fr.reduce((a, f) => a + f.b.n, 0), nFlatW: fr.filter(f => flatWhite(f.b)).length, zMinAll: +Math.min(...fr.map(f => f.b.cZ)).toFixed(2), nRedBody: fr.filter(f => redBody(f.b)).length, tapeFrac: +(fr.filter(f => f.b.tape).length / fr.length).toFixed(2),
+             // cZ0p: 先頭のコマが仮カメラ（prov）のときだけ、先頭 3 コマの cZ の中央値。サーブ画→ラリー画のズーム中は仮カメラの縮尺が合わず、先頭 1 コマの cZ だけが
+             //   跳ぶことがある（芝ランクマ 15-18-15 p9 214.30 の自分のサーブ: cZ 16.79 → −0.71 → 0.97。shots の sideOk に落ちて、続く 214.95o・215.72m まで消えていた）
+             nMax: Math.max(...fr.map(f => f.b.n)), cZ0: first.cZ, cZ0p: first.prov && fr.length >= 3 ? +median(fr.slice(0, 3).map(f => f.b.cZ)).toFixed(2) : null, nTape: fr.filter(f => f.b.tape).length, nTapeArea: fr.filter(f => f.b.tape).reduce((a, f) => a + f.b.n, 0), nArea: fr.reduce((a, f) => a + f.b.n, 0), nFlatW: fr.filter(f => flatWhite(f.b)).length, zMinAll: +Math.min(...fr.map(f => f.b.cZ)).toFixed(2), nRedBody: fr.filter(f => redBody(f.b)).length, tapeFrac: +(fr.filter(f => f.b.tape).length / fr.length).toFixed(2),
              frames: fr.map(f => ({ t: f.t, cx: f.b.cx, cy: f.b.cy, ty: f.b.tip.y, n: f.b.n, cls: f.b.cls, side: f.b.side })) };
   }
 
@@ -776,7 +778,8 @@ window.Trail = (() => {
     // 判定は出現時の重心の Z（尾は最初のコマで先端と取り違えることがある）。緩めに: 自分は Z<3・相手は Z>-3
     // 再アンカーした run は出現時の重心が先へ進んでいる（クレイ 327.27: Z=3.68 で本物のロブが落ちた）ので、切り離す前の先頭（cZpre）でも可
     // 閾値 5: 自分のトレイルはネット手前 Z=3.2 で出現することがある（15-18-15 p8 デイジーのスライス/フラット・3 だと落ちた）。オーラは選手の位置（|Z|≈8〜10）なので余裕がある
-    const sideOk = r => r.cZ0 == null || (r.side === 'me' ? (r.cZ0 < 5 || r.cZpre < 5) : (r.cZ0 > -5 || r.cZpre > -5));
+    // 先頭が仮カメラの run は先頭 3 コマの中央値（cZ0p）でも可（2026-09-30: 全 76 ポイントで効くのは 15-18-15 p9 の 1 本だけ・ベンチ/x/y/全体走の他は不変）
+    const sideOk = r => r.cZ0 == null || (r.side === 'me' ? (r.cZ0 < 5 || r.cZpre < 5 || (r.cZ0p != null && r.cZ0p < 5)) : (r.cZ0 > -5 || r.cZpre > -5 || (r.cZ0p != null && r.cZ0p > -5)));
     // 速さは全期間の中央値か出現直後の中央値の速い方（縦一本の筋として残るトレイルは重心が途中で止まる・summarize の spdEarly 参照）
     const spdOf = r => Math.max(r.spd, r.spdEarly || 0);
     // コマ数の下限 5 は、速く（ゲートの 2 倍以上）まっすぐ（0.95 以上）大きく（nMax 1000 以上）動く 4 コマの断片だけ 4 に緩める
