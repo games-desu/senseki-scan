@@ -865,6 +865,36 @@ window.RallyFuse = (() => {
         if (cand) out.push({ t: cand.t, side: cand.side, cls: cand.src === 'far-lobpair' ? 'lob' : 'unknown', src: cand.src && cand.src.startsWith('far-') ? cand.src : 'track', from: { X: cand.X, Z: cand.Z }, qc: cand.qc, tailFill: true, farRise: cand.rise });
       }
     }
+    // 相手ロブの遅れ取りを星で直す（starLob・2026-10-02・手直し GT n0908b）: 相手がロブを上げるとカメラが上を向いて球が画面の上へ抜け、
+    //   トレイルは降りてくる所（接触の 0.4〜0.8 秒後）でしか立たない。そのトレイルが相手の打点として遅れて入り（n0908b で相手ロブ 16 本中 7 本）、
+    //   上がっていく所は偽の自分の打点（204.57）になることもある。一方、ロブには自分側に SMASH の星が出て、star.js はそれを接触の 0.56〜0.80 秒後に捉える
+    //   （n0908b: 205.37→GT 204.717・208.67→208.1・214.27→213.583・232.23→231.6・368.03→367.317。取れていたロブ 217.93・226.47・229.40・369.70 も同じ間合い）。
+    //   自分側の星（k ≥ 6・砂を除く）の −0.3〜+0.6 秒に相手のトレイル打点があり、星の 0.65 秒前（T）の ±0.3 秒に相手の打点が無ければ、その打点を T へ戻して lob にする。
+    //   T の ±0.2 秒に相手側の hit イベント（far-lobappear・far-pair・seg-start）があればそちらへ寄せる（204.67・208.17・367.28／ホールドアウト y0908b 322.83・344.94・351.78 がどれも T より GT に近い）。
+    //   T との間（T−0.3 秒より後）にある自分のトレイル打点は上がっていく球の偽物として捨てる。直前の打点が相手なら（間の自分の打点を取りこぼしている・214.34）側は変わらないので寄せるだけ。
+    //   src を trail に限る: 飛びつきの後の星は間合いが短く（266.30 は 0.22・140.27 は 0.97）、フィーバー返しの後の 299.23 には far-turn 299.07 が立っている。
+    //   成績: n0908b 打点 130→135・種別 92→99・余分 32→26／ホールドアウト y0908b 21→22・余分 6→5／ベンチ・x は発火なし。
+    //   全体走の残り 1 発火（s0908 p7 179.77→178.98）は目視で相手の飛びつき（≈179.25・星 179.63 で間合い 0.38）。採点上は 0.5 遅れ→0.27 早まりで、種別は lob（GT なら dive）
+    if (out.length && camAt && typeof Court !== 'undefined') {
+      for (const m of markers) {
+        if (m.sand || m.k < 6) continue;
+        const cam = camAt(m.t0); if (!cam || !cam.ok) continue;
+        if (!(Court.toCourt(m.x * 2, m.y * 2, cam).Z < -0.5)) continue;
+        const T = +(m.t0 - 0.65).toFixed(3);
+        const j = out.findIndex(h => h.side === 'opp' && h.src === 'trail' && dms(m.t0 - 0.3, h.t) > 0 && dms(h.t, m.t0 + 0.6) >= 0);
+        if (j < 0) continue;
+        const h = out[j];
+        if (out.some((x, k) => k !== j && x.side === 'opp' && Math.abs(dms(x.t, T)) < 300)) continue;
+        let p = j - 1; const fakes = [];
+        while (p >= 0 && dms(out[p].t, T) < 300) { fakes.push(p); p--; }
+        const prev = p >= 0 ? out[p] : null;
+        if (!prev || (prev.side !== 'me' && fakes.length)) continue;
+        if (fakes.some(k => !(out[k].side === 'me' && out[k].src === 'trail'))) continue;
+        const ev = events.filter(e => e.kind === 'hit' && e.side === 'opp' && Math.abs(dms(e.t, T)) <= 200).sort((a, b) => Math.abs(a.t - T) - Math.abs(b.t - T))[0];
+        h.tTrail = h.t; h.t = ev ? ev.t : T; h.cls = 'lob'; h.starLob = ev ? ev.src : 'star';
+        for (const k of fakes.sort((a, b) => b - a)) out.splice(k, 1);
+      }
+    }
     // カメラの引きの直前の偽打点（prePull・上）を捨てる。種別の規則（頂点・tNext）より前
     for (let i = out.length - 1; i >= 0; i--) if (out[i].prePull) out.splice(i, 1);
     // 上端の帯の後に跳んで現れた相手側の打点（topHead）が自分の打点の直後なら捨てる（第 5 ラウンド nearjunk・全体走 砂 s0911 p0 21.037o:
