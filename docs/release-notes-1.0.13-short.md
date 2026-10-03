@@ -1,0 +1,6 @@
+- 録画のファイル名に日時でない数字の並び（TwitchアーカイブのダウンロードファイルのIDなど）があると、それを日時と読み違えて「9077年」のような日付になる不具合を直しました
+- 月・日・時・分・秒としてありえない数字はファイル名の日時として使わず、更新日時からの推定（要確認）に回します
+- OBS・Switch本体・和文のファイル名の読み取り結果は変わっていません
+- Fixed a bug where digit runs in a file name that are not a date (such as the IDs in downloaded Twitch VOD names) were read as the recording time, producing dates like the year 9077
+- Numbers that cannot be a valid month, day, hour, minute or second are no longer used; the time is estimated from the file's modified time instead (marked for review)
+- File names from OBS, the Switch console and Japanese-style dates are read exactly as before

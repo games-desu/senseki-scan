@@ -1018,15 +1018,25 @@ async function harvestTemplates() {
 // 戻り値 {date, source}: source は 'name'(ファイル名の日時) / 'mtime'(更新日時−長さ。YouTube等からダウンロードした
 // アーカイブはDL時刻になるので合わない→要確認にして「録画の開始日時」で一括修正してもらう・2026-09-06) / null
 function parseStartTime(name, lastModified, duration) {
-  const D = (y, mo, d, h = 0, mi = 0, se = 0) => new Date(+y, +mo - 1, +d, +h, +mi, +se);
-  let m = name.match(/(\d{4})-(\d{2})-(\d{2})[ _T](\d{2})[-:](\d{2})(?:[-:](\d{2}))?/); // OBS形式 2026-09-05 21-24-23（_ や : 区切りも）
-  if (m) return { date: D(m[1], m[2], m[3], m[4], m[5], m[6] || 0), source: 'name' };
-  m = name.match(/(\d{4})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})/);                  // Switch本体 20260905212423xx / 20260905_212423
-  if (m) return { date: D(m[1], m[2], m[3], m[4], m[5], m[6]), source: 'name' };
-  m = name.match(/(\d{4})年(\d{1,2})月(\d{1,2})日(\d{1,2})時(\d{1,2})分(?:(\d{1,2})秒)?/); // 和文 2026年09月04日11時59分（利用者の切り抜き動画・2026-09-06）
-  if (m) return { date: D(m[1], m[2], m[3], m[4], m[5], m[6] || 0), source: 'name' };
-  m = name.match(/(\d{4})[-._](\d{2})[-._](\d{2})/);                                     // 日付だけ（時刻は不明→0時。要確認）
-  if (m) return { date: D(m[1], m[2], m[3]), source: 'mtime' };
+  // 範囲外の数字は Date が黙って繰り上げる（9075年26月→9077年2月）ので、組み立て直して一致したものだけ採る。
+  // 2026-10-04: Twitch VOD の DL名 2890752604-584766680-<uuid>.mp4 を本体形式と誤読して 9077年になった件
+  const D = (y, mo, d, h = 0, mi = 0, se = 0) => {
+    [y, mo, d, h, mi, se] = [y, mo, d, h, mi, se].map(Number);
+    if (y < 2000 || y > 2099 || se > 59) return null;
+    const t = new Date(y, mo - 1, d, h, mi, se);
+    if (t.getFullYear() !== y || t.getMonth() !== mo - 1 || t.getDate() !== d || t.getHours() !== h || t.getMinutes() !== mi) return null;
+    return t;
+  };
+  // 同じ形が複数あれば、ありえる日時になる最初のものを採る
+  const first = (re, f) => { for (const m of name.matchAll(re)) { const t = f(m); if (t) return t; } return null; };
+  let t = first(/(?<!\d)(\d{4})-(\d{2})-(\d{2})[ _T](\d{2})[-:](\d{2})(?:[-:](\d{2}))?(?!\d)/g, m => D(m[1], m[2], m[3], m[4], m[5], m[6] || 0)); // OBS形式 2026-09-05 21-24-23（_ や : 区切りも）
+  if (t) return { date: t, source: 'name' };
+  t = first(/(?<!\d)(\d{4})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})(?:\d{2})?(?!\d)/g, m => D(m[1], m[2], m[3], m[4], m[5], m[6])); // Switch本体 2026090521242300 / 20260905_212423（前後が数字なら採らない）
+  if (t) return { date: t, source: 'name' };
+  t = first(/(?<!\d)(\d{4})年(\d{1,2})月(\d{1,2})日(\d{1,2})時(\d{1,2})分(?:(\d{1,2})秒)?/g, m => D(m[1], m[2], m[3], m[4], m[5], m[6] || 0)); // 和文 2026年09月04日11時59分（利用者の切り抜き動画・2026-09-06）
+  if (t) return { date: t, source: 'name' };
+  t = first(/(?<!\d)(\d{4})[-._](\d{2})[-._](\d{2})(?!\d)/g, m => D(m[1], m[2], m[3]));        // 日付だけ（時刻は不明→0時。要確認）
+  if (t) return { date: t, source: 'mtime' };
   if (lastModified) return { date: new Date(lastModified - duration * 1000), source: 'mtime' };
   return { date: null, source: null };
 }
