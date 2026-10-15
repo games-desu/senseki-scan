@@ -12,6 +12,7 @@ const { spawn } = require('child_process');
 const FarBall = require('./farball.js');
 const ShotColor = require('./shotcolor.js');
 const Slide = require('./slide.js');
+const Flash = require('./flash.js');
 
 const W = 960, H = 540, FRAME_BYTES = W * H * 4;
 // 実験場の tools コピー（samples/rally/exp-*/tools）から走らせても本体のリポジトリを指すように、samples/rally がある所まで上がる（rally-exp.js・rally-refuse.js と同じ）
@@ -112,6 +113,8 @@ async function analyze(opts) {
   const started = Date.now();
   // Phase D: ショット色トレイル（opts.trail のとき毎フレーム）
   const trailLog = [], hist = [], starLog = [];
+  // 打点の閃光（tools/flash.js・2026-10-15）: 毎コマの白い塊の記録
+  const flashLog = []; let flashMask = null;
   // 入力の解像度とコマ数（2026-09-24 exp-int3f）: FHD 60fps 以外（720p・30fps）は FHD 60fps 専用の段（farball・shotcolor）を掛けず、理由を残す。
   // コマ数が fps と違えば frames で fps に揃える（時刻を正しく）。fps が読めなければ揃えない（従来どおり）。
   // 動画そのものを調べられなければ（null）notFhd は 'size?' で、farball・shotcolor は掛けない（安全側・exp-int3f-review N4）
@@ -149,6 +152,7 @@ async function analyze(opts) {
       trailLog.push({ t: fr.t, f: fr.i, blobs: tr.blobs,
                       ref: tr.ref ? { S90: +tr.ref.S90.toFixed(2), V90: +tr.ref.V90.toFixed(2), L90: Math.round(tr.ref.L90), Hmed: tr.ref.Hmed == null ? null : Math.round(tr.ref.Hmed), lineL: Math.round(tr.ref.lineL), useHue: tr.ref.useHue } : null });
     }
+    if (opts.trail) { const fl = Flash.detect(fr.img, flashMask); flashMask = fl.mask; if (fl.comps.length) flashLog.push({ t: +fr.t.toFixed(3), comps: fl.comps }); }
     const cs = BallTrack.candidates(fr.img, { prevMask });
     prevMask = cs.mask;
     // フィルタは ball.js 側の差し替え点に委ねる（変種が丸ごと置き換えられるように）
@@ -192,6 +196,9 @@ async function analyze(opts) {
     }
   }
   const rally = shots ? RallyFuse.fuse({ shots, events, track, camAt, t0, t1, markers, farTracks: farBall ? farBall.tracks : [], segs }).shots : null;
+  // 閃光から取りこぼしの打点を足す（fuse の後・shotcolor の前・rally-refuse も同じ順序）。閾値は FHD 60fps で測ったので、それ以外は掛けない
+  const flash = opts.trail && !notFhd ? Flash.events(flashLog, net) : [];
+  if (rally) Flash.apply(rally, flash);
   // 追跡由来の打点（src track / far-* / launch*・種別 unknown）の種別を、打点直後の球の通り道の色（フル解像度）で読む後段（tools/shotcolor.js・1 打 0.3〜0.6 秒）。
   // fuse の後に掛ける（rally-refuse.js も fuse の後に掛け直す）
   let shotColor = null;
@@ -204,7 +211,7 @@ async function analyze(opts) {
   if (rally) Slide.apply(rally);   // 2026-09-30: shotcolor の後にスライドの種別（tools/slide.js）
 
   return {
-    rally, shots, trailRuns, markers, farBall, shotColor, trailLog: opts.trail ? trailLog : undefined,
+    rally, shots, trailRuns, markers, farBall, shotColor, flash, trailLog: opts.trail ? trailLog : undefined,
     video: path.basename(video), t0, t1, fps, variant: opts.variant || null,
     input: vi ? { w: vi.w, h: vi.h, fps: vi.fps, resampled: resample, notFhd60: notFhd } : null,   // 入力の解像度・コマ数と FHD 60fps でない理由（2026-09-24 exp-int3f）
     ms: Date.now() - started,

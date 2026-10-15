@@ -11,6 +11,7 @@ const { loadModules } = require('./rally-node.js');
 const FarBall = require('./farball.js');
 const ShotColor = require('./shotcolor.js');
 const Slide = require('./slide.js');
+const Flash = require('./flash.js');
 
 // 実験場の tools コピー（samples/rally/exp-*/tools）から走らせても本体のリポジトリを指すように、samples/rally がある所まで上がる（rally-exp.js と同じ）
 const REPO = (() => { let d = path.resolve(__dirname, '..'); for (let k = 0; k < 6; k++) { if (fs.existsSync(path.join(d, 'samples', 'rally'))) return d; d = path.dirname(d); } return path.resolve(__dirname, '..'); })();
@@ -30,6 +31,7 @@ async function refuse(file, mods, opts = {}) {
   const track = []; (r.segPts || []).forEach(s => s.pts.forEach(p => track.push(p))); track.sort((a, b) => a.t - b.t);
   const before = (r.rally || []).map(h => `${h.t.toFixed(2)}${h.side[0]}`).join(' ');
   r.rally = RallyFuse.fuse({ shots: r.shots || [], events: r.events || [], track, camAt, t0: r.t0, t1: r.t1, markers: r.markers || [], farTracks: (r.farBall && r.farBall.tracks) || [], segs: r.segPts || [] }).shots;
+  Flash.apply(r.rally, r.flash || []);   // 2026-10-15: 閃光から取りこぼしの打点を足す（rally-node と同じく fuse の後・shotcolor の前）
   const after = r.rally.map(h => `${h.t.toFixed(2)}${h.side[0]}`).join(' ');
   let sc = null;
   const video = opts.video || (r.video ? path.join(REPO, 'samples', r.video) : null);
