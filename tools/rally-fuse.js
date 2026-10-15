@@ -895,6 +895,20 @@ window.RallyFuse = (() => {
         for (const k of fakes.sort((a, b) => b - a)) out.splice(k, 1);
       }
     }
+    // 相手の滑り込み（slide/dive）の返球の遅れ取りを 1.25 秒戻す（slideBack・2026-10-15・手直し GT n0908）: 滑り込みの接触ではトレイルが立たず、
+    //   返った球が奥で高く上がる所（接触の 1.20〜1.34 秒後・始点 Z 20〜28）で初めて相手の打点が入る。滑り込み自体は取りこぼす
+    //   （n0908 p12 297.83→299.04・303.02→304.30・315.98→317.24・324.68→325.94／p19 515.10→516.44。目視 p12 297〜300 秒）。
+    //   滑り込みは自分のロブ・深い球を追った先なので、直前の自分の打点から 2 秒以上空く（GT の自分→相手の間合いは普通 0.8〜1.3 秒・ロブで 2.5 秒）。
+    //   ＋1.25 秒の遅れで 3.7〜4.2 秒（p19 は 2.03）。2 秒以上空いて奥（Z ≥ 18）から立つ相手のトレイル打点で、時刻をまだ寄せていないものを戻す。
+    //   残す本物: n0911 p0 17.17（3.34 秒空くが Z 13.2）・時刻を寄せた打点（starLob の n0908 p7 178.98・far-* の x0908 p5 133.60）
+    for (let i = 1; i < out.length; i++) {
+      const h = out[i], a = out[i - 1];
+      if (h.side !== 'opp' || a.side !== 'me' || h.src !== 'trail' || h.farFix || h.launch || h.tTrail != null || h.starLob) continue;
+      if (!(h.from && h.from.Z != null && h.from.Z >= 18) || dms(a.t, h.t) < 2000) continue;
+      const T = +(h.t - 1.25).toFixed(3);
+      if (dms(a.t, T) < 500) continue;
+      h.tTrail = h.t; h.t = T; h.slideBack = true;
+    }
     // カメラの引きの直前の偽打点（prePull・上）を捨てる。種別の規則（頂点・tNext）より前
     for (let i = out.length - 1; i >= 0; i--) if (out[i].prePull) out.splice(i, 1);
     // 上端の帯の後に跳んで現れた相手側の打点（topHead）が自分の打点の直後なら捨てる（第 5 ラウンド nearjunk・全体走 砂 s0911 p0 21.037o:
@@ -1007,6 +1021,15 @@ window.RallyFuse = (() => {
     // 直前の打点との間が 0.3 秒未満になるなら寄せない（打点の順序を変えない）
     // 自分のサーブは上の serveCamShift（0.24 秒）が先に tTrail を立てるので、ここ（0.1 秒）とは二重に掛からない（統合 exp-int5 で全件確認）。
     //   full0 で T に入っていたサーブ（x0908b 71.13・185.38・x151815 225.03）はサーブ寄せの側で入る
+    // 自分のロブの直後に立つ相手のトレイル打点を捨てる（lobFollow・2026-10-15・手直し GT 8 セット）: 自分のロブが奥へ上がっていく所の筋が
+    //   相手側の打点として 0.4〜0.8 秒後に立つ（n0908 p19 474.92・479.34・526.84／n0911 p2 73.44・80.13）。球はまだ相手に届いていない。
+    //   GT の「自分のロブ → 次の相手の打点」91 本は 0.35 秒の 1 本を除き 0.8 秒以上。0.8 秒未満で残す本物（n0911 p2 93.00・0.72）は far-pair で時刻を決めたもの。
+    //   lob か、種別未定の打ち出し（launch の lob はここではまだ unknown で、後の shotcolor が lob にする）に限る。種別未定の打ち出しは 0.6 秒まで（偽物は 0.40〜0.52 秒・n0908b p11 368.23→368.94 の本物は 0.70 秒で、shotcolor 後は topspin。topspin と分かっている打ち出しは外す: p5 203.93→204.67 も 0.73 秒で本物）。時刻を寄せた相手の打点（starLob など）は残す。偽物は奥へ上がる筋なので始点 Z ≥ 10（14.9〜27.4）に限る（ベンチ d0911 p1 49.77→50.30 の本物は 0.53 秒・Z −4.3＝ドロップをネット際で返した）。相手のロブ → 自分の打点は飛びつき・滑り込みの返球が 0.5〜0.8 秒で来るので掛けない
+    for (let i = out.length - 1; i > 0; i--) {
+      const a = out[i - 1], b = out[i];
+      if (a.side !== 'me' || !(a.cls === 'lob' || (a.launch && a.cls === 'unknown')) || b.side !== 'opp' || b.src !== 'trail' || b.farFix || b.launch || b.tTrail != null || !(b.from && b.from.Z != null && b.from.Z >= 10)) continue;
+      if (dms(a.t, b.t) < (a.cls === 'lob' ? 800 : 600)) out.splice(i, 1);
+    }
     for (let i = 0; i < out.length; i++) {
       const h = out[i];
       if (!(h.full0 && h.side === 'me' && h.src === 'trail' && h.tTrail == null && !h.launch && !h.gaprevShift && !h.endShift && !h.farFix)) continue;
