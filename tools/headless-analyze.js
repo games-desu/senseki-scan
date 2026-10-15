@@ -10,7 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const { spawn } = require('child_process');
+const { launchChrome } = require('./headless-chrome');
 
 const args = process.argv.slice(2);
 const opt = { port: 4763, timeout: 900, out: null, rect: null, chrome: null, debug: false };
@@ -41,7 +41,7 @@ function serveFile(req, res, file, mime) {
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
   if (range) {
     const start = range[1] ? +range[1] : 0, end = range[2] ? Math.min(+range[2], st.size - 1) : st.size - 1;
-    res.writeHead(206, { 'content-type': mime, 'accept-ranges': 'bytes', 'content-length': end - start + 1,
+    res.writeHead(206, { 'content-type': mime, 'accept-ranges': 'bytes', 'content-length': end - start + 1, 'cache-control': 'no-store',
                          'content-range': `bytes ${start}-${end}/${st.size}` });
     fs.createReadStream(file, { start, end }).pipe(res);
   } else {
@@ -50,7 +50,7 @@ function serveFile(req, res, file, mime) {
   }
 }
 
-let result = null, chromeProc = null;
+let result = null, chromeProc = null, chrome$ = null;
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/__video') return serveFile(req, res, video, 'video/mp4');
@@ -72,7 +72,7 @@ const server = http.createServer((req, res) => {
 });
 
 function finish() {
-  if (chromeProc) { try { chromeProc.kill(); } catch {} }
+  if (chrome$) chrome$.cleanup(); // Chrome を落として一時プロファイルを消す
   server.close();
   if (!result) { console.error('timeout: no result'); process.exit(1); }
   if (opt.out) fs.writeFileSync(opt.out, JSON.stringify(result, null, 1));
@@ -102,10 +102,9 @@ server.listen(opt.port, () => {
     }
   }
   const url = `http://localhost:${opt.port}/tools/headless-analyze.html?${q}`;
-  const udd = path.join(require('os').tmpdir(), 'senseki-headless-' + process.pid);
-  chromeProc = spawn(chrome, ['--headless=new', '--no-first-run', '--no-default-browser-check', '--mute-audio',
-    '--autoplay-policy=no-user-gesture-required', '--window-size=1500,1000', `--user-data-dir=${udd}`,
+  chrome$ = launchChrome(chrome, 'senseki-headless-', [
     ...(opt.debug ? ['--enable-logging=stderr', '--v=0'] : []), url], { stdio: ['ignore', 'ignore', opt.debug ? 'pipe' : 'ignore'] });
+  chromeProc = chrome$.proc;
   if (opt.debug) chromeProc.stderr.on('data', d => { for (const l of String(d).split('\n')) if (/CONSOLE|ERROR/.test(l) && !/HKLM|registry/.test(l)) console.error('[chrome] ' + l.trim()); });
   chromeProc.on('exit', () => { if (!result) setTimeout(() => finish(), 500); });
   setTimeout(() => finish(), opt.timeout * 1000);
