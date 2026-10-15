@@ -5,7 +5,7 @@ const path = require('path');
 const vm = require('vm');
 const { spawn } = require('child_process');
 
-const REPO = 'C:/Users/<user>/Documents/senseki-capture';
+const REPO = path.resolve(__dirname, '..');
 function findFfmpeg() {
   const base = 'C:/Program Files/CapCut/Apps';
   for (const d of fs.readdirSync(base).sort().reverse()) {
