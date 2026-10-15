@@ -77,4 +77,46 @@ function apply(rally, evs) {
   return add.length;
 }
 
-module.exports = { detect, events, apply, P };
+// 閃光で足した自分の打点（種別 unknown）のうち、光のまわりに青いトレイル（色相 140〜250）が大きく出たものをスライスにする（2026-10-15）。
+// shotcolor の後・slide の前に掛ける。打点 0.1 秒前のコマを基準に 0.5 秒・光の ±150px を 2px おきに見て、
+// 基準から RGB の差の和が 120 以上で彩度・明度 0.45 以上の青い画素を数え、SLICE_N 以上ならスライス。
+// 実測（手直し済み GT 8 組・scratchpad の flashcolor）: GT スライス 3500〜10973（6 打中 5 打が 6980 以上）・スライス以外は 2715 以下。
+//   黄（トップ・ロブ）や緑はカメラの動きで芝や砂の色が混ざって分けられないので、青だけを使う。相手の打点は光が小さく読まない
+const SL = { T0: 0.1, T1: 0.5, RAD: 150, DIFF: 120, SV: 0.45, H0: 140, H1: 250, STEP: 2, SLICE_N: 5000 };
+function grabRaw(ff, video, t0, dur) {
+  const { spawn } = require('child_process');
+  return new Promise((res, rej) => {
+    const p = spawn(ff, ['-hide_banner', '-loglevel', 'error', '-ss', String(Math.max(0, t0)), '-i', video, '-t', String(dur), '-vf', `scale=${W}:${H}`, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-']);
+    const bufs = []; p.stdout.on('data', b => bufs.push(b)); p.on('error', rej); p.on('close', () => res(Buffer.concat(bufs)));
+  });
+}
+async function readSlice({ video, rally, ffmpeg }) {
+  const out = { changed: 0, n: 0, log: [] };
+  if (!rally || !video) return out;
+  const FB = W * H * 4;
+  for (const h of rally) {
+    if (h.src !== 'flash' || h.side !== 'me' || h.cls !== 'unknown' || !h.flash) continue;
+    out.n++;
+    const raw = await grabRaw(ffmpeg, video, h.t - SL.T0, SL.T1 + SL.T0);
+    const n = Math.floor(raw.length / FB); if (n < 2) continue;
+    const base = raw.subarray(0, FB), fx = h.flash.x, fy = h.flash.y;
+    let cnt = 0;
+    for (let k = 2; k < n; k++) {
+      const fr = raw.subarray(k * FB, (k + 1) * FB);
+      for (let y = Math.max(P.Y0, fy - SL.RAD); y < Math.min(P.Y1, fy + SL.RAD); y += SL.STEP) for (let x = Math.max(0, fx - SL.RAD); x < Math.min(W, fx + SL.RAD); x += SL.STEP) {
+        const i = (y * W + x) * 4, r = fr[i], g = fr[i + 1], b = fr[i + 2];
+        if (Math.abs(r - base[i]) + Math.abs(g - base[i + 1]) + Math.abs(b - base[i + 2]) < SL.DIFF) continue;
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+        if (!mx || d / mx < SL.SV || mx / 255 < SL.SV) continue;
+        let hh = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; hh *= 60; if (hh < 0) hh += 360;
+        if (hh >= SL.H0 && hh < SL.H1) cnt++;
+      }
+    }
+    h.flash.blue = cnt;
+    if (cnt >= SL.SLICE_N) { h.cls = 'slice'; h.clsBy = 'flash-color'; out.changed++; }
+    out.log.push({ t: h.t, blue: cnt });
+  }
+  return out;
+}
+
+module.exports = { detect, events, apply, readSlice, P, SL };

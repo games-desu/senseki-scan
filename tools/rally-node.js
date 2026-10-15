@@ -208,10 +208,12 @@ async function analyze(opts) {
                                        camOk: ShotColor.makeCamOk(cams, Court) });
     shotColor = { changed: sc.changed, n: sc.skipped ? sc.n : sc.log.length, ms: sc.ms, skipped: sc.skipped, log: sc.log };   // skipped: FHD 以外で読まなかった（2026-09-24）
   }
+  // 2026-10-15: 閃光で足した自分の打点の青いトレイルからスライスを読む（tools/flash.js readSlice・shotcolor の後・slide の前）
+  const flashSlice = rally && opts.trail && !notFhd ? await Flash.readSlice({ video, rally, ffmpeg: ShotColor.findFfmpeg() }) : null;
   if (rally) Slide.apply(rally);   // 2026-09-30: shotcolor の後にスライドの種別（tools/slide.js）
 
   return {
-    rally, shots, trailRuns, markers, farBall, shotColor, flash, trailLog: opts.trail ? trailLog : undefined,
+    rally, shots, trailRuns, markers, farBall, shotColor, flash, flashSlice, trailLog: opts.trail ? trailLog : undefined,
     video: path.basename(video), t0, t1, fps, variant: opts.variant || null,
     input: vi ? { w: vi.w, h: vi.h, fps: vi.fps, resampled: resample, notFhd60: notFhd } : null,   // 入力の解像度・コマ数と FHD 60fps でない理由（2026-09-24 exp-int3f）
     ms: Date.now() - started,

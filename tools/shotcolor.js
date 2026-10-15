@@ -320,4 +320,4 @@ async function apply({ video, rally, segPts = [], farBall = null, t1 = Infinity,
   return { changed, log, ms: Date.now() - started };
 }
 
-module.exports = { apply, classifyHit, readPath, decide, hueCls, pathOk, makeCamOk, videoSize, notFhd60, isApexLob };
+module.exports = { apply, classifyHit, readPath, decide, hueCls, pathOk, makeCamOk, videoSize, notFhd60, isApexLob, findFfmpeg };

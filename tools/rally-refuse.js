@@ -53,6 +53,8 @@ async function refuse(file, mods, opts = {}) {
     // 読んだ記録（打点ごとの票・読んだ軌道）を残す（rally-node と同じ形）
     r.shotColor = { changed: sc.changed, n: sc.skipped ? sc.n : sc.log.length, ms: sc.ms, skipped: sc.skipped, log: sc.log };
   }
+  // 2026-10-15: 閃光で足した自分の打点の青いトレイルからスライスを読む（rally-node と同じ順序。FHD 60fps 以外は閃光が無いので何もしない）
+  if (video && fs.existsSync(video)) { const fsl = await Flash.readSlice({ video, rally: r.rally, ffmpeg: ShotColor.findFfmpeg() }); r.flashSlice = { changed: fsl.changed, n: fsl.n, log: fsl.log }; }
   Slide.apply(r.rally);   // 2026-09-30: shotcolor の後にスライドの種別（tools/slide.js・rally-node と同じ順序）
   fs.writeFileSync(file, JSON.stringify(r, null, 1));
   // 読まなかったとき（FHD 60fps 以外・動画なし）は skipped と印を付けた打点の数 n を返す（2026-09-24 exp-int3f・レビューの note: 以前は「shotcolor 0/0」と出ていた）
