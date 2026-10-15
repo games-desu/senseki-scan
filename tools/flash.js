@@ -10,7 +10,7 @@
 //   手直し済み GT 8 組: 見つけた打点 449→486・取り違え 95→103・種別一致 329→336。ホールドアウト y 4 組: 見つけた打点 +2・取り違え ±0・種別一致 +1
 //   （注意: 位置の絞り込み（TIGHT）はホールドアウトの偽の閃光を見てから足した）
 const W = 960, H = 540;
-const P = { V: 235, CHROMA: 40, Y0: 60, Y1: H - 40, NMIN: 150, MINN: 400, NF: 0.5, FMIN: 0.35, NMAX: 2500, MULTI: 3, MERGE_T: 0.25, MERGE_D: 120, LEAD: 0.03, AW: 0.4, TAIL: 0.8 };
+const P = { V: 235, CHROMA: 40, Y0: 60, Y1: H - 40, NMIN: 150, MINN: 400, NF: 0.5, FMIN: 0.35, NMAX: 2500, MULTI: 3, MERGE_T: 0.25, MERGE_D: 120, LEAD: 0.03, AW: 0.4, AWO: 0.25, TAIL: 1.2 };
 
 // 明るく無彩色の画素（max ≥ 235・max−min ≤ 40）の 4 近傍の連結成分。nNew は前コマの mask に無かった画素の数
 function detect(img, prevMask) {
@@ -63,14 +63,17 @@ function events(log, net) {
   return ev;
 }
 
-// ラリーの最初の打点〜最後の打点 +0.8 秒の間で、どの打点からも 0.4 秒以上離れた閃光だけを足す
+// ラリーの最初の打点〜最後の打点 +1.2 秒の間で、同じ側の打点から 0.4 秒以上・反対側の打点から 0.25 秒以上離れた閃光だけを足す
+// （2026-10-15: 反対側も 0.4 秒にしていた頃は、ネット際の速い応酬で相手の打点の 0.3 秒後の自分の打点を捨てていた。y0911 p3 の見逃し 11 打のうち 6 打に光が出ていた。
+//   末尾も 0.8→1.2 秒に延ばした。手直し済み GT 8 組: 見つけた 486→491・余分 103→104・種別 340→342。ベンチ不変。0.15〜0.2 秒にするとベンチに余分が出る）
 function apply(rally, evs) {
   if (!rally || !rally.length || !evs || !evs.length) return 0;
   const lo = rally[0].t, hi = rally[rally.length - 1].t + P.TAIL;
   const add = [];
   for (const e of evs) {
     if (e.t < lo || e.t > hi) continue;
-    if (rally.some(h => Math.abs(h.t - e.t) < P.AW) || add.some(h => Math.abs(h.t - e.t) < P.AW)) continue;
+    const near = h => Math.abs(h.t - e.t) < (h.side === e.side ? P.AW : P.AWO);
+    if (rally.some(near) || add.some(near)) continue;
     add.push({ t: e.t, side: e.side, cls: 'unknown', src: 'flash', flash: { x: e.cx, y: e.cy, w: e.w, h: e.h, n: e.n } });
   }
   rally.push(...add); rally.sort((a, b) => a.t - b.t);
