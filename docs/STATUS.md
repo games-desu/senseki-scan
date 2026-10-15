@@ -369,7 +369,7 @@ return b.box.x1 >= 1400 && y1 <= bot && y1 + 80 >= top;     // 967 <= 965 が fa
 - samples/2026-09-06_02-28-45.mp4（ゆあん vs yxxki・第三者の録画?）は全項目のスコアが低め（コート0.77・キャラ0.83）＝画面位置ずれ系。今回の評価には不使用
 
 ### v1.0.1（公開済み 2026-09-06 02:5x）: FVゲージ side帰属の根本修正＋トランジション既定0.3秒＋配信元 games-desu
-- 発行 https://github.com/games-desu/senseki-scan/releases/tag/v1.0.1（3点整合OK・Latest）。GitHub/Vercel の名前変更(games-desu→games-desu 等)の後に再ビルドしたものを発行
+- 発行 https://github.com/games-desu/senseki-scan/releases/tag/v1.0.1（3点整合OK・Latest）。GitHub/Vercel のアカウント名を games-desu に変更した後に再ビルドしたものを発行
 ユーザー報告「相手のフィーバーショットが自分のショットと推定された」（21-24-23 ワンダーコート・自分ベビィルイージ/トゲゾー vs ノコノコ/ビリキュー）。
 開発用ページの再現では自分/相手とも null（フラグ）になり、原因を掘ると side帰属の土台が2つ壊れていた:
 - **FVゲージ領域が左右非対称だった**: HUDは「ストック枡（内側の小さな枡）＋充填バー」。旧 fvL(305-465)はバーだけで枡(216-310)が外、
