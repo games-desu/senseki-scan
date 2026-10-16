@@ -1496,6 +1496,26 @@ x セットの失敗は v38 の 94 件から減った。x0908＋x0908b が 27 �
   - ffmpeg はハイライト生成と同じ同梱の ffmpeg-static（`SENSEKI_FFMPEG` で tools へ渡す）。作業フォルダは %APPDATA%\SENSEKI SCAN\rally-work\<録画名>\（phaseA.json・p<i>.json）。
   - 進捗: Phase A（得点表示の読み取り）0〜15%・ポイントごと 15〜97%。tools 側には `onProgress`（highlight-node）・`onPoint`（rally-match）を足しただけで、コマンドラインの動きは変えていない。
   - 手直し済みのポイントがある保存ファイルを解析し直すときは [警告] で確認する。一度に1本だけ。
-  - **tools/ は配布物（electron-builder の files）に入らないので、解析ボタンは開発版だけに出る**（`rally-can-analyze`）。配布版で回すには tools の必要分を extraResources に入れる作業が要る。
+  - 解析ボタンは `rally-can-analyze`（tools/rally-match.js と ffmpeg があるとき）で出す。パッケージ版の扱いは下の「パッケージ版対応（保留中）」。
 - 試合レポート（`app/renderer/rally-report.html`）: 結果（取ったポイント数・勝ち負け）・総打数／平均／最長／要確認・ショット配分・ポイントの終わり方（決め球／ミス）・ラリーの長さ（棒からそのポイントの手直しへ）・着弾マップ（参考表示）。保存ファイルを開くたびに集計し直すので、手直しはすぐ反映される。
   - 手直し画面とは `?id=<録画名>&m=<試合の添字>&p=<ポイントidx>` で行き来する。
+
+### パッケージ版対応（保留中・2026-10-16）
+
+一般公開はまだ先なので、ここで止めた。配布するときはここから再開する。
+
+**済んだこと**（commit a02da20。開発版の動きは変わらない＝tools の場所も読み先も従来どおり）
+- `app/package.json`: build.files に `rally-runner.js`、`extraResources` で tools の 14 ファイル（rally-match / rally-node / farball / shotcolor / slide / flash / highlight-node / fever-banners-node / court / ball / trail / star / rally-fuse / variants/merged2）を `resources/tools` へ。asar の外に置くのは farball.js が `new Worker(__filename)` で自分を起動するため。
+- `app/main.js`: `RALLY_TOOLS = app.isPackaged ? process.resourcesPath/tools : ../tools`。子プロセスに `SENSEKI_APP_DIR=__dirname`（パッケージ版では resources/app.asar）を渡す。rally-runner.js は asar の中のまま fork できる。
+- `tools/highlight-node.js`・`tools/fever-banners-node.js`: `../app/renderer`・`../app/assets/templates.json` 決め打ちだったのを、`SENSEKI_APP_DIR` があればそちらから読むように（無ければ従来どおり）。
+- 確認済み: win-unpacked を起動して「録画を解析…」が出る → `samples/2026-09-08 23-03-03.mp4` を解析（15 ポイント・238 打・要確認 42・約6分）→ 試合レポート → 手直し画面（録画の再生も可）。同じコードの開発経路で回した保存ファイルと matches が完全一致。
+
+**残り作業**（配布するとき）
+1. rally-match.js が require / vm で読むファイルを増やしていたら、extraResources の filter に足す（足し忘れるとパッケージ版だけ解析が落ちる）。洗い出しは rally-match.js から `require('./…')` をたどり、rally-node.js の vm 読み込み（court/ball/trail/star/rally-fuse と variants/<既定の変種>）も見る。
+2. 改番して本番ビルド（schtasks 経由の `npm run dist`）→ インストーラーから入れた版で同じ確認 → 発行（docs/release.md）。
+3. 解析ボタンを一般の利用者に出してよいか（「ラリー解析（試作）」の扱い）を決める。出さないなら `rally-can-analyze` に条件を足す。
+
+**確かめ方**
+- ビルド: 公開済みのインストーラーを上書きしないよう `npx electron-builder --win --dir` を一時 .cmd に書き、schtasks で回す（`dist/win-unpacked` だけできる）。
+- 起動: `distwin-unpackedSENSEKI SCAN.exe --remote-debugging-port=9333`。CDP（`http://127.0.0.1:9333/json` の webSocketDebuggerUrl に Runtime.evaluate）で、index.html の `window.api.rallyCanAnalyze()`、手直し画面で `API.rallyAnalyzeStart('<録画のパス>')`（ファイル選択を飛ばす）。完了は `#anaText` が「できました（…）」になる。
+- 解析すると %APPDATA%SENSEKI SCANally<録画名>.json を上書きするので、手直し済みの録画では先に退避する。
