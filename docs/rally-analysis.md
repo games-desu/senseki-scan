@@ -1517,5 +1517,5 @@ x セットの失敗は v38 の 94 件から減った。x0908＋x0908b が 27 �
 
 **確かめ方**
 - ビルド: 公開済みのインストーラーを上書きしないよう `npx electron-builder --win --dir` を一時 .cmd に書き、schtasks で回す（`dist/win-unpacked` だけできる）。
-- 起動: `distwin-unpackedSENSEKI SCAN.exe --remote-debugging-port=9333`。CDP（`http://127.0.0.1:9333/json` の webSocketDebuggerUrl に Runtime.evaluate）で、index.html の `window.api.rallyCanAnalyze()`、手直し画面で `API.rallyAnalyzeStart('<録画のパス>')`（ファイル選択を飛ばす）。完了は `#anaText` が「できました（…）」になる。
-- 解析すると %APPDATA%SENSEKI SCANally<録画名>.json を上書きするので、手直し済みの録画では先に退避する。
+- 起動: `dist\win-unpacked\SENSEKI SCAN.exe --remote-debugging-port=9333`。CDP（`http://127.0.0.1:9333/json` の webSocketDebuggerUrl に Runtime.evaluate）で、index.html の `window.api.rallyCanAnalyze()`、手直し画面で `API.rallyAnalyzeStart('<録画のパス>')`（ファイル選択を飛ばす）。完了は `#anaText` が「できました（…）」になる。
+- 解析すると `%APPDATA%\SENSEKI SCAN\rally\<録画名>.json` を上書きするので、手直し済みの録画では先に退避する。
