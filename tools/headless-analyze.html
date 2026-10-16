@@ -23,6 +23,11 @@ window.addEventListener("error", e => progress("error", { msg: String(e.message)
   localStorage.setItem('sc_settings', JSON.stringify(settings));
   // 画面の言語: headless Chrome は navigator.language が英語になるので、指定が無ければ日本語に固定する（既存の回帰ログと比べられるように）
   localStorage.setItem('sc_lang', q.get('lang') === 'en' ? 'en' : 'ja');
+  // --userdata: 利用者辞書を localStorage（ブラウザ版の保存先 sc_<名前>）へ入れてから index.html を開く
+  if (q.get('ud')) for (const k of ['names-user', 'chars-user', 'myname-user', 'templates-user']) {
+    const r = await fetch('/__userdata/' + k);
+    if (r.ok) localStorage.setItem('sc_' + k, await r.text());
+  }
   const f = document.createElement('iframe');
   f.style.cssText = 'width:1400px;height:900px;border:0';
   f.src = '../app/renderer/index.html';

@@ -3,6 +3,7 @@
 //
 //   node tools/headless-analyze.js <video> [--rect x,y,w,h] [--out result.json] [--port 4763] [--timeout 900]
 //     --rect は実ピクセル（アプリの「ゲーム画面の位置」で出る X/Y/幅/高）。省略=全画面
+//     --userdata で利用者辞書のフォルダを読む（例: "%APPDATA%/SENSEKI SCAN"。自分の名前・名前辞書・キャラ辞書・追加辞書をアプリと同じに）
 //     --chrome で chrome.exe を指定（既定: Program Files の Google Chrome）
 //
 // 仕組み: このスクリプトがリポジトリ直下を配信する小さな HTTP サーバーを立て、/__video で動画を Range 対応で返し、
@@ -23,6 +24,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--timeout') opt.timeout = +args[++i];
   else if (a === '--chrome') opt.chrome = args[++i];
   else if (a === '--lang') opt.lang = args[++i]; // 画面の言語（ja|en・既定 ja）
+  else if (a === '--userdata') opt.userdata = args[++i]; // 利用者辞書のフォルダ（names-user.json 等）
   else if (a === '--debug') opt.debug = true; // Chrome のコンソール出力を表示
   else positional.push(a);
 }
@@ -54,6 +56,12 @@ let result = null, chromeProc = null, chrome$ = null;
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/__video') return serveFile(req, res, video, 'video/mp4');
+  const ud = /^\/__userdata\/([\w-]+)$/.exec(u.pathname);
+  if (ud) {
+    const f = opt.userdata && path.join(opt.userdata, ud[1] + '.json');
+    if (!f || !fs.existsSync(f)) { res.statusCode = 404; res.end('not found'); return; }
+    return serveFile(req, res, f, 'application/json');
+  }
   if (u.pathname === '/__progress' && req.method === 'POST') {
     let body = '';
     req.on('data', d => body += d);
@@ -89,7 +97,7 @@ function finish() {
 
 server.listen(opt.port, () => {
   const st = fs.statSync(video);
-  const q = new URLSearchParams({ name: path.basename(video), ...(opt.lang ? { lang: opt.lang } : {}), lm: String(Math.round(st.mtimeMs)) });
+  const q = new URLSearchParams({ name: path.basename(video), ...(opt.lang ? { lang: opt.lang } : {}), ...(opt.userdata ? { ud: '1' } : {}), lm: String(Math.round(st.mtimeMs)) });
   if (opt.rect) {
     // 実ピクセル → 割合。動画の実サイズは ffmpeg 無しでは取れないので、割合そのものも受け付ける（1以下ならそのまま）
     const [x, y, w, h] = opt.rect.split(',').map(Number);
