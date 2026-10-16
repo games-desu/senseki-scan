@@ -54,7 +54,7 @@ async function scan({ video, t0, t1, fps = 5, templates }) {
   };
   const info = await probe(video);
   const vid = { videoWidth: info.w, videoHeight: info.h, duration: info.duration, _img: null };
-  const TPL = templates || JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'app', 'assets', 'templates.json'), 'utf8'));
+  const TPL = templates || JSON.parse(fs.readFileSync(path.join(process.env.SENSEKI_APP_DIR || path.join(__dirname, '..', 'app'), 'assets', 'templates.json'), 'utf8'));
   const rb = (TPL.sets && TPL.sets.racketBanners) || TPL.racketBanners || [];
   const bandW = V.REGIONS.bannerBand.w;
   const inside = b => b.box.x0 > 8 && b.box.x1 < bandW - 8;

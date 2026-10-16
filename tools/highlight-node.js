@@ -47,7 +47,8 @@ function resample(src, sx, sy, sw, sh, dw, dh) {
 }
 
 function loadModules() {
-  const dir = path.join(__dirname, '..', 'app', 'renderer');
+  // パッケージ版のアプリから回すときは app の場所（resources/app.asar）が SENSEKI_APP_DIR で来る
+  const dir = path.join(process.env.SENSEKI_APP_DIR || path.join(__dirname, '..', 'app'), 'renderer');
   const sandbox = {
     console, Math, Date, isFinite, isNaN, parseInt, parseFloat, Number, String, Boolean, Promise, Set, Map,
     Uint8Array, Uint8ClampedArray, Int32Array, Float32Array, Float64Array, Array, Object, JSON, Error, Symbol,

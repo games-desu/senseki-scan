@@ -253,7 +253,7 @@ ipcMain.handle('hl-open-path', (ev, p) => { shell.openPath(String(p)); return { 
 
 
 // ---- ラリー解析: 保存ファイル（userData/rally/<id>.json・形式は renderer/rally-store.js）と手直し画面 ----
-// 解析は rally-runner.js を子プロセスで回して（中身は tools/rally-match.js）この保存先へ書く。tools は配布物に入らないので開発版だけ。
+// 解析は rally-runner.js を子プロセスで回して（中身は tools/rally-match.js）この保存先へ書く。パッケージ版の tools は resources/tools（extraResources）。
 const RS = require('./renderer/rally-store.js');
 const rallyDir = () => { const d = path.join(app.getPath('userData'), 'rally'); fs.mkdirSync(d, { recursive: true }); return d; };
 const rallyFile = id => (typeof id === 'string' && /^[^\/:*?"<>|]+$/.test(id) && !id.startsWith('.')) ? path.join(rallyDir(), id + '.json') : null;
@@ -329,7 +329,8 @@ ipcMain.handle('rally-open', (ev, id) => {
 // ---- ラリー解析の実行（録画 → 保存ファイル）----
 // 重いので rally-runner.js を ELECTRON_RUN_AS_NODE の子プロセスで回す。ffmpeg はハイライト生成と同じ同梱品（SENSEKI_FFMPEG で tools に渡す）。
 // 一度に1本だけ。進捗は 'rally-progress' で頼んだ画面へ送る。
-const RALLY_TOOLS = path.join(__dirname, '..', 'tools');
+// パッケージ版は extraResources で resources/tools に置く（asar の外。farball.js が自分自身を Worker で起動するため）
+const RALLY_TOOLS = app.isPackaged ? path.join(process.resourcesPath, 'tools') : path.join(__dirname, '..', 'tools');
 let rallyJob = null;   // { child, id, sender, stderr }
 ipcMain.handle('rally-can-analyze', () => fs.existsSync(path.join(RALLY_TOOLS, 'rally-match.js')) && !!HLF.ffmpegPath());
 // 録画を選ぶ。同じ名前の保存ファイルがあれば、手直し済みのポイント数も返す（上書きの確認用）
@@ -352,7 +353,7 @@ ipcMain.handle('rally-analyze-start', (ev, video) => {
   const workDir = path.join(app.getPath('userData'), 'rally-work', id);
   const { fork } = require('child_process');
   const child = fork(path.join(__dirname, 'rally-runner.js'), [], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', SENSEKI_TOOLS: RALLY_TOOLS, SENSEKI_FFMPEG: HLF.ffmpegPath() },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', SENSEKI_TOOLS: RALLY_TOOLS, SENSEKI_APP_DIR: __dirname, SENSEKI_FFMPEG: HLF.ffmpegPath() },
     silent: true,
   });
   const job = rallyJob = { child, id, sender: ev.sender, stderr: '', finished: false };

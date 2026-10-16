@@ -22,9 +22,32 @@
       "main.js",
       "hl-ffmpeg.js",
       "preload.js",
+      "rally-runner.js",
       "renderer/**",
       "assets/**",
       "installer.nsh"
+    ],
+    "extraResources": [
+      {
+        "from": "../tools",
+        "to": "tools",
+        "filter": [
+          "rally-match.js",
+          "rally-node.js",
+          "farball.js",
+          "shotcolor.js",
+          "slide.js",
+          "flash.js",
+          "highlight-node.js",
+          "fever-banners-node.js",
+          "court.js",
+          "ball.js",
+          "trail.js",
+          "star.js",
+          "rally-fuse.js",
+          "variants/merged2.js"
+        ]
+      }
     ],
     "win": {
       "target": "nsis",
