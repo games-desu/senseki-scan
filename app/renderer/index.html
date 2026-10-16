@@ -217,7 +217,7 @@
 </style>
 </head>
 <body>
-<h1><span class="rule"></span>SENSEKI SCAN <span id="ver" class="sub"></span><button id="langBtn" style="margin-left:auto; font-size:12px; padding:5px 12px" title="Language / 言語">English</button><button id="helpBtn" style="margin-left:8px; font-size:12px; padding:5px 12px">使い方</button><button id="bugBtn" style="margin-left:8px; font-size:12px; padding:5px 12px">バグ報告</button></h1>
+<h1><span class="rule"></span>SENSEKI SCAN <span id="ver" class="sub"></span><button id="langBtn" style="margin-left:auto; font-size:12px; padding:5px 12px" title="Language / 言語">English</button><button id="rallyBtn" style="margin-left:8px; font-size:12px; padding:5px 12px; display:none" title="ラリー解析の手直し（試作）">ラリー解析</button><button id="helpBtn" style="margin-left:8px; font-size:12px; padding:5px 12px">使い方</button><button id="bugBtn" style="margin-left:8px; font-size:12px; padding:5px 12px">バグ報告</button></h1>
 <p class="sub">マリオテニスフィーバーの対戦録画から戦績を読み取り、SENSEKI FEVER「CSV一括登録」に渡せるCSVを作ります。解析はすべてこのPC内で完結し、動画は送信されません。</p>
 <div class="panel main" id="scanPanel">
   <div class="secttl"><span class="secnum">1</span><b>戦績を抽出する</b><span class="sub">録画を入れるだけ。解析が終わったら内容を確認してCSVを保存します（全部門を自動識別・複数ファイルまとめてOK）</span></div>
@@ -606,6 +606,9 @@ const userDataReady = loadUserData().catch(() => {});
 // ---- 初回ガイド（初回起動時のみ自動表示・「使い方」でいつでも再表示） ----
 const showOnboard = () => { $('onboard').style.display = 'flex'; };
 $('helpBtn').addEventListener('click', showOnboard);
+// ラリー解析（試作）: 保存ファイルがあるときだけ入口を出す（解析はまだ開発用の道具で作る）
+if (window.api?.rallyList) window.api.rallyList().then(l => { if (l.length) $('rallyBtn').style.display = ''; }).catch(() => {});
+$('rallyBtn').addEventListener('click', () => window.api.rallyOpen());
 // ---- 言語切替（右上）。表示は言語に依存する部分を描き直す。既に出ているログはそのまま ----
 function updateLangBtn() { $('langBtn').textContent = I18N.lang === 'en' ? '日本語' : 'English'; }
 $('langBtn').addEventListener('click', () => {

@@ -1,6 +1,7 @@
 // SENSEKI SCAN — Electron メインプロセス
 // 役割: ウィンドウ生成 / 辞書(テンプレート)の読み込み・ユーザー辞書のマージ / CSV保存ダイアログ / 自動更新
 const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
+const { pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
@@ -26,7 +27,7 @@ const MAIN_EN = {
   '更新のダウンロードに失敗しました': 'Failed to download the update',
   'v{0} のダウンロードが完了しました': 'v{0} has been downloaded',
   '再起動して更新': 'Restart and update', 'アプリ終了時に適用': 'Apply when the app closes',
-  'CSVを保存': 'Save CSV', 'レポートを保存': 'Save report', 'テキスト': 'Text', 'ハイライトの保存先フォルダ': 'Folder for highlight videos',
+  'CSVを保存': 'Save CSV', 'ラリー解析の保存ファイル': 'Rally analysis file', '録画ファイル': 'Recording', 'ラリー解析': 'Rally analysis', 'レポートを保存': 'Save report', 'テキスト': 'Text', 'ハイライトの保存先フォルダ': 'Folder for highlight videos',
 };
 const tm = (key, ...args) => (lang() === 'en' && MAIN_EN[key] != null ? MAIN_EN[key] : key).replace(/\{(\d+)\}/g, (m, i) => args[i] === undefined ? m : String(args[i]));
 
@@ -159,7 +160,7 @@ ipcMain.handle('save-user-data', async (ev, key, data) => {
 });
 
 ipcMain.handle('save-csv', async (ev, defaultName, content) => {
-  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+  const { canceled, filePath } = await dialog.showSaveDialog(BrowserWindow.fromWebContents(ev.sender) || win, {
     title: tm('CSVを保存'),
     defaultPath: defaultName,
     filters: [{ name: 'CSV', extensions: ['csv'] }],
@@ -249,3 +250,77 @@ ipcMain.handle('hl-remove', (ev, files) => {
 ipcMain.handle('hl-exists', (ev, p) => fs.existsSync(String(p)));
 ipcMain.handle('hl-open-path', (ev, p) => { shell.openPath(String(p)); return { ok: true }; });
 
+
+// ---- ラリー解析: 保存ファイル（userData/rally/<id>.json・形式は renderer/rally-store.js）と手直し画面 ----
+// 解析そのものはまだ tools/rally-match.js（開発用）で回し、tools/rally-to-store.js でこの保存先へ書く。
+const RS = require('./renderer/rally-store.js');
+const rallyDir = () => { const d = path.join(app.getPath('userData'), 'rally'); fs.mkdirSync(d, { recursive: true }); return d; };
+const rallyFile = id => (typeof id === 'string' && /^[^\/:*?"<>|]+$/.test(id) && !id.startsWith('.')) ? path.join(rallyDir(), id + '.json') : null;
+const readStore = p => { try { const s = JSON.parse(fs.readFileSync(p, 'utf8')); return s && s.kind === 'senseki-rally' ? s : null; } catch { return null; } };
+const videoInfo = s => {
+  const p = s.video && s.video.path;
+  const ok = !!p && fs.existsSync(p);
+  return { videoOk: ok, videoUrl: ok ? pathToFileURL(p).href : null };
+};
+ipcMain.handle('rally-list', () => {
+  const d = rallyDir();
+  return fs.readdirSync(d).filter(f => f.endsWith('.json')).map(f => {
+    const s = readStore(path.join(d, f));
+    return s && { id: f.slice(0, -5), name: s.video.name, updatedAt: s.updatedAt, matches: s.matches.length, ...RS.counts(s) };
+  }).filter(Boolean).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+});
+ipcMain.handle('rally-load', (ev, id) => {
+  const p = rallyFile(id); const s = p && readStore(p);
+  return s ? { ok: true, store: s, ...videoInfo(s) } : { ok: false };
+});
+// 書きかけで落ちても壊れないよう、一時ファイルに書いてから置き換える
+ipcMain.handle('rally-save', (ev, id, store) => {
+  const p = rallyFile(id);
+  if (!p || !store || store.kind !== 'senseki-rally') return { ok: false, error: 'bad id' };
+  try {
+    fs.writeFileSync(p + '.tmp', JSON.stringify(store));
+    fs.renameSync(p + '.tmp', p);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+// 別の場所にある保存ファイル（tools で作ったもの・別PCから持ってきたもの）を取り込む
+ipcMain.handle('rally-import', async ev => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(BrowserWindow.fromWebContents(ev.sender) || win, {
+    title: tm('ラリー解析の保存ファイル'), properties: ['openFile', 'multiSelections'], filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (canceled) return { ok: false, ids: [] };
+  const ids = [];
+  for (const f of filePaths) {
+    const s = readStore(f); if (!s) continue;
+    const id = path.basename(f, '.json').replace(/[\/:*?"<>|]/g, '_');
+    fs.writeFileSync(path.join(rallyDir(), id + '.json'), JSON.stringify(s));
+    ids.push(id);
+  }
+  return { ok: true, ids };
+});
+// 録画の場所が変わったとき（別PC・移動）に選び直す
+ipcMain.handle('rally-pick-video', async (ev, id) => {
+  const p = rallyFile(id); const s = p && readStore(p);
+  if (!s) return { ok: false };
+  const { canceled, filePaths } = await dialog.showOpenDialog(BrowserWindow.fromWebContents(ev.sender) || win, {
+    title: tm('録画ファイル'), defaultPath: s.video.name, properties: ['openFile'], filters: [{ name: 'Video', extensions: ['mp4', 'mkv', 'mov', 'webm'] }],
+  });
+  if (canceled || !filePaths[0]) return { ok: false };
+  s.video.path = filePaths[0];
+  fs.writeFileSync(p, JSON.stringify(s));
+  return { ok: true, path: filePaths[0], ...videoInfo(s) };
+});
+let rallyWin = null;
+ipcMain.handle('rally-open', (ev, id) => {
+  const query = id ? { id: String(id) } : {};
+  if (rallyWin && !rallyWin.isDestroyed()) { rallyWin.loadFile(path.join(__dirname, 'renderer', 'rally-edit.html'), { query }); rallyWin.focus(); return { ok: true }; }
+  rallyWin = new BrowserWindow({
+    width: 1400, height: 980, title: 'SENSEKI SCAN — ' + tm('ラリー解析'),
+    icon: path.join(__dirname, 'assets', 'icon.png'),
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+  });
+  rallyWin.setMenuBarVisibility(false);
+  rallyWin.loadFile(path.join(__dirname, 'renderer', 'rally-edit.html'), { query });
+  rallyWin.on('closed', () => { rallyWin = null; });
+  return { ok: true };
+});

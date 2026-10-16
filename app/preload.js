@@ -23,5 +23,12 @@ contextBridge.exposeInMainWorld('api', {
   hlExists: (p) => ipcRenderer.invoke('hl-exists', p),
   hlOpenPath: (p) => ipcRenderer.invoke('hl-open-path', p),
   hlSavePng: (name, dataUrl) => ipcRenderer.invoke('hl-save-png', name, dataUrl),
+  // ラリー解析（保存ファイルと手直し画面）
+  rallyList: () => ipcRenderer.invoke('rally-list'),
+  rallyLoad: (id) => ipcRenderer.invoke('rally-load', id),
+  rallySave: (id, store) => ipcRenderer.invoke('rally-save', id, store),
+  rallyImport: () => ipcRenderer.invoke('rally-import'),
+  rallyPickVideo: (id) => ipcRenderer.invoke('rally-pick-video', id),
+  rallyOpen: (id) => ipcRenderer.invoke('rally-open', id),
   onHlProgress: (cb) => ipcRenderer.on('hl-progress', (ev, info) => cb(info)),
 });

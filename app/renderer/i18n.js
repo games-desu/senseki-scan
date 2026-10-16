@@ -51,7 +51,7 @@ window.I18N = (() => {
   const EN = {
     // ヘッダー・共通
     '）': ')', '（': '(',
-    '使い方': 'How to use', 'バグ報告': 'Report a bug', '閉じる': 'Close', 'キャンセル': 'Cancel', '適用': 'Apply', '反映': 'Apply',
+    '使い方': 'How to use', 'ラリー解析': 'Rally analysis', 'バグ報告': 'Report a bug', '閉じる': 'Close', 'キャンセル': 'Cancel', '適用': 'Apply', '反映': 'Apply',
     '要確認': 'needs review', '任意': 'optional', '秒': 's', '中止': 'Cancel', 'ログ': 'Log', 'クリア': 'Clear', '表示': 'Show',
     'マリオテニスフィーバーの対戦録画から戦績を読み取り、SENSEKI FEVER「CSV一括登録」に渡せるCSVを作ります。解析はすべてこのPC内で完結し、動画は送信されません。':
       'Reads match results from your Mario Tennis Fever recordings and builds a CSV for SENSEKI FEVER "Bulk CSV import". Everything runs on this PC; no video is uploaded.',

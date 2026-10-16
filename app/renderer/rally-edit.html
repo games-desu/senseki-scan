@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>SENSEKI SCAN — ラリー解析</title>
+<style>
+  :root { --bg:#0f1613; --panel:#17211c; --border:#2a3a32; --text:#e4ede8; --sub:#8fa89b; --accent:#2ecc71; --accent-dark:#1f9d4d; --warn:#e74c3c; --edited:#3ba7db; --track:#101a15; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:"Segoe UI","Yu Gothic UI",sans-serif; font-size:13px; padding:14px 16px 32px; }
+  .sub { color:var(--sub); font-size:12px; }
+  .num { font-variant-numeric:tabular-nums; }
+  h1 { font-size:18px; color:var(--accent); display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  h1 .sub { font-weight:normal; }
+  .rule { width:3px; height:17px; background:var(--accent); border-radius:2px; flex:none; }
+  h2 { font-size:14px; }
+  button { background:#223129; color:var(--text); border:1px solid var(--border); border-radius:7px; padding:7px 13px; font:inherit; font-size:13px; cursor:pointer; }
+  button:hover { border-color:#3d5446; }
+  button.primary { background:var(--accent-dark); border-color:var(--accent-dark); font-weight:bold; color:#fff; }
+  button.danger { background:transparent; border-color:#6b2a24; color:#ff8a7d; }
+  button[aria-pressed="true"] { background:#1f3328; border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.4; cursor:default; }
+  select, input[type=text] { background:#0c130f; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font:inherit; font-size:13px; }
+  kbd { font:10px Consolas,monospace; border:1px solid var(--border); border-bottom-width:2px; border-radius:3px; padding:0 4px; color:var(--sub); margin-left:4px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+  .row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; flex:none; }
+
+  header { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin-bottom:12px; }
+  #fileSel { min-width:260px; }
+  #status { margin-left:auto; }
+  #status.bad { color:#ff8a7d; }
+
+  #matchBar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:12px; }
+  #matchBar .tabs { display:flex; gap:6px; flex-wrap:wrap; }
+  #playedAt { width:170px; }
+
+  #layout { display:flex; gap:14px; align-items:flex-start; }
+  #side { width:220px; flex:none; display:flex; flex-direction:column; gap:4px; padding:8px; max-height:calc(100vh - 150px); overflow-y:auto; position:sticky; top:8px; }
+  #side .pt { display:flex; align-items:center; gap:8px; text-align:left; background:transparent; border:1px solid transparent; padding:7px 8px; }
+  #side .pt:hover { background:#1a2b22; }
+  #side .pt.cur { background:#1f3328; border-color:var(--accent-dark); }
+  #side .pt .no { width:28px; color:var(--sub); font-size:12px; }
+  #side .pt .body { flex:1; display:flex; flex-direction:column; gap:2px; min-width:0; }
+  #side .pt .score { font-weight:bold; }
+  .badge { font-size:11px; padding:1px 7px; border-radius:9px; border:1px solid var(--border); color:var(--sub); white-space:nowrap; }
+  .badge.done { color:var(--accent); border-color:var(--accent-dark); }
+  .badge.warn { color:#ff8a7d; border-color:#6b2a24; }
+  #main { flex:1; min-width:0; display:flex; flex-direction:column; gap:12px; }
+
+  #vwrap { position:relative; background:#000; border:1px solid var(--border); border-radius:10px; overflow:hidden; aspect-ratio:16/9; max-height:52vh; align-self:center; width:100%; }
+  #vwrap video { width:100%; height:100%; display:block; object-fit:contain; transform-origin:50% 18%; }
+  #vwrap.zoom video { transform:scale(2); }
+  #vwrap .hud { position:absolute; left:10px; top:8px; font:12px Consolas,monospace; background:rgba(0,0,0,.6); padding:2px 7px; border-radius:4px; }
+  #noVideo { position:absolute; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:12px; color:var(--sub); text-align:center; line-height:1.7; }
+  #vctl { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  #prog { flex:1; min-width:120px; height:6px; background:var(--border); border-radius:3px; position:relative; cursor:pointer; }
+  #prog > div { position:absolute; left:0; top:0; bottom:0; background:var(--accent-dark); border-radius:3px; }
+
+  .lanes { display:flex; flex-direction:column; gap:6px; }
+  .lane { display:flex; align-items:center; gap:10px; }
+  .lane .lbl { width:34px; font-size:12px; font-weight:bold; flex:none; }
+  .lane .trk { position:relative; flex:1; height:40px; background:var(--track); border-radius:6px; cursor:crosshair; user-select:none; }
+  .mk { position:absolute; top:50%; width:22px; height:22px; margin:-11px 0 0 -11px; border-radius:50%; background:transparent; border:0; padding:0; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .mk .dot { width:12px; height:12px; }
+  .mk.flag .dot { box-shadow:0 0 0 2px var(--warn); }
+  .mk.edit .dot { box-shadow:0 0 0 2px var(--edited); }
+  .mk.sel .dot { width:16px; height:16px; box-shadow:0 0 0 2px #fff; }
+  .mk.serve::after { content:"S"; position:absolute; top:-12px; font-size:9px; color:var(--sub); }
+  .ghost { position:absolute; bottom:3px; width:2px; height:9px; margin-left:-1px; opacity:.5; pointer-events:none; }
+  .ph { position:absolute; top:0; bottom:0; width:1px; background:#fff; pointer-events:none; }
+  .axis { display:flex; justify-content:space-between; margin-left:44px; font-size:11px; color:var(--sub); }
+  #legend { display:flex; flex-wrap:wrap; gap:6px 14px; font-size:11px; color:#c4d3cb; }
+  #legend span { display:inline-flex; align-items:center; gap:6px; }
+
+  #edit { border-color:var(--edited); display:flex; flex-direction:column; gap:10px; }
+  #edit .k { width:56px; font-size:12px; color:var(--sub); }
+  #edit .warnTxt { color:#ff8a7d; font-size:12px; }
+
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { color:var(--sub); font-weight:normal; text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
+  td { padding:5px 8px; border-bottom:1px solid #1d2a23; }
+  tbody tr { cursor:pointer; }
+  tbody tr:hover td { background:#1a2b22; }
+  tbody tr.sel td { background:#1f3328; }
+  #tblWrap { max-height:320px; overflow-y:auto; }
+  #help { color:var(--sub); font-size:11px; line-height:2; }
+  #empty { display:none; text-align:center; padding:60px 20px; color:var(--sub); line-height:1.9; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="rule"></span>SENSEKI SCAN <span class="sub">ラリー解析（試作）</span></h1>
+  <select id="fileSel" aria-label="保存ファイル"></select>
+  <button id="bImport">保存ファイルを取り込む…</button>
+  <span class="sub" id="status"></span>
+</header>
+
+<div id="empty">
+  ラリー解析の保存ファイルがまだありません。<br>
+  いまは解析を開発用の道具（tools/rally-match.js → tools/rally-to-store.js）で作り、ここで手直しします。<br>
+  別の場所にある保存ファイルは「保存ファイルを取り込む…」で読み込めます。
+</div>
+
+<div id="app" style="display:none">
+  <div id="matchBar">
+    <div class="tabs" id="matchTabs"></div>
+    <span class="sub" style="margin-left:8px">日時</span>
+    <input type="text" id="playedAt" class="num" title="SENSEKI FEVER の対戦と結び付ける日時（played_at）。録画のファイル名から推定">
+    <span class="sub num" id="doneCount" style="margin-left:auto"></span>
+    <label class="sub" style="display:inline-flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" id="onlyDone"> 確認済みだけ</label>
+    <button id="bCsv" class="primary">CSVを書き出す</button>
+  </div>
+
+  <div id="layout">
+    <aside class="panel" id="side" aria-label="ポイント一覧"></aside>
+    <main id="main">
+      <div id="vwrap">
+        <video id="v" preload="auto" muted></video>
+        <div class="hud" id="hud"></div>
+        <div id="noVideo"><div id="noVideoMsg"></div><button id="bPickVideo" class="primary">録画を選ぶ…</button></div>
+      </div>
+      <div id="vctl">
+        <button id="bPlay">再生<kbd>Space</kbd></button>
+        <button id="bPre">打の0.5秒前から<kbd>Q</kbd></button>
+        <select id="rate" aria-label="再生速度"><option value="0.25">0.25倍</option><option value="0.5" selected>0.5倍</option><option value="1">1倍</option></select>
+        <button data-step="-1">-1コマ<kbd>←</kbd></button>
+        <button data-step="1">+1コマ<kbd>→</kbd></button>
+        <div id="prog"><div id="progBar"></div></div>
+        <label class="sub" style="display:inline-flex; align-items:center; gap:5px; cursor:pointer"><input type="checkbox" id="zoom"> 奥を拡大<kbd>Z</kbd></label>
+        <button id="bReload" title="映像が黒いままのとき（手直しは消えません）">映像を読み直す<kbd>R</kbd></button>
+      </div>
+
+      <section class="panel" style="display:flex; flex-direction:column; gap:10px">
+        <div class="row" style="align-items:baseline; gap:6px 14px">
+          <h2 id="ptTitle"></h2>
+          <span class="sub" id="ptWin"></span>
+          <span class="sub num" id="ptInfo"></span>
+          <span class="sub" style="margin-left:auto">点を押すとその打を選びます・空いた所を押すとその時刻へ</span>
+        </div>
+        <div class="lanes">
+          <div class="lane"><span class="lbl" style="color:var(--accent)">自分</span><div class="trk" data-side="me"></div></div>
+          <div class="lane"><span class="lbl" style="color:#c9d3ce">相手</span><div class="trk" data-side="opp"></div></div>
+          <div class="axis num"><span id="axL"></span><span id="axR"></span></div>
+        </div>
+        <div id="legend"></div>
+      </section>
+
+      <section class="panel" id="edit"></section>
+
+      <section class="panel" style="display:flex; flex-direction:column; gap:8px">
+        <h2>打の一覧</h2>
+        <div id="tblWrap">
+          <table>
+            <thead><tr><th>#</th><th>時刻</th><th>打った側</th><th>球種</th><th>検出との差</th><th>確認</th></tr></thead>
+            <tbody id="tb"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="row">
+        <button id="bPrevPt">前のポイント</button>
+        <button id="bNextPt">次のポイント</button>
+        <button id="bReset">検出結果に戻す</button>
+        <span style="flex:1"></span>
+        <label class="sub" style="display:inline-flex; align-items:center; gap:5px; cursor:pointer" title="スライドフットワーク・とびつき・フィーバー返し（解析の調整用）"><input type="checkbox" id="gtCls"> 調整用の球種も出す</label>
+        <button id="bDone" class="primary">確認済みにして次へ<kbd>Enter</kbd></button>
+      </div>
+
+      <div id="help">
+        打の時刻は「ラケットが球に当たったコマ（トレイルが出る直前）」に合わせます。
+        <kbd>[</kbd><kbd>]</kbd> 前後の打、<kbd>N</kbd> 次の要確認の打（ポイントをまたぐ）、<kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 0.1秒送り、
+        <kbd>A</kbd> 今の時刻に打を足す（前の打の反対側・球種は不明）、<kbd>T</kbd> 選んだ打を今の時刻へ、<kbd>S</kbd> 打った側を入れ替え、
+        <kbd>V</kbd> サーブ、<kbd>1</kbd>〜<kbd>7</kbd> 球種、<kbd>Del</kbd> 削除、<kbd>Ctrl</kbd>+<kbd>Z</kbd> 取り消し。
+        変更はその場で保存されます。トラック下の細い線は元の検出です。
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="rally-store.js"></script>
+<script src="rally-edit.js"></script>
+</body>
+</html>
