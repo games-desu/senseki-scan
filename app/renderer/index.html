@@ -606,8 +606,8 @@ const userDataReady = loadUserData().catch(() => {});
 // ---- 初回ガイド（初回起動時のみ自動表示・「使い方」でいつでも再表示） ----
 const showOnboard = () => { $('onboard').style.display = 'flex'; };
 $('helpBtn').addEventListener('click', showOnboard);
-// ラリー解析（試作）: 保存ファイルがあるときだけ入口を出す（解析はまだ開発用の道具で作る）
-if (window.api?.rallyList) window.api.rallyList().then(l => { if (l.length) $('rallyBtn').style.display = ''; }).catch(() => {});
+// ラリー解析（試作）: 保存ファイルがあるか、解析を回せる（開発版）ときだけ入口を出す
+if (window.api?.rallyList) Promise.all([window.api.rallyList(), window.api.rallyCanAnalyze ? window.api.rallyCanAnalyze() : false]).then(([l, can]) => { if (l.length || can) $('rallyBtn').style.display = ''; }).catch(() => {});
 $('rallyBtn').addEventListener('click', () => window.api.rallyOpen());
 // ---- 言語切替（右上）。表示は言語に依存する部分を描き直す。既に出ているログはそのまま ----
 function updateLangBtn() { $('langBtn').textContent = I18N.lang === 'en' ? '日本語' : 'English'; }

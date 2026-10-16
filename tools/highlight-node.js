@@ -120,6 +120,7 @@ async function run(opts) {
     video._img = fr.img;
     const s = S.Highlight.readFrame(video);
     samples.push({ t: fr.t, ...s });
+    if (opts.onProgress && fr.i % 20 === 0) opts.onProgress(fr.t - t0, t1 - t0);   // アプリの進捗表示（app/rally-runner.js）
     if (fr.i % 200 === 0) process.stderr.write(`  ${fr.t.toFixed(0)}s / ${t1.toFixed(0)}s\n`);
   }
   const points = S.Highlight.buildPoints(samples);

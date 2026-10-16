@@ -30,5 +30,10 @@ contextBridge.exposeInMainWorld('api', {
   rallyImport: () => ipcRenderer.invoke('rally-import'),
   rallyPickVideo: (id) => ipcRenderer.invoke('rally-pick-video', id),
   rallyOpen: (id) => ipcRenderer.invoke('rally-open', id),
+  rallyCanAnalyze: () => ipcRenderer.invoke('rally-can-analyze'),
+  rallyAnalyzePick: () => ipcRenderer.invoke('rally-analyze-pick'),
+  rallyAnalyzeStart: (video) => ipcRenderer.invoke('rally-analyze-start', video),
+  rallyAnalyzeCancel: () => ipcRenderer.invoke('rally-analyze-cancel'),
+  onRallyProgress: (cb) => ipcRenderer.on('rally-progress', (ev, info) => cb(info)),
   onHlProgress: (cb) => ipcRenderer.on('hl-progress', (ev, info) => cb(info)),
 });

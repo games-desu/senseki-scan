@@ -13,12 +13,12 @@ const { analyze } = require('./rally-node.js');
 const HL = require('./highlight-node.js');
 const FB = require('./fever-banners-node.js');
 
-async function loadPoints(video, pointsFile) {
+async function loadPoints(video, pointsFile, onProgress) {
   if (pointsFile && fs.existsSync(pointsFile)) {
     const r = JSON.parse(fs.readFileSync(pointsFile, 'utf8'));
     return { info: r.info, points: r.points };
   }
-  const r = await HL.run({ video, fps: 2 });
+  const r = await HL.run({ video, fps: 2, onProgress });
   if (pointsFile) fs.writeFileSync(pointsFile, JSON.stringify(r, null, 1));
   return { info: r.info, points: r.points };
 }
@@ -28,7 +28,7 @@ async function run(opts) {
   const name = path.basename(video).replace(/\.[^.]+$/, '').replace(/[^0-9A-Za-z_-]+/g, '_');
   const outDir = opts.out || path.join(__dirname, '..', 'samples', 'rally', name);
   fs.mkdirSync(outDir, { recursive: true });
-  const { info, points } = await loadPoints(video, opts.points || path.join(outDir, 'phaseA.json'));
+  const { info, points } = await loadPoints(video, opts.points || path.join(outDir, 'phaseA.json'), opts.onPhaseA);
   const fps = info && info.fps ? info.fps : 60;
   const only = opts.only ? new Set(opts.only) : null;
   // フィーバーショット: ラケット名バナー（tools/fever-banners-node.js）の時刻 ±(0.5/0.6) 秒にある打点を 'fever' にする。
@@ -75,6 +75,7 @@ async function run(opts) {
                   t0, t1, dur: +(t1 - t0).toFixed(2), ms: Date.now() - started,
                   nSeg: r.segments.length, nEv: evs.length, events: evs, file: path.basename(file) };
     summary.push(row);
+    if (opts.onPoint) opts.onPoint({ idx: i, done: summary.length, total: only ? only.size : points.length, row });   // アプリの進捗表示（app/rally-runner.js）
     const line = evs.map(e => `${e.t.toFixed(2)}${e.kind === 'hit' ? 'H' : e.kind === 'bounce' ? 'B' : '?'}${e.side === 'me' ? 'm' : 'o'}${e.suspect ? '!' : ''}`).join(' ');
     console.log(`p${i} ${row.score.padEnd(12)} ${t0}-${t1} (${row.dur}s ${(row.ms / 1000).toFixed(1)}s) seg=${row.nSeg} ev=${row.nEv}`);
     for (const h of rally) console.log(`    ${h.t.toFixed(2)} ${h.side.padEnd(3)} ${h.cls.padEnd(7)} ${h.src}${h.racket ? ' [' + h.racket + ']' : ''}${h.serve ? ' SERVE' : ''}${h.suspect ? ' !' + h.suspect : ''}  land ${h.land ? `${h.land.t.toFixed(2)} X${h.land.X} Z${h.land.Z}${h.land.inCourt ? '' : ' OUT'}${h.land.bridged ? ' ~' : ''}` : '-'}`);

@@ -84,20 +84,42 @@
   tbody tr.sel td { background:#1f3328; }
   #tblWrap { max-height:320px; overflow-y:auto; }
   #help { color:var(--sub); font-size:11px; line-height:2; }
+  nav.views { display:flex; gap:4px; background:#0c130f; border:1px solid var(--border); border-radius:8px; padding:3px; }
+  nav.views a { color:var(--sub); text-decoration:none; padding:5px 12px; border-radius:6px; font-size:13px; }
+  nav.views a:hover { color:var(--text); }
+  nav.views a[aria-current=page] { background:#1f3328; color:#fff; }
+  #anaPanel { display:none; margin-bottom:12px; border-color:var(--accent-dark); }
+  #anaPanel .bar { flex:1; min-width:200px; height:8px; background:var(--track); border-radius:4px; overflow:hidden; }
+  #anaPanel .bar > div { height:100%; width:0; background:var(--accent); transition:width .3s; }
+  #anaPanel.bad { border-color:#6b2a24; }
+  #anaPanel.bad #anaText { color:#ff8a7d; }
   #empty { display:none; text-align:center; padding:60px 20px; color:var(--sub); line-height:1.9; }
 </style>
 </head>
 <body>
 <header>
   <h1><span class="rule"></span>SENSEKI SCAN <span class="sub">ラリー解析（試作）</span></h1>
+  <nav class="views" id="views" aria-label="表示の切り替え"><a id="toReport" href="#">試合レポート</a><a aria-current="page">ポイント別タイムライン</a></nav>
   <select id="fileSel" aria-label="保存ファイル"></select>
+  <button id="bAnalyze" class="primary" style="display:none">録画を解析…</button>
   <button id="bImport">保存ファイルを取り込む…</button>
   <span class="sub" id="status"></span>
 </header>
 
+<div id="anaPanel" class="panel">
+  <div class="row">
+    <b id="anaName"></b>
+    <div class="bar"><div id="anaBar"></div></div>
+    <span class="sub num" id="anaPct"></span>
+    <button id="bAnaCancel">中止</button>
+    <button id="bAnaClose" style="display:none">閉じる</button>
+  </div>
+  <div class="sub" id="anaText" style="margin-top:6px"></div>
+</div>
+
 <div id="empty">
   ラリー解析の保存ファイルがまだありません。<br>
-  いまは解析を開発用の道具（tools/rally-match.js → tools/rally-to-store.js）で作り、ここで手直しします。<br>
+  <span id="emptyAna" style="display:none">「録画を解析…」で対戦の録画を選ぶと、打点と球種を読み取って保存ファイルを作ります（録画の長さによって数分〜十数分かかります）。<br></span>
   別の場所にある保存ファイルは「保存ファイルを取り込む…」で読み込めます。
 </div>
 

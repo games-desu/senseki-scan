@@ -34,7 +34,8 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 function setStatus(msg, bad) { $('status').textContent = msg; $('status').className = 'sub' + (bad ? ' bad' : ''); }
 
 // ---- 保存ファイルの一覧と読み込み ----
-async function refreshList(selectId) {
+// m / p: 開く試合（matches の添字）とポイント（idx）。レポートの棒から来たとき
+async function refreshList(selectId, m, p) {
   const list = await API.rallyList();
   $('empty').style.display = list.length ? 'none' : 'block';
   $('app').style.display = list.length ? '' : 'none';
@@ -43,9 +44,9 @@ async function refreshList(selectId) {
   if (!list.length) return;
   const id = list.some(f => f.id === selectId) ? selectId : list[0].id;
   $('fileSel').value = id;
-  await openFile(id);
+  await openFile(id, id === selectId ? m : null, id === selectId ? p : null);
 }
-async function openFile(id) {
+async function openFile(id, m, p) {
   await flushSave();
   const r = await API.rallyLoad(id);
   if (!r.ok) { setStatus('保存ファイルを読めませんでした', true); return; }
@@ -55,6 +56,7 @@ async function openFile(id) {
   let first = null;
   S.matches.forEach((m, i) => m.points.forEach(p => { if (!first && !p.done) first = [i, p.idx]; }));
   first = first || [0, S.matches[0].points[0].idx];
+  if (m != null && S.matches[m]) first = [m, p != null && S.matches[m].points.some(x => x.idx === p) ? p : null];
   openMatch(first[0], first[1]);
 }
 function setVideo(url) {
@@ -92,6 +94,7 @@ window.addEventListener('beforeunload', () => { if (saveTimer) API.rallySave(fil
 // ---- 試合とポイント ----
 function openMatch(i, idx) {
   mi = i;
+  updateReportLink();
   $('matchTabs').innerHTML = S.matches.map((m, k) =>
     `<button data-m="${k}" aria-pressed="${k === mi}">第${m.no}試合</button>`).join('');
   $('playedAt').value = M().playedAt || '';
@@ -354,4 +357,55 @@ document.addEventListener('keydown', e => {
 // ボタンを押したあとに Space/Enter がそのボタンを押し直さないよう、フォーカスを外す
 document.addEventListener('click', e => { if (e.target.closest('button')) e.target.closest('button').blur(); });
 
-refreshList(new URLSearchParams(location.search).get('id'));
+// ---- 試合レポートへ（同じ保存ファイル・同じ試合）----
+function updateReportLink() {
+  const q = new URLSearchParams(location.search);
+  const o = new URLSearchParams();
+  if (fileId) o.set('id', fileId);
+  o.set('m', mi);
+  if (!window.api && q.get('store')) { o.set('store', q.get('store')); if (q.get('video')) o.set('video', q.get('video')); }
+  $('toReport').href = 'rally-report.html?' + o;
+}
+$('toReport').onclick = async e => { e.preventDefault(); await flushSave(); location.href = $('toReport').href; };
+
+// ---- 録画を解析（子プロセスで回り、終わったらその保存ファイルを開く）----
+let anaId = null;
+function anaShow(name, ratio, text, state) {
+  $('anaPanel').style.display = 'block';
+  $('anaPanel').classList.toggle('bad', state === 'bad');
+  $('anaName').textContent = name;
+  $('anaBar').style.width = Math.round(Math.max(0, Math.min(1, ratio)) * 100) + '%';
+  $('anaPct').textContent = Math.round(ratio * 100) + '%';
+  $('anaText').textContent = text;
+  $('bAnaCancel').style.display = state ? 'none' : '';
+  $('bAnaClose').style.display = state ? '' : 'none';
+  $('bAnalyze').disabled = !state;
+}
+$('bAnalyze').onclick = async () => {
+  const r = await API.rallyAnalyzePick();
+  if (!r.ok) return;
+  if (r.exists && r.done > 0 && !confirm(`[警告] 「${r.id}」の保存ファイルは ${r.done} ポイントを手直し済みです。解析し直すと手直しは消えます。続けますか？`)) return;
+  await flushSave();
+  const s = await API.rallyAnalyzeStart(r.video);
+  if (!s.ok) { setStatus(s.error || '解析を始められませんでした', true); return; }
+  anaId = s.id;
+  anaShow(s.id, 0, '準備しています');
+};
+$('bAnaCancel').onclick = () => API.rallyAnalyzeCancel();
+$('bAnaClose').onclick = () => { $('anaPanel').style.display = 'none'; };
+if (API.onRallyProgress) API.onRallyProgress(m => {
+  if (m.id !== anaId) return;
+  if (m.type === 'progress') anaShow(m.id, m.ratio, m.text);
+  else if (m.type === 'done') {
+    anaShow(m.id, 1, `できました（${m.counts.pts} ポイント・${m.counts.shots} 打・要確認 ${m.counts.flagged} 打）`, 'ok');
+    refreshList(m.id);
+  } else if (m.type === 'canceled') anaShow(m.id, 0, '中止しました', 'bad');
+  else if (m.type === 'error') { anaShow(m.id, 0, '[警告] 解析できませんでした: ' + m.error, 'bad'); if (m.detail) console.error(m.detail); }
+});
+if (API.rallyCanAnalyze) API.rallyCanAnalyze().then(ok => { if (ok) { $('bAnalyze').style.display = ''; $('emptyAna').style.display = ''; } });
+
+{
+  const q = new URLSearchParams(location.search);
+  const num = k => q.get(k) != null && q.get(k) !== '' ? +q.get(k) : null;
+  refreshList(q.get('id'), num('m'), num('p'));
+}

@@ -1488,3 +1488,14 @@ x セットの失敗は v38 の 94 件から減った。x0908＋x0908b が 27 �
 - 試したこと 2: 前後の打点の間隔。n0911 の自分のロブは「前が相手 0.3〜0.8 秒・次が相手 0.8〜1.45 秒」に 7 打中 6 打が入り、閃光の unknown では当たりだけ。
   - ただし GT の全打点で同じ条件を数えると 98 打中ロブは 46（n0908 はドロップ 9/10・n0908b はスライス 10/20）。対戦相手と試合の運びで決まる間隔で、ロブの手がかりにならない。
 - 結論: unknown のまま残す（取り違え 0 を保つ）。読むなら打点直後の球そのもの（高さの伸び方）を追う必要があり、閃光の光だけでは足りない。
+
+### アプリから解析を回す・試合レポート（2026-10-16）
+
+- 手直し画面（ポイント別タイムライン）の「録画を解析…」→ 録画を選ぶ → 進捗バー → 保存ファイル（%APPDATA%\SENSEKI SCAN\rally\<録画名>.json）ができたらそのまま開く。手で tools/rally-match.js → rally-to-store.js を回す必要はなくなった。
+  - 実体は `app/rally-runner.js`。main.js が `fork` ＋ `ELECTRON_RUN_AS_NODE=1` で子プロセスとして起動する（main の中で回すとウィンドウが固まる）。中身は tools/rally-match.js の `run`（fever auto）→ `RallyStore.fromAnalysis`。
+  - ffmpeg はハイライト生成と同じ同梱の ffmpeg-static（`SENSEKI_FFMPEG` で tools へ渡す）。作業フォルダは %APPDATA%\SENSEKI SCAN\rally-work\<録画名>\（phaseA.json・p<i>.json）。
+  - 進捗: Phase A（得点表示の読み取り）0〜15%・ポイントごと 15〜97%。tools 側には `onProgress`（highlight-node）・`onPoint`（rally-match）を足しただけで、コマンドラインの動きは変えていない。
+  - 手直し済みのポイントがある保存ファイルを解析し直すときは [警告] で確認する。一度に1本だけ。
+  - **tools/ は配布物（electron-builder の files）に入らないので、解析ボタンは開発版だけに出る**（`rally-can-analyze`）。配布版で回すには tools の必要分を extraResources に入れる作業が要る。
+- 試合レポート（`app/renderer/rally-report.html`）: 結果（取ったポイント数・勝ち負け）・総打数／平均／最長／要確認・ショット配分・ポイントの終わり方（決め球／ミス）・ラリーの長さ（棒からそのポイントの手直しへ）・着弾マップ（参考表示）。保存ファイルを開くたびに集計し直すので、手直しはすぐ反映される。
+  - 手直し画面とは `?id=<録画名>&m=<試合の添字>&p=<ポイントidx>` で行き来する。

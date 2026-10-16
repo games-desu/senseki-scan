@@ -28,6 +28,7 @@ const MAIN_EN = {
   'v{0} のダウンロードが完了しました': 'v{0} has been downloaded',
   '再起動して更新': 'Restart and update', 'アプリ終了時に適用': 'Apply when the app closes',
   'CSVを保存': 'Save CSV', 'ラリー解析の保存ファイル': 'Rally analysis file', '録画ファイル': 'Recording', 'ラリー解析': 'Rally analysis', 'レポートを保存': 'Save report', 'テキスト': 'Text', 'ハイライトの保存先フォルダ': 'Folder for highlight videos',
+  'ほかの録画を解析中です': 'Another recording is being analyzed', '録画ファイルが見つかりません': 'Recording not found', '解析が途中で止まりました': 'The analysis stopped unexpectedly',
 };
 const tm = (key, ...args) => (lang() === 'en' && MAIN_EN[key] != null ? MAIN_EN[key] : key).replace(/\{(\d+)\}/g, (m, i) => args[i] === undefined ? m : String(args[i]));
 
@@ -252,7 +253,7 @@ ipcMain.handle('hl-open-path', (ev, p) => { shell.openPath(String(p)); return { 
 
 
 // ---- ラリー解析: 保存ファイル（userData/rally/<id>.json・形式は renderer/rally-store.js）と手直し画面 ----
-// 解析そのものはまだ tools/rally-match.js（開発用）で回し、tools/rally-to-store.js でこの保存先へ書く。
+// 解析は rally-runner.js を子プロセスで回して（中身は tools/rally-match.js）この保存先へ書く。tools は配布物に入らないので開発版だけ。
 const RS = require('./renderer/rally-store.js');
 const rallyDir = () => { const d = path.join(app.getPath('userData'), 'rally'); fs.mkdirSync(d, { recursive: true }); return d; };
 const rallyFile = id => (typeof id === 'string' && /^[^\/:*?"<>|]+$/.test(id) && !id.startsWith('.')) ? path.join(rallyDir(), id + '.json') : null;
@@ -324,3 +325,55 @@ ipcMain.handle('rally-open', (ev, id) => {
   rallyWin.on('closed', () => { rallyWin = null; });
   return { ok: true };
 });
+
+// ---- ラリー解析の実行（録画 → 保存ファイル）----
+// 重いので rally-runner.js を ELECTRON_RUN_AS_NODE の子プロセスで回す。ffmpeg はハイライト生成と同じ同梱品（SENSEKI_FFMPEG で tools に渡す）。
+// 一度に1本だけ。進捗は 'rally-progress' で頼んだ画面へ送る。
+const RALLY_TOOLS = path.join(__dirname, '..', 'tools');
+let rallyJob = null;   // { child, id, sender, stderr }
+ipcMain.handle('rally-can-analyze', () => fs.existsSync(path.join(RALLY_TOOLS, 'rally-match.js')) && !!HLF.ffmpegPath());
+// 録画を選ぶ。同じ名前の保存ファイルがあれば、手直し済みのポイント数も返す（上書きの確認用）
+ipcMain.handle('rally-analyze-pick', async ev => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(BrowserWindow.fromWebContents(ev.sender) || win, {
+    title: tm('録画ファイル'), defaultPath: app.getPath('videos'), properties: ['openFile'], filters: [{ name: 'Video', extensions: ['mp4', 'mkv', 'mov', 'webm'] }],
+  });
+  if (canceled || !filePaths[0]) return { ok: false };
+  const video = filePaths[0];
+  const id = path.basename(video, path.extname(video)).replace(/[\/:*?"<>|]/g, '_');
+  const s = readStore(rallyFile(id));
+  return { ok: true, video, id, exists: !!s, done: s ? RS.counts(s).done : 0 };
+});
+ipcMain.handle('rally-analyze-start', (ev, video) => {
+  if (rallyJob) return { ok: false, error: tm('ほかの録画を解析中です') };
+  if (!video || !fs.existsSync(video)) return { ok: false, error: tm('録画ファイルが見つかりません') };
+  const id = path.basename(video, path.extname(video)).replace(/[\/:*?"<>|]/g, '_');
+  const out = rallyFile(id);
+  if (!out) return { ok: false, error: 'bad id' };
+  const workDir = path.join(app.getPath('userData'), 'rally-work', id);
+  const { fork } = require('child_process');
+  const child = fork(path.join(__dirname, 'rally-runner.js'), [], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', SENSEKI_TOOLS: RALLY_TOOLS, SENSEKI_FFMPEG: HLF.ffmpegPath() },
+    silent: true,
+  });
+  const job = rallyJob = { child, id, sender: ev.sender, stderr: '', finished: false };
+  const send = m => { if (!job.sender.isDestroyed()) job.sender.send('rally-progress', { id, ...m }); };
+  child.stdout.on('data', () => {});   // 読み捨て（詰まらないように）
+  child.stderr.on('data', d => { job.stderr = (job.stderr + d).slice(-4000); });
+  child.on('message', m => {
+    if (m.type === 'done' || m.type === 'error') job.finished = true;
+    send(m);
+  });
+  child.on('exit', code => {
+    if (rallyJob === job) rallyJob = null;
+    if (!job.finished) send(job.canceled ? { type: 'canceled' } : { type: 'error', error: tm('解析が途中で止まりました'), detail: job.stderr });
+  });
+  child.send({ video, workDir, out });
+  return { ok: true, id };
+});
+ipcMain.handle('rally-analyze-cancel', () => {
+  if (!rallyJob) return { ok: false };
+  rallyJob.canceled = true;
+  rallyJob.child.kill();
+  return { ok: true };
+});
+app.on('will-quit', () => { if (rallyJob) rallyJob.child.kill(); });
