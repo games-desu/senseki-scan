@@ -28,7 +28,6 @@ let saveTimer = null;
 const fps = () => S.video.fps || 60;
 const snap = t => Math.round(t * fps()) / fps();
 const M = () => S.matches[mi];
-const showGt = () => $('gtCls').checked;
 const fmtT = t => { const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + (s < 10 ? '0' : '') + s.toFixed(2); };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function setStatus(msg, bad) { $('status').textContent = msg; $('status').className = 'sub' + (bad ? ' bad' : ''); }
@@ -158,7 +157,7 @@ function drawTracks(fl) {
     h += '<span class="ph"></span>';
     trk.innerHTML = h;
   }
-  const types = RS.CLS.slice(0, showGt() ? RS.CLS.length : RS.MAIN_CLS);
+  const types = RS.CLS;
   $('legend').innerHTML = types.map(c => `<span><span class="dot" style="background:${c[2]}"></span>${c[1]}</span>`).join('') +
     '<span><span class="dot" style="box-shadow:0 0 0 2px var(--warn)"></span>要確認</span>' +
     '<span><span class="dot" style="box-shadow:0 0 0 2px var(--edited)"></span>直した打</span>';
@@ -170,7 +169,7 @@ function renderEdit(fl) {
     $('edit').innerHTML = `<h2>打がありません</h2><div class="row"><button id="eAdd">今の時刻に打を足す<kbd>A</kbd></button></div>`;
     $('eAdd').onclick = addShot; return;
   }
-  const types = RS.CLS.slice(0, showGt() ? RS.CLS.length : RS.MAIN_CLS);
+  const types = RS.CLS;
   $('edit').innerHTML =
     `<div class="row" style="align-items:baseline; gap:6px 14px"><h2>選んだ打　${sel + 1}打目</h2>` +
     `<span class="sub num">${fmtT(s.t)}（ポイント開始から ${(s.t - P.t0).toFixed(2)}秒）</span>` +
@@ -218,7 +217,6 @@ for (const trk of document.querySelectorAll('.trk')) {
     v.pause(); seek(P.t0 + (e.clientX - r.left) / r.width * (P.t1 - P.t0));
   });
 }
-$('gtCls').onchange = () => render();
 
 // ---- 映像 ----
 function seek(t) { if (!P || !v.src) return; v.currentTime = Math.max(P.t0, Math.min(P.t1, t)); movePh(); }
@@ -351,7 +349,7 @@ document.addEventListener('keydown', e => {
   else if (k === 'Enter') { e.preventDefault(); $('bDone').click(); }
   else if (/^[0-9]$/.test(k)) {
     const c = RS.CLS[(+k + 9) % 10];
-    if (c && ((+k + 9) % 10 < RS.MAIN_CLS || showGt())) edit(s => { s.cls = c[0]; });
+    if (c) edit(s => { s.cls = c[0]; });
   }
 });
 // ボタンを押したあとに Space/Enter がそのボタンを押し直さないよう、フォーカスを外す

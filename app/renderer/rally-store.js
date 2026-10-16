@@ -14,13 +14,14 @@
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.RallyStore = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
-  // 球種。先頭7つが通常の表示、残り3つは調整用GTのときだけ出す（トレイルに色が付かない打球）
+  // 球種。並びは手直し画面のボタンと数字キー（1〜9・0）の順。4つ目の true = レポートで0件でも出す球種
+  // slide・dive・feverback はトレイルに色が付かない打球（判別は調整用GTのため）
   const CLS = [
-    ['topspin', 'トップスピン', '#ef5b6e'], ['slice', 'スライス', '#4ea3f5'], ['flat', 'フラット', '#b088f5'],
-    ['lob', 'ロブ', '#f2c230'], ['drop', 'ドロップ', '#e8ecea'], ['fever', 'フィーバー', '#ff8f40'], ['unknown', '不明', '#56665e'],
-    ['slide', 'スライドフットワーク', '#7fc8b4'], ['dive', 'とびつき', '#c9a27a'], ['feverback', 'フィーバー返し', '#f0a0d0'],
+    ['topspin', 'トップスピン', '#ef5b6e', true], ['slice', 'スライス', '#4ea3f5', true], ['flat', 'フラット', '#b088f5', true],
+    ['lob', 'ロブ', '#f2c230', true], ['drop', 'ドロップ', '#e8ecea', true],
+    ['fever', 'フィーバー', '#ff8f40', true], ['feverback', 'フィーバー返し', '#f0a0d0'],
+    ['slide', 'スライドフットワーク', '#7fc8b4'], ['dive', 'とびつき', '#c9a27a'], ['unknown', '不明', '#56665e', true],
   ];
-  const MAIN_CLS = 7;
 
   const r3 = x => Math.round(x * 1000) / 1000;
   const r1 = x => Math.round(x * 10) / 10;
@@ -146,5 +147,5 @@
     return { pts, done, shots, flagged };
   }
 
-  return { CLS, MAIN_CLS, fromAnalysis, shotFromAnalysis, startFromName, fmtDT, flags, nearestDet, CSV_HEADERS, toCsv, toGt, counts };
+  return { CLS, fromAnalysis, shotFromAnalysis, startFromName, fmtDT, flags, nearestDet, CSV_HEADERS, toCsv, toGt, counts };
 });

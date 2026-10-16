@@ -137,7 +137,7 @@ function render() {
   </div>`).join('');
 
   // ショット配分（調整用の球種は出てきたときだけ行にする）
-  const used = ORDER.filter((k, i) => i < RS.MAIN_CLS || st.cls.me[k] || st.cls.opp[k]);
+  const used = ORDER.filter((k, i) => RS.CLS[i][3] || st.cls.me[k] || st.cls.opp[k]);
   $('mix').innerHTML = [['me', '自分'], ['opp', '相手']].map(([s, label]) => `<div class="mixrow">
     <div class="hd"><b>${label}</b><span class="sub num">${st.tot[s]}打</span></div>
     <div class="stack">${used.filter(k => st.cls[s][k]).map(k =>
