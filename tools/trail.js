@@ -744,7 +744,9 @@ window.Trail = (() => {
     for (let i = 1; i < fr.length; i++) { const d = fr[i].b.cy - fr[i - 1].b.cy; if (d < 0) upSum -= d; else downSum += d; }
     if (Math.abs(dy) < 20 && Math.max(upSum, downSum) >= 20 && Math.max(upSum, downSum) >= 3 * Math.min(upSum, downSum)) dir = downSum > upSum ? 'down' : 'up';
     const side = dir ? (dir === 'up' ? 'me' : 'opp') : (zEarly > 0 ? 'opp' : 'me');
-    return { t0, t1, n: fr.length, cls, clsAlt, votes, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1), spd: +spd.toFixed(1), spdEarly: +spdEarly.toFixed(1), dur: +(t1 - t0).toFixed(2), sMax: +sMax.toFixed(2), reanchored: r.reanchored || 0,
+    // 2026-10-21（exp-cls から採用）: 核の色相が紫（270〜345）のコマ数。橙/赤の尾に引っぱられて topspin と出た紫のフラットを、fuse・shotcolor の後で flat に戻す（slide.js applyPurple）
+    const coreP = fr.filter(f => f.b.Hcore != null && f.b.Hcore >= 270 && f.b.Hcore < 345).length;
+    return { t0, t1, n: fr.length, cls, clsAlt, votes, coreP, coreN: fr.length, side, dir, dy: +dy.toFixed(1), disp: +disp.toFixed(1), spd: +spd.toFixed(1), spdEarly: +spdEarly.toFixed(1), dur: +(t1 - t0).toFixed(2), sMax: +sMax.toFixed(2), reanchored: r.reanchored || 0,
              provFrac: +provFrac.toFixed(2), straight: +yStraight.toFixed(2), cZpre,
              tail: { x: first.tail.x, y: first.tail.y, X: first.tailX, Z: first.tailZ },
              Htip: median(use.map(f => f.b.Htip).filter(v => v != null)),
@@ -878,6 +880,10 @@ window.Trail = (() => {
     // 色の混ざりを直した種別（summarize の clsAlt: flatTail・clayBlue）は併合の後で付ける: 併合の族（topspin と同族で繋ぐ）は v38 のまま。先に flat にすると、赤い尾の run が
     //   吸っていた小さい junk の run（砂 0911 p1 49.50: 画面上端のパックンの頭）が取り残されて偽の打点になった（exp-r4-color/LOG [4]）
     for (const s of out) if (s.clsAlt && s.clsAlt !== s.cls) { s.clsRaw = s.cls; s.cls = s.clsAlt; }
+    // 2026-10-21（exp-cls から採用）: topspin のままの run で、核が紫のコマが 2 コマ以上かつ run の 25% 以上なら印（purpleFlat＝紫のコマ数）だけ付ける。
+    //   ここで cls を flat にすると fuse の並べ替え（同側の重なり・時刻の寄せ）が変わって打点が動いた（a151815 p6 126.32m・126.44o の偽打点・p0 15.67→15.27）ので、
+    //   種別の書き換えは fuse・shotcolor の後（slide.js の applyPurple）で打点に対して行う
+    for (const s of out) if (s.cls === 'topspin' && s.coreP >= 2 && s.coreP / s.coreN >= 0.25) s.purpleFlat = s.coreP;
     return out;
   }
 

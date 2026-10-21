@@ -7,11 +7,31 @@
 //   - farFix が far-lobappear の trail 打点（x0908 429.45・0908b 225.87・288.37）: GT で確かめたのは 429.45 だけ。
 // 拾えていないスライド（trail の lob・far-flat の lob・far-turn の unknown）は体勢（低く横に伸びる／体が水平）で見分けるしかなく、選手の切り出しが要るので保留。
 // clsSlide に元の種別を残す。
+// 2026-10-21: 種別の後段 2 つ（applyPurple・applyJunkOpp・exp-cls から採用）もここで先に掛ける。
+//   見送り: shotcolor の色相の帯（clsBy 'pathcolor'）の lob → slide。手直し GT では 7 正 0 誤だったが、ホールドアウトで本物のロブ 2 本（y0911 126.84m・y151815 278.84m）を slide にした。
 function apply(rally) {
-  let n = 0;
+  let n = applyPurple(rally) + applyJunkOpp(rally);
   for (const h of rally || []) {
     if (h.src === 'far-lobappear' && h.cls === 'lob') { h.clsSlide = h.cls; h.cls = 'slide'; n++; }
   }
   return n;
 }
-module.exports = { apply };
+// 紫の核のフラット（2026-10-21）。trail.js shots の purpleFlat（核が紫のコマ 2 以上かつ 25% 以上の topspin の run）を持つ trail 打点が
+//   fuse・shotcolor の後もまだ topspin なら flat にする（clsPurple に元の種別）。手直し GT・a151815 で種別 +4 −0
+function applyPurple(rally) {
+  let n = 0;
+  for (const h of rally || []) if (h.src === 'trail' && h.cls === 'topspin' && h.purpleFlat) { h.clsPurple = h.cls; h.cls = 'flat'; n++; }
+  return n;
+}
+// 相手側の拾い違い（2026-10-21）。相手の打点なのにトレイルが自分の半面にしか無い trail 打点（apexTrail ≥ 240＝最上点が奥ベースラインより 240px 以上下・
+//   run の出現前の位置 cZpre < 0＝手前側）。相手のスライド返球はトレイルが無く、自分の選手の体などの run が時刻だけ合って拾われている（目視: a151815 86.35・39.77）。
+//   誤った種別 7 件を unknown にし、正しい種別は失わなかった（閾値は GT を見て決めたので伸びは割り引く）。
+//   JUNK_OPP_MODE: 'slide'＝slide にする／'unknown'＝種別を消す／'off'。元の種別は clsJunk
+const JUNK_OPP_MODE = 'unknown';
+function applyJunkOpp(rally) {
+  if (JUNK_OPP_MODE === 'off') return 0;
+  let n = 0;
+  for (const h of rally || []) if (h.src === 'trail' && h.side === 'opp' && h.cls !== 'slide' && h.cls !== 'unknown' && h.apexTrail != null && h.apexTrail >= 240 && h.cZpreS != null && h.cZpreS < 0) { h.clsJunk = h.cls; h.cls = JUNK_OPP_MODE; n++; }
+  return n;
+}
+module.exports = { apply, applyPurple, applyJunkOpp };

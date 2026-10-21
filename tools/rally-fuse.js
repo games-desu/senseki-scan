@@ -223,7 +223,7 @@ window.RallyFuse = (() => {
     // 打点の時刻と尾の位置（far 寄せの X 照合に使う from）は本物が現れたコマから測る（x0908b p0 81.97: 壁の帯の尾 X −5.7 のままだと far-appear 81.733（X≈0）が 4m 照合で落ちた）（第 5 ラウンド nearjunk・砂 x0911 p4: 壁の帯 147.60〜 → 本物 148.367。147.57 だと far 寄せの窓（1.0 秒前まで）が
     // 接触 147.85 の far-appear 147.867 に届かなかった）。run の切り方（併合・種別）は変えない（切ると後ろの切れ端が別の run として先頭に立った: x0908b p0 81.54o）
     // 時刻と from（topTail）は必ず一緒に切り替える: 時刻だけ戻して from を残すと x0911 が C14→13・T19→18 と全部外すより悪い（exp-r5-nearjunk-verify の s1t）
-    let hits = shots.map(s => ({ t: +((s.side === 'opp' && s.topHead != null ? s.topHead : s.t0) - LEAD).toFixed(3), side: s.side, cls: s.cls, src: 'trail', topHead: s.side === 'opp' && s.topHead != null ? true : undefined,
+    let hits = shots.map(s => ({ t: +((s.side === 'opp' && s.topHead != null ? s.topHead : s.t0) - LEAD).toFixed(3), side: s.side, cls: s.cls, src: 'trail', purpleFlat: s.purpleFlat || undefined, cZpreS: s.cZpre, topHead: s.side === 'opp' && s.topHead != null ? true : undefined,
                                  from: s.side === 'opp' && s.topHead != null && s.topTail ? { X: s.topTail.X, Z: s.topTail.Z } : s.tail ? { X: s.tail.X, Z: s.tail.Z } : null, cZ0: s.cZ0, n: s.n, nMax: s.nMax, disp: s.disp, S: s.Smed,
                                  // 先端 y の 2 番目に小さい値（先頭に紛れた外れ blob 1 個に引っ張られない。砂 413.5: テントの縞 ty=16 で lob に化けた）
                                  tyMin: s.frames && s.frames.length ? (ys => ys.length >= 2 ? ys[1] : ys[0])(s.frames.map(f => f.ty != null ? f.ty : f.cy).sort((a, b) => a - b)) : null,

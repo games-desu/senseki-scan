@@ -13,6 +13,7 @@ const FarBall = require('./farball.js');
 const ShotColor = require('./shotcolor.js');
 const Slide = require('./slide.js');
 const Flash = require('./flash.js');
+const DupFix = require('./dupfix.js');
 
 const W = 960, H = 540, FRAME_BYTES = W * H * 4;
 // 実験場の tools コピー（samples/rally/exp-*/tools）から走らせても本体のリポジトリを指すように、samples/rally がある所まで上がる（rally-exp.js・rally-refuse.js と同じ）
@@ -199,6 +200,9 @@ async function analyze(opts) {
   // 閃光から取りこぼしの打点を足す（fuse の後・shotcolor の前・rally-refuse も同じ順序）。閾値は FHD 60fps で測ったので、それ以外は掛けない
   const flash = opts.trail && !notFhd ? Flash.events(flashLog, net) : [];
   if (rally) Flash.apply(rally, flash);
+  // 2026-10-21: 交互が崩れた二重の打点を捨てる（tools/dupfix.js・閃光の後・shotcolor の前・rally-refuse も同じ順序）。DUPFIX=0 / DUPSAME=0 で外せる
+  const dupOpp = rally && process.env.DUPFIX !== '0' ? DupFix.apply(rally) : [];
+  const dupSame = rally && process.env.DUPSAME !== '0' ? DupFix.applySame(rally) : [];
   // 追跡由来の打点（src track / far-* / launch*・種別 unknown）の種別を、打点直後の球の通り道の色（フル解像度）で読む後段（tools/shotcolor.js・1 打 0.3〜0.6 秒）。
   // fuse の後に掛ける（rally-refuse.js も fuse の後に掛け直す）
   let shotColor = null;
@@ -213,7 +217,7 @@ async function analyze(opts) {
   if (rally) Slide.apply(rally);   // 2026-09-30: shotcolor の後にスライドの種別（tools/slide.js）
 
   return {
-    rally, shots, trailRuns, markers, farBall, shotColor, flash, flashSlice, trailLog: opts.trail ? trailLog : undefined,
+    rally, shots, trailRuns, markers, farBall, shotColor, flash, flashSlice, dupOpp, dupSame, trailLog: opts.trail ? trailLog : undefined,
     video: path.basename(video), t0, t1, fps, variant: opts.variant || null,
     input: vi ? { w: vi.w, h: vi.h, fps: vi.fps, resampled: resample, notFhd60: notFhd } : null,   // 入力の解像度・コマ数と FHD 60fps でない理由（2026-09-24 exp-int3f）
     ms: Date.now() - started,

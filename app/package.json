@@ -38,6 +38,7 @@
           "shotcolor.js",
           "slide.js",
           "flash.js",
+          "dupfix.js",
           "highlight-node.js",
           "fever-banners-node.js",
           "court.js",
