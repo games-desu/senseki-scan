@@ -1,0 +1,8 @@
+- 相手の回線切れなどでレート画面が出ないまま終わった試合のあと、次の試合に前の試合の対戦相手が付いてしまう不具合を直しました
+- 戦績CSVでは、次の試合を正しいVS画面（相手・キャラ・コート）から読みます
+- ハイライト生成でも2つの試合を分けて扱い、自分のキャラ・対戦相手・ファイル名の相手名が正しい試合のものになります
+- それ以外の録画の解析結果は変わっていません
+- Fixed a bug where, after a match that ended without a rating screen (e.g. the opponent disconnected), the next match was given the previous match's opponent
+- Stats CSV now reads the next match from its own VS screen (opponent, characters, court)
+- Highlights now treat the two matches separately, so your character, the opponent and the opponent name in file names belong to the right match
+- Results for other recordings are unchanged
