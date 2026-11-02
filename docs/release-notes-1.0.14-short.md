@@ -1,0 +1,6 @@
+- 前回閉じたときのモニター・位置・大きさでアプリが起動するようになりました（最大化していた場合は最大化で開きます）
+- 前回のモニターがつながっていないときは、これまでどおりメインモニターで開きます
+- 解析・CSV・ハイライトの結果は変わっていません
+- The app now opens on the monitor, position and size where it was last closed (and maximized if it was maximized)
+- If that monitor is no longer connected, it opens on the main monitor as before
+- Analysis, CSV and highlight results are unchanged
