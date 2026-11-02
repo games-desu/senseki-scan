@@ -1,6 +1,6 @@
 // SENSEKI SCAN — Electron メインプロセス
 // 役割: ウィンドウ生成 / 辞書(テンプレート)の読み込み・ユーザー辞書のマージ / CSV保存ダイアログ / 自動更新
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
@@ -30,10 +30,39 @@ const MAIN_EN = {
 };
 const tm = (key, ...args) => (lang() === 'en' && MAIN_EN[key] != null ? MAIN_EN[key] : key).replace(/\{(\d+)\}/g, (m, i) => args[i] === undefined ? m : String(args[i]));
 
+// ---- ウィンドウの位置と大きさを覚える（userData/window-state.json に key ごと）----
+// 位置を指定しないと Windows が毎回メインモニターに出すため、前回閉じた場所で開き直す。
+// 保存先のモニターが外れている等でタイトルバーが見えない位置なら、保存値を捨てて既定（メインモニター）に戻す
+const winStatePath = () => path.join(app.getPath('userData'), 'window-state.json');
+const loadWinStates = () => { try { return JSON.parse(fs.readFileSync(winStatePath(), 'utf8')) || {}; } catch { return {}; } };
+function restoreBounds(key, width, height) {
+  const s = loadWinStates()[key];
+  if (!s || ![s.x, s.y, s.width, s.height].every(Number.isFinite)) return { width, height };
+  // タイトルバー（上端 40px）がどこかのモニターの作業領域に 100x20 以上かかっていれば掴める＝採用
+  const visible = screen.getAllDisplays().some(({ workArea: a }) => {
+    const w = Math.min(s.x + s.width, a.x + a.width) - Math.max(s.x, a.x);
+    const h = Math.min(s.y + 40, a.y + a.height) - Math.max(s.y, a.y);
+    return w >= 100 && h >= 20;
+  });
+  if (!visible) return { width, height };
+  return { x: s.x, y: s.y, width: Math.max(400, s.width), height: Math.max(300, s.height), maximized: !!s.maximized };
+}
+// 拡大率の違うモニターでは生成時の x/y/width/height だとサイズが縮む（1360→907 を実測）。生成後に setBounds し直すと合う
+function trackBounds(key, w, bounds) {
+  if (bounds.x != null) w.setBounds(bounds);
+  w.on('close', () => {
+    try {
+      const all = loadWinStates();
+      all[key] = { ...w.getNormalBounds(), maximized: w.isMaximized() };
+      fs.writeFileSync(winStatePath(), JSON.stringify(all));
+    } catch {}
+  });
+}
+
 function createWindow() {
+  const { maximized, ...bounds } = restoreBounds('main', 1360, 940);
   win = new BrowserWindow({
-    width: 1360,
-    height: 940,
+    ...bounds,
     title: 'SENSEKI SCAN',
     icon: path.join(__dirname, 'assets', 'icon.png'), // dev起動時のウィンドウアイコン（配布exeはbuild/icon.ico）
     webPreferences: {
@@ -42,6 +71,8 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  trackBounds('main', win, bounds);
+  if (maximized) win.maximize();
   win.setMenuBarVisibility(false);
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
