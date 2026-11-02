@@ -62,7 +62,9 @@ window.Highlight = (() => {
     for (const e of evs) {
       const cur = wins[wins.length - 1];
       if (e.type === 'vs') {
-        if (cur && !cur.closed) continue;
+        // 回線切れ等で rating が出ずに終わった試合の後なら本物の vs もここに来る。候補として残し、
+        // hl-ui.js がコート名の読めるもので窓を分ける（2026-11-02 ぴんやさん報告）
+        if (cur && !cur.closed) { (cur.vsLater = cur.vsLater || []).push(e); continue; }
         wins.push({ vs: e, t0: e.t1 + 0.5, t1: null, closed: false });
       } else if (cur && !cur.closed) {
         if (e.type === 'winner') cur.winner = e;

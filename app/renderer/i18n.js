@@ -192,6 +192,8 @@ window.I18N = (() => {
     'アルバム/ホーム画面の再生を検出し解析対象から除外: {0}': 'Album/Home screen playback detected and excluded: {0}', '{0}〜{1}秒': '{0}–{1} s',
     '[警告] 部門ボード照合が低いレート窓を{0}件棄却しました({1}秒)。メニュー/試合中の誤検出なら正常ですが、未対応の新パネル様式の場合は試合が消えます。直後の試合が欠けていたら録画を添えて報告してください':
       '[Warning] Rejected {0} rating window(s) whose mode board did not match ({1} s). That is normal for false detections in menus or play, but a match disappears if the panel style is unsupported (for example a game language that is not in the dictionary yet). If the match right after is missing, please report it with the recording',
+    '{0}秒のVS画面の試合はレート画面が出ないまま終わっています（回線切れ等）。{1}秒のVS画面を次の試合の始まりとして使います':
+      'The match from the VS screen at {0} s ended without a rating screen (disconnection, etc.). Using the VS screen at {1} s as the start of the next match',
     '[警告] VS画面{0}回に対し成立した試合が{1}件です。レート画面を検出できなかった試合がある可能性があります（未対応のランク色など）。該当区間の録画を添えて報告してください。':
       '[Warning] {0} VS screen(s) but {1} complete match(es). The rating screen may not have been recognized for some matches (unsupported rank color or game language, etc.). Please report it with the recording of that part.',
     '[警告] {0}秒のレート画面がどの試合にも紐づきません。直前のVS画面を検出できず試合を1件取り逃した可能性が高いです。該当区間の録画を添えて報告してください。':
