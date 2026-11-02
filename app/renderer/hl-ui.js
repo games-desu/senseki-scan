@@ -52,6 +52,27 @@
     return c.toDataURL('image/jpeg', 0.8);
   }
 
+  // 回線切れ等でレート画面が出ないまま終わった試合は、次の試合と同じ窓に入る（matchWindows は rating まで vs を読み飛ばす）。
+  // 読み飛ばした vs のうちコート名が読めるもの（本物の VS 画面）で窓を分け、次の試合の自分のキャラ・対戦相手を正しい VS 画面から取る。
+  // 戦績CSV側の pickVs と同じ判定（2026-11-02 ぴんやさん: 1試合目の相手マリオが2試合目に付いた）
+  async function splitAtLaterVs(wins) {
+    const seek = V.makeSeeker(hv), out = [];
+    for (const w of wins) {
+      let cur = w;
+      for (const cand of w.vsLater || []) {
+        if (!(await vsCourtReadable(hv, seek, cand))) continue;
+        hlLog(t('{0}秒のVS画面の試合はレート画面が出ないまま終わっています（回線切れ等）。{1}秒のVS画面を次の試合の始まりとして使います', cur.vs.t0.toFixed(0), cand.t0.toFixed(0)));
+        const next = { ...cur, vs: cand, t0: cand.t1 + 0.5 };
+        cur.t1 = cand.t0; delete cur.rating;
+        if (cur.winner && cur.winner.t0 >= cand.t0) delete cur.winner;
+        if (next.winner && next.winner.t0 < cand.t1) delete next.winner;
+        out.push(cur); cur = next;
+      }
+      out.push(cur);
+    }
+    return out;
+  }
+
   // ---- 自分のキャラ（試合窓の VS 画面から・戦績CSV解析と同じ照合）----
   function hlCropCanvas(r, outW) {
     const s = V.srcRect(hv), kx = s.w / 1920, ky = s.h / 1080;
@@ -192,7 +213,7 @@
         SCENE_CACHE.set(HL.key, events);
       } else hlLog(t('試合の位置は戦績CSVの解析結果を再利用しました'));
       if (HL.cancel) return;
-      const wins = H.matchWindows(events, hv.duration);
+      const wins = await splitAtLaterVs(H.matchWindows(events, hv.duration));
       HL.windows = wins;
       if (wins[0].fallback) hlLog(t('VS画面を検出できなかったため、動画全体から得点シーンを探します（時間がかかります。配信レイアウトの録画は「ゲーム画面の位置」を先に指定してください）'));
       const totalSpan = wins.reduce((a, w) => a + Math.max(0, w.t1 - w.t0), 0) || 1;

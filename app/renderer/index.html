@@ -1190,6 +1190,38 @@ async function gateRatings(video, events, log) {
   }
 }
 
+// 本物の VS 画面か（左上のコート名が読めるか）。実測: 本物 0.95〜0.97 / それ以外の全フレーム 最大0.65（ぴんやさん録画を1秒刻み）。
+// ハイライト生成（hl-ui.js の試合窓の分割）も同じ判定を使う
+async function vsCourtReadable(video, seek, cand) {
+  let best = 0;
+  for (const tt of [ (cand.t0 + cand.t1) / 2, cand.t0 + 0.3 ]) {
+    await seek(tt);
+    best = Math.max(best, V.matchIconWh(V.textVec(V.cropRegion(video, V.REGIONS.court), 32, 8), TPL.courts).score);
+  }
+  return best >= 0.85;
+}
+
+// 途中で終わった試合（回線切れ等でレート画面が出ない）の後の試合は、groupMatches が最初の vs に後の vs を
+// vsLater として束ねて返す。本物の VS 画面には左上にコート名が出るので、読めた最後の vs を試合の起点にする。
+// 試合中のゲームカウントUIの偽vsはコート名が無いので選ばれない（2026-11-02 ぴんやさん: 1試合目の相手マリオが2試合目に付いた）。
+// 返り値: 束ねた vs の数（成立しなかった試合の警告から差し引く）
+async function pickVs(video, grouped, log) {
+  const seekToV = V.makeSeeker(video);
+  let bundled = 0;
+  for (const g of grouped) {
+    if (!g.vsLater) continue;
+    bundled += g.vsLater.length;
+    for (const cand of g.vsLater.slice().reverse()) {
+      if (!(await vsCourtReadable(video, seekToV, cand))) continue;
+      log(t('{0}秒のVS画面の試合はレート画面が出ないまま終わっています（回線切れ等）。{1}秒のVS画面を次の試合の始まりとして使います', g.vs.t0.toFixed(0), cand.t0.toFixed(0)));
+      g.vs = cand;
+      if (g.winner && g.winner.t0 < cand.t1) delete g.winner; // 前の試合の中の勝敗パネルらしきもの
+      break;
+    }
+  }
+  return bundled;
+}
+
 async function analyze() {
   window.A.phase = 'scan';
   $('progPanel').style.display = 'block';
@@ -1214,8 +1246,9 @@ async function analyze() {
   // （除去前を保存していると matchWindows が試合開始直後の偽レートで窓を閉じ、得点0件になる。2026-09-05 実例: 砂コート）
   if (LAST_FILE) SCENE_CACHE.set(sceneKey(LAST_FILE), events.map(e => ({ ...e })));
   let grouped = V.groupMatches(events);
+  const bundledVs = await pickVs(video, grouped, log);
   // レートパネルの色はランクで変わるため、未収穫ランクの試合は成立しない。取り逃しを可視化する
-  const vsCount = events.filter(e => e.type === 'vs').length;
+  const vsCount = events.filter(e => e.type === 'vs').length - bundledVs;
   if (vsCount > grouped.length) {
     log(t('[警告] VS画面{0}回に対し成立した試合が{1}件です。レート画面を検出できなかった試合がある可能性があります（未対応のランク色など）。該当区間の録画を添えて報告してください。', vsCount, grouped.length));
   }

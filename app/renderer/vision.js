@@ -1410,8 +1410,10 @@ window.Vision = (() => {
         // 直前の試合のratingがまだ来ていない間のvsは「試合中のゲームカウントUI」等の誤分類
         // （VSバナーと同構造でclassifyが反応する実例あり）→ 無視。試合の起点は
         // 「前のratingの後、最初のvs窓」（アルバム再生の偽vsはalbum除外が既に担当）
+        // ただし回線切れ等で途中で終わった試合はレート画面が出ないので、次の試合の本物のvsもここに来る。
+        // 捨てずに候補として残し、index.html の pickVs がコート名の読めるものを選び直す（2026-11-02 ぴんやさん報告）
         const last = matches[matches.length - 1];
-        if (last && !last.rating) continue;
+        if (last && !last.rating) { (last.vsLater = last.vsLater || []).push(e); continue; }
         matches.push({ vs: e });
       }
       // winnerはratingが来るまで最後のもので上書きする。本物の勝敗パネルは必ずレートパネル直前に出る。
