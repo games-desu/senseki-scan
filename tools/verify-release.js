@@ -1,7 +1,7 @@
 // リリース成果物の整合性チェック（sha512 checksum mismatch の再発防止）
 //   node tools/verify-release.js            … app/package.json の version を公開リリースと照合
 //   node tools/verify-release.js 0.3.11     … バージョン指定で公開リリースを照合
-//   node tools/verify-release.js --local    … アップロード前に app/dist/ の3点セットを照合
+//   node tools/verify-release.js --local    … アップロード前に app/dist/ の3点セットと app.asar の依存を照合
 //
 // electron-updater は latest.yml に書かれた sha512/size と実ファイルを突き合わせる。
 // exe だけ差し替えて latest.yml / blockmap を上げ直さないと、ユーザーの更新が
@@ -110,6 +110,53 @@ function report({ version, yml, exeBuf, blockmapBuf, releaseDate, source }) {
   return false;
 }
 
+// app.asar に本番依存がそろっているか。node_modules をジャンクションにしてビルドすると
+// electron-builder が依存をたどれず、electron-updater の依存が抜けたまま3点セットは整合してしまう
+// （v1.0.15 で 34→8・起動時に require('electron-updater') が落ちるビルドを一度公開した）。
+// asar のヘッダ（先頭16バイトの後ろの JSON）だけ読み、Node の解決規則で dependencies を再帰的にたどる。
+// 形式: [4][ヘッダ長 H][ペイロード長][JSON長 L][JSON…]、ファイル本体は 8+H バイト目から offset ずつ
+function checkAsarDeps(asarPath) {
+  const buf = fs.readFileSync(asarPath);
+  const tree = JSON.parse(buf.toString('utf8', 16, 16 + buf.readUInt32LE(12)));
+  const dataStart = 8 + buf.readUInt32LE(4);
+  const node = parts => parts.reduce((n, p) => n && n.files && n.files[p], tree);
+  const unpackedDir = asarPath + '.unpacked';
+  const readJson = parts => {
+    const n = node(parts);
+    if (!n) return null;
+    if (n.unpacked) return JSON.parse(fs.readFileSync(path.join(unpackedDir, ...parts), 'utf8'));
+    const at = dataStart + Number(n.offset);
+    return JSON.parse(buf.toString('utf8', at, at + n.size));
+  };
+  const missing = [], seen = new Set();
+  let count = 0;
+  const walk = (dir, from) => {
+    const pkg = readJson([...dir, 'package.json']) || {};
+    const deps = Object.keys(pkg.dependencies || {});
+    for (const name of deps) {
+      const np = name.split('/');
+      let found = null;
+      // dir/node_modules/name → 親へ上がって …/node_modules/name
+      for (let d = dir.slice(); ; ) {
+        if (node([...d, 'node_modules', ...np, 'package.json'])) { found = [...d, 'node_modules', ...np]; break; }
+        const i = d.lastIndexOf('node_modules');
+        if (i < 0) break;
+        d = d.slice(0, i);
+      }
+      if (!found) {
+        if (!(pkg.optionalDependencies || {})[name]) missing.push(`${name}（${from} が依存）`);
+        continue;
+      }
+      const key = found.join('/');
+      if (seen.has(key)) continue;
+      seen.add(key); count++;
+      walk(found, name);
+    }
+  };
+  walk([], 'app');
+  return { count, missing };
+}
+
 async function verifyLocal(version) {
   const exePath = path.join(DIST_DIR, exeName(version));
   const ymlPath = path.join(DIST_DIR, 'latest.yml');
@@ -117,13 +164,28 @@ async function verifyLocal(version) {
     if (!fs.existsSync(p)) throw new Error(`見つかりません: ${p}（先に npm run dist を実行してください）`);
   }
   const bmPath = exePath + '.blockmap';
-  return report({
+  const ok = report({
     version,
     yml: parseLatestYml(fs.readFileSync(ymlPath, 'utf8')),
     exeBuf: fs.readFileSync(exePath),
     blockmapBuf: fs.existsSync(bmPath) ? fs.readFileSync(bmPath) : null,
     source: 'local app/dist',
   });
+
+  const asarPath = path.join(DIST_DIR, 'win-unpacked', 'resources', 'app.asar');
+  if (!fs.existsSync(asarPath)) throw new Error(`見つかりません: ${asarPath}`);
+  // exe と同じビルドの win-unpacked か（古い win-unpacked を見て OK を出さない）
+  const skew = Math.abs(fs.statSync(asarPath).mtimeMs - fs.statSync(exePath).mtimeMs);
+  const { count, missing } = checkAsarDeps(asarPath);
+  console.log(`  app.asar 依存 : ${count} 個${skew > 10 * 60e3 ? '（※ exe と更新時刻が10分以上ずれています。別ビルドの可能性）' : ''}`);
+  if (!missing.length) {
+    console.log('  => OK: 本番依存はすべて app.asar に入っています');
+    return ok;
+  }
+  console.log('  => NG: app.asar に入っていない依存があります（このまま出すと起動できません）:');
+  for (const m of missing) console.log('     - ' + m);
+  console.log('  node_modules がジャンクション／リンクになっていないか確認し、実体をコピーしてビルドし直してください。');
+  return false;
 }
 
 async function verifyRelease(version) {

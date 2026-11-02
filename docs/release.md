@@ -65,7 +65,7 @@ sha512 checksum mismatch, expected <latest.ymlの値> got <実ファイルの値
 ### 公開前・公開後のチェック
 
 ```powershell
-node tools/verify-release.js --local     # アップロード前: app/dist/ の3点セットを照合
+node tools/verify-release.js --local     # アップロード前: app/dist/ の3点セット＋app.asar に本番依存がそろっているか（node_modules をジャンクションにしてビルドすると依存が抜けて起動できない・v1.0.15 で発生）
 node tools/verify-release.js             # 公開後: 実際のReleaseをDLして照合
 node tools/verify-release.js 0.3.11      # バージョン指定
 ```
