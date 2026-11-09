@@ -37,6 +37,7 @@
           "farball.js",
           "shotcolor.js",
           "slide.js",
+          "gapfill.js",
           "flash.js",
           "dupfix.js",
           "highlight-node.js",

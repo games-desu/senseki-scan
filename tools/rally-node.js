@@ -12,6 +12,7 @@ const { spawn } = require('child_process');
 const FarBall = require('./farball.js');
 const ShotColor = require('./shotcolor.js');
 const Slide = require('./slide.js');
+const GapFill = require('./gapfill.js');
 const Flash = require('./flash.js');
 const DupFix = require('./dupfix.js');
 
@@ -215,6 +216,7 @@ async function analyze(opts) {
   // 2026-10-15: 閃光で足した自分の打点の青いトレイルからスライスを読む（tools/flash.js readSlice・shotcolor の後・slide の前）
   const flashSlice = rally && opts.trail && !notFhd ? await Flash.readSlice({ video, rally, ffmpeg: ShotColor.findFfmpeg() }) : null;
   if (rally) Slide.apply(rally);   // 2026-09-30: shotcolor の後にスライドの種別（tools/slide.js）
+  if (rally && process.env.GAPFILL !== '0') GapFill.apply(rally, trailRuns);   // 2026-11-06: 相手→相手の穴に色つき run の切れ目を足す（tools/gapfill.js・rally-refuse も同じ順序）
 
   return {
     rally, shots, trailRuns, markers, farBall, shotColor, flash, flashSlice, dupOpp, dupSame, trailLog: opts.trail ? trailLog : undefined,

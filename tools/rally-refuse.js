@@ -11,6 +11,7 @@ const { loadModules } = require('./rally-node.js');
 const FarBall = require('./farball.js');
 const ShotColor = require('./shotcolor.js');
 const Slide = require('./slide.js');
+const GapFill = require('./gapfill.js');
 const Flash = require('./flash.js');
 const DupFix = require('./dupfix.js');
 
@@ -60,6 +61,7 @@ async function refuse(file, mods, opts = {}) {
   // 2026-10-15: 閃光で足した自分の打点の青いトレイルからスライスを読む（rally-node と同じ順序。FHD 60fps 以外は閃光が無いので何もしない）
   if (video && fs.existsSync(video)) { const fsl = await Flash.readSlice({ video, rally: r.rally, ffmpeg: ShotColor.findFfmpeg() }); r.flashSlice = { changed: fsl.changed, n: fsl.n, log: fsl.log }; }
   Slide.apply(r.rally);   // 2026-09-30: shotcolor の後にスライドの種別（tools/slide.js・rally-node と同じ順序）
+  if (process.env.GAPFILL !== '0') GapFill.apply(r.rally, r.trailRuns);   // 2026-11-06: 相手→相手の穴に色つき run の切れ目を足す（tools/gapfill.js・rally-node と同じ順序）
   fs.writeFileSync(file, JSON.stringify(r, null, 1));
   // 読まなかったとき（FHD 60fps 以外・動画なし）は skipped と印を付けた打点の数 n を返す（2026-09-24 exp-int3f・レビューの note: 以前は「shotcolor 0/0」と出ていた）
   return { before, after, sc: sc ? { changed: sc.changed, n: sc.skipped ? sc.n : sc.log.length, ms: sc.ms, log: sc.log, skipped: sc.skipped } : null };
