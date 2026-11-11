@@ -15,6 +15,7 @@ const Slide = require('./slide.js');
 const GapFill = require('./gapfill.js');
 const Flash = require('./flash.js');
 const DupFix = require('./dupfix.js');
+const CamRefine = require('./camrefine.js');
 
 const W = 960, H = 540, FRAME_BYTES = W * H * 4;
 // 実験場の tools コピー（samples/rally/exp-*/tools）から走らせても本体のリポジトリを指すように、samples/rally がある所まで上がる（rally-exp.js・rally-refuse.js と同じ）
@@ -112,6 +113,12 @@ async function analyze(opts) {
   const frameLog = [];
   let prevMask = null, cam = null, net = null, prev = [], state = {}, camAt_i = -1e9, camProv = null, camProvAt_i = -1e9;
   const cams = [];                                     // {t, cam} 時刻ごとのカメラ
+  // カメラの寄せ直し（tools/camrefine.js・2026-11-11）。CAMREFINE=0 で外す・1 は推定が通ったコマを寄せるだけ・2 は推定が落ちたコマも直前のカメラから拾う・3 はさらに camTrack コマおきに直前のカメラから追う（カメラの動きが速いコート用）
+  const camMode = +(process.env.CAMREFINE || 0);
+  const CAM_RESCUE = +(process.env.CAMRESCUE || 0.7), CAM_GRID = +(process.env.CAMGRID || 0.75);
+  const CAM_S0 = +(process.env.CAMS0 || 1);              // 推定の点数がこれ未満のときだけ寄せた値に置き換える
+  const camTrack = +(process.env.CAMTRACK || 3);
+  let camRef = null; const camLog = [];                // 直前に採ったカメラ（寄せ直しの出発点）・採否の記録
   const started = Date.now();
   // Phase D: ショット色トレイル（opts.trail のとき毎フレーム）
   const trailLog = [], hist = [], starLog = [];
@@ -132,7 +139,26 @@ async function analyze(opts) {
       const e = Court.estimate(fr.img);
       // サーブ画（別カメラ・ロール付き）は横1本＋縦1本で "ok・suspect=false・agree=null" が通ってしまう。
       // 横2本以上・縦2本以上・交差検証あり、を「ラリーカメラ」の条件にする（2026-09-08 実測: 0908 p3 110.5〜111.75）
-      if (e.ok && !e.suspect && e.hHits >= 2 && e.xHits >= 2 && e.agree != null) {
+      let pass = e.ok && !e.suspect && e.hHits >= 2 && e.xHits >= 2 && e.agree != null, ce = e;
+      if (camMode > 0) {
+        const rd = CamRefine.ridge(fr.img.data);
+        if (pass) {
+          // 推定が通ったコマ: 線の模型が尾根に乗る割合が上がる所へ寄せる（下がることは無い）
+          const r = CamRefine.improve(rd, e, camRef);
+          if (r.s >= r.s0 + 0.02 && r.s0 < CAM_S0) { e.c0 = r.cam.c0; e.c1 = r.cam.c1; e.Xc = r.cam.Xc; e.Yc = Court.K / r.cam.c1; e.rsrc = r.src; }
+          e.rs = +Math.max(r.s, r.s0).toFixed(3); e.rs0 = +r.s0.toFixed(3);
+        } else if (camMode > 1) {
+          // 推定が落ちたコマ: 直前のカメラから寄せて点数が高ければ標本にする。総当たりは camEvery の刻みだけ・閾値も高く（サーブ画・演出カットを通さない）
+          const r = CamRefine.rescue(rd, camRef, fr.i % camEvery === 0);
+          if (r) {
+            const okR = r.s >= (r.src === 'grid' ? CAM_GRID : CAM_RESCUE);
+            camLog.push({ t: fr.t, src: r.src, s: +r.s.toFixed(3), ok: okR });
+            if (okR) { ce = { ok: true, c0: r.cam.c0, c1: r.cam.c1, Xc: r.cam.Xc, Yc: Court.K / r.cam.c1, rs: +r.s.toFixed(3), rsrc: 'rescue-' + r.src }; pass = true; }
+          }
+        }
+      }
+      if (pass) {
+        const e = ce; camRef = { c0: e.c0, c1: e.c1, Xc: e.Xc };
         cam = e; camAt_i = fr.i; camProv = null;
         e.t = fr.t;   // 標本の時刻（rally-refuse の camAt と同じ形・2026-09-29 fartime: fuse の自分のサーブの寄せが「直前に標本が無い」を見る。farball は自前で t を足すので変わらない）
         cams.push({ t: fr.t, cam: e });
@@ -141,6 +167,17 @@ async function analyze(opts) {
       } else if (e.ok && e.xHits >= 2 && e.hHits >= 1.5) {   // 緩めすぎるとサーブ画(1/1)でも通ってしまう（砂 412.1 の偽打点）
         // 仮カメラ: サーブ画→ラリー画へのズーム中（0.4秒ほど）は横ラインが揃わない。座標には使わないがトレイル検出には使う
         camProv = e; camProvAt_i = fr.i;
+      }
+    }
+    else if (camMode > 2 && camRef && fr.i % camTrack === 0 && fr.i - camAt_i <= 15) {
+      // 推定の合間: 直前のカメラ（0.25 秒以内）から寄せるだけ（Court.estimate は呼ばない）。点数が高いときだけ標本にする
+      const r = CamRefine.refine(CamRefine.ridge(fr.img.data), camRef);
+      if (r.s >= CAM_RESCUE) {
+        camRef = r.cam;
+        cam = { ok: true, t: fr.t, c0: r.cam.c0, c1: r.cam.c1, Xc: r.cam.Xc, Yc: Court.K / r.cam.c1, rs: +r.s.toFixed(3), rsrc: 'track' }; camAt_i = fr.i; camProv = null;
+        cams.push({ t: fr.t, cam });
+        const base = Court.toScreen(0, 0, cam).y, u = 1 / cam.c0, hpx = 0.91 * u / cam.Yc;
+        net = { y0: (base - hpx * 1.25) / 2, y1: (base + 12) / 2 };
       }
     }
     if (opts.trail && fr.i % trailEvery === 0) {
@@ -226,7 +263,8 @@ async function analyze(opts) {
     nFrames: frameLog.length,
     nCands: frameLog.reduce((s, f) => s + f.c.length, 0),
     camOk: cams.length, net,
-    cams: cams.map(c => ({ t: c.t, c0: c.cam.c0, c1: c.cam.c1, Xc: c.cam.Xc, Yc: c.cam.Yc })),
+    cams: cams.map(c => ({ t: c.t, c0: c.cam.c0, c1: c.cam.c1, Xc: c.cam.Xc, Yc: c.cam.Yc, ...(c.cam.rs != null ? { s: c.cam.rs, s0: c.cam.rs0, src: c.cam.rsrc } : {}) })),
+    camLog: camMode > 1 ? camLog : undefined,
     chains: chains.length,
     ranked: ranked.slice(0, 12).map(c => ({
       t0: c.pts[0].t, t1: c.pts[c.pts.length - 1].t, len: c.len,
