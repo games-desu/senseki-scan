@@ -95,6 +95,8 @@ const CLS = [
   ['slide', 'スライドフットワーク', '#7fc8b4'], ['dive', 'とびつき', '#c9a27a'],
   // フィーバーショットをノーバウンドで返すと、バウンドするまで虹色/固有のトレイルになり球種が読めない（ユーザー直伝 2026-10-02）
   ['feverback', 'フィーバー返し', '#f0a0d0'],
+  // 画面に LATE と出る打球（振り遅れ）。11 個目なので数字キーではなく L（ユーザー直伝 2026-11-11・0830 p4 の 15 打目）
+  ['late', 'LATE', '#8a94e8', 'L'],
 ];
 const COL = Object.fromEntries(CLS.map(c => [c[0], c[2]]));
 const NAME = Object.fromEntries(CLS.map(c => [c[0], c[1]]));
@@ -103,7 +105,7 @@ const v = $('v');
 let D = null, cur = null, hits = [], sel = -1, saveTimer = null;
 const state = new Map();   // idx → {hits, done} （保存済みの手直し）
 
-$('clsKeys').innerHTML = CLS.map((c, i) => `<kbd>${(i + 1) % 10}</kbd><span class="sw" style="background:${c[2]};margin-left:3px"></span>${c[1]}`).join(' ');
+$('clsKeys').innerHTML = CLS.map((c, i) => `<kbd>${c[3] || (i + 1) % 10}</kbd><span class="sw" style="background:${c[2]};margin-left:3px"></span>${c[1]}`).join(' ');
 
 async function init() {
   D = await (await fetch('/api/load')).json();
@@ -288,6 +290,7 @@ document.addEventListener('keydown', e => {
   else if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); $('bDel').click(); }
   else if (k === 'r' || k === 'R') $('bReload').click();
   else if (k === 'Enter') { e.preventDefault(); $('bDone').click(); }
+  else if (CLS.some(c => c[3] && c[3].toLowerCase() === k.toLowerCase())) withSel(h => { h.cls = CLS.find(c => c[3] && c[3].toLowerCase() === k.toLowerCase())[0]; });
   else if (/^[0-9]$/.test(k) && CLS[(+k + 9) % 10]) withSel(h => { h.cls = CLS[(+k + 9) % 10][0]; });
 });
 window.addEventListener('beforeunload', flushSave);
