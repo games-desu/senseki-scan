@@ -95,16 +95,26 @@ window.RallyFuse = (() => {
     return Object.assign(base, { X: +c.X.toFixed(2), Z: +c.Z.toFixed(2), inCourt: Court.inCourt(c.X, c.Z, 0.3) });
   }
 
-  // 着弾＝星マーカー（tools/star.js）。打点の 0.15 秒後〜次の打点の 0.1 秒後までに現れた最初のマーカーで、打った側の反対のコートにあるもの。
-  // 星は着弾後に地面に出る印なので、位置は地面ホモグラフィでそのまま座標にできる（高さバイアス無し）
+  // 星マーカー（tools/star.js）から着弾を見積もる。打点の 0.15 秒後〜次の打点の 0.1 秒後までに現れた最初のマーカーで、打った側の反対のコートにあるもの。
+  // 2026-11-13: 星は着弾点ではなく、球が下りながら高さ約 2.4m を通る場所（推定。星を使わない軌道の当てはめで、星の真上の高さが 2.37・2.46・2.16m、水平のずれ 0.01〜0.11m。
+  //   スマッシュの打点も星から 0.5m・高さ 2.7m）。着弾はその先にある: 第 4 試合の p28 512.75 は星が奥行き 8.8m・着弾は 11.2m（コマを目で確認）、p31 557.95 は 8.7m → 11.4m（当てはめ）。
+  //   以前は星の位置を t0 のカメラでそのまま着弾にしていたので、着弾が 3〜4m 手前に出ていた。
+  //   - 星の位置は消える 0.1 秒前のカメラで座標にする。マーカーの x・y は直近のコマへ寄せた移動平均（star.js の track: (x*3+cx)/4）なので、出た瞬間（t0）の位置ではない。
+  //     カメラは球を追って動くので、t0 のカメラだと手前に出る（p35 640.97: t0 で 5.1m・真ん中で 6.6m・消える前で 7.9m。コマを見るとサービスラインの 1〜1.5m 奥＝約 7.5〜8m）
+  //   - 自分の球（奥側に落ちる）の着弾は、星からネットと反対の向きへ STAR_AHEAD だけ先に置く。横（X）は動かさない（上の 2 打で 0.1〜0.3m）。打点の位置（from）は外れることがあるので向きには使わない
+  //   - 相手の球（手前側に落ちる）は星の位置のまま。手前側は星がベースラインの上〜少し後ろに出る打が多く（p37 674.14: コマで見てベースラインのすぐ後ろ）、先へずらすと 3m 以上コート外になる。
+  //     ロブの着弾はエンドラインの手前なので、手前側で星と着弾がどれだけ離れるかは分かっていない（確かめた打はスマッシュで返していて着弾していない）
+  //   - 先へ置いた着弾には est: 'star-ahead' を付ける。星そのものの位置はどちらの側でも star に残す。t・x・y は星のまま（着弾の時刻・画面位置ではない）
+  const STAR_AHEAD = 2.5;   // m（消える前のカメラで測った星から着弾まで: p28 2.5m・p31 2.7m）
   function landingFromStar(markers, tA, tB, camAt, side) {
     for (const m of markers) {
       if (m.t0 < tA + 0.15 || m.t0 > tB + 0.1) continue;
-      const cam = camAt ? camAt(m.t0) : null;
+      const cam = camAt ? (camAt(Math.max(m.t0, m.t1 - 0.1)) || camAt(m.t0)) : null;
       if (!cam || !cam.ok || typeof Court === 'undefined') return { t: m.t0, x: m.x, y: m.y, src: 'star', k: m.k };
       const c = Court.toCourt(m.x * 2, m.y * 2, cam);
       if (side === 'me' ? c.Z < -0.5 : c.Z > 0.5) continue;
-      return { t: m.t0, x: m.x, y: m.y, X: +c.X.toFixed(2), Z: +c.Z.toFixed(2), inCourt: Court.inCourt(c.X, c.Z, 0.3), src: 'star', k: m.k };
+      const Z = c.Z + (side === 'me' ? STAR_AHEAD : 0);
+      return Object.assign({ t: m.t0, x: m.x, y: m.y, X: +c.X.toFixed(2), Z: +Z.toFixed(2), inCourt: Court.inCourt(c.X, Z, 0.3), src: 'star', star: { X: +c.X.toFixed(2), Z: +c.Z.toFixed(2) }, k: m.k }, side === 'me' ? { est: 'star-ahead' } : null);
     }
     return null;
   }
