@@ -38,6 +38,7 @@
           "shotcolor.js",
           "slide.js",
           "gapfill.js",
+          "traj.js",
           "flash.js",
           "dupfix.js",
           "highlight-node.js",

@@ -16,6 +16,7 @@ const GapFill = require('./gapfill.js');
 const Flash = require('./flash.js');
 const DupFix = require('./dupfix.js');
 const CamRefine = require('./camrefine.js');
+const Traj = require('./traj.js');
 
 const W = 960, H = 540, FRAME_BYTES = W * H * 4;
 // 実験場の tools コピー（samples/rally/exp-*/tools）から走らせても本体のリポジトリを指すように、samples/rally がある所まで上がる（rally-exp.js・rally-refuse.js と同じ）
@@ -254,9 +255,12 @@ async function analyze(opts) {
   const flashSlice = rally && opts.trail && !notFhd ? await Flash.readSlice({ video, rally, ffmpeg: ShotColor.findFfmpeg() }) : null;
   if (rally) Slide.apply(rally);   // 2026-09-30: shotcolor の後にスライドの種別（tools/slide.js）
   if (rally && process.env.GAPFILL !== '0') GapFill.apply(rally, trailRuns);   // 2026-11-06: 相手→相手の穴に色つき run の切れ目を足す（tools/gapfill.js・rally-refuse も同じ順序）
+  // 2026-11-17: 軌道当てはめ（tools/traj.js）。打ごとに traj（打点の XYZ・着弾・ネット上の高さ）を足す。既定は切（TRAJ=1 で有効）。録画をフル解像度でもう 1 回読むので遅い
+  let traj = null;
+  if (rally && rally.length && opts.trail && process.env.TRAJ === '1' && !notFhd && cams.length > 1) traj = await Traj.apply({ video, rally, cams: cams.map(c => ({ t: c.t, c0: c.cam.c0, c1: c.cam.c1, Xc: c.cam.Xc })), trailLog, markers });
 
   return {
-    rally, shots, trailRuns, markers, farBall, shotColor, flash, flashSlice, dupOpp, dupSame, trailLog: opts.trail ? trailLog : undefined,
+    rally, shots, trailRuns, markers, farBall, shotColor, flash, flashSlice, dupOpp, dupSame, traj, trailLog: opts.trail ? trailLog : undefined,
     video: path.basename(video), t0, t1, fps, variant: opts.variant || null,
     input: vi ? { w: vi.w, h: vi.h, fps: vi.fps, resampled: resample, notFhd60: notFhd } : null,   // 入力の解像度・コマ数と FHD 60fps でない理由（2026-09-24 exp-int3f）
     ms: Date.now() - started,
