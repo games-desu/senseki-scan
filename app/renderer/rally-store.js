@@ -15,12 +15,15 @@
   else root.RallyStore = factory();
 })(typeof self !== 'undefined' ? self : this, function () {
   // 球種。並びは手直し画面のボタンと数字キー（1〜9・0）の順。4つ目の true = レポートで0件でも出す球種
+  // 5つ目 = 数字キーの代わりに使うキー（11個目以降は数字が足りないので、必ず末尾に足してキーを書く）
   // slide・dive・feverback はトレイルに色が付かない打球（判別は調整用GTのため）
+  // late = 画面に LATE と出る打球（振り遅れ。ユーザー直伝 2026-11-11）。解析は出さない・手直しでだけ付く
   const CLS = [
     ['topspin', 'トップスピン', '#ef5b6e', true], ['slice', 'スライス', '#4ea3f5', true], ['flat', 'フラット', '#b088f5', true],
     ['lob', 'ロブ', '#f2c230', true], ['drop', 'ドロップ', '#e8ecea', true],
     ['fever', 'フィーバー', '#ff8f40', true], ['feverback', 'フィーバー返し', '#f0a0d0'],
     ['slide', 'スライドフットワーク', '#7fc8b4'], ['dive', 'とびつき', '#c9a27a'], ['unknown', '不明', '#56665e', true],
+    ['late', 'LATE', '#8a94e8', false, 'L'],
   ];
 
   const r3 = x => Math.round(x * 1000) / 1000;

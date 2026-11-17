@@ -179,7 +179,7 @@ function renderEdit(fl) {
     `<span class="sub">入れ替え<kbd>S</kbd></span>` +
     `<button data-serve aria-pressed="${!!s.serve}" style="margin-left:12px">サーブ<kbd>V</kbd></button></div>` +
     `<div class="row"><span class="k">球種</span>` +
-    types.map((c, i) => `<button data-cls="${c[0]}" aria-pressed="${s.cls === c[0]}" style="display:inline-flex; align-items:center; gap:6px"><span class="dot" style="background:${c[2]}"></span>${c[1]}<kbd>${(i + 1) % 10}</kbd></button>`).join('') + '</div>' +
+    types.map((c, i) => `<button data-cls="${c[0]}" aria-pressed="${s.cls === c[0]}" style="display:inline-flex; align-items:center; gap:6px"><span class="dot" style="background:${c[2]}"></span>${c[1]}<kbd>${c[4] || (i + 1) % 10}</kbd></button>`).join('') + '</div>' +
     `<div class="row" style="border-top:1px solid var(--border); padding-top:10px">` +
     `<button id="ePrev">前の打<kbd>[</kbd></button><button id="eNext">次の打<kbd>]</kbd></button><button id="eFlag">次の要確認<kbd>N</kbd></button>` +
     `<button id="eAdd">今の時刻に打を足す<kbd>A</kbd></button><button id="eMove">この打を今の時刻へ<kbd>T</kbd></button>` +
@@ -347,9 +347,13 @@ document.addEventListener('keydown', e => {
   else if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); delShot(); }
   else if (k === 'r' || k === 'R') $('bReload').click();
   else if (k === 'Enter') { e.preventDefault(); $('bDone').click(); }
+  else if (RS.CLS.some(c => c[4] && c[4].toLowerCase() === k.toLowerCase())) {
+    const c = RS.CLS.find(c => c[4] && c[4].toLowerCase() === k.toLowerCase());
+    edit(s => { s.cls = c[0]; });
+  }
   else if (/^[0-9]$/.test(k)) {
     const c = RS.CLS[(+k + 9) % 10];
-    if (c) edit(s => { s.cls = c[0]; });
+    if (c && !c[4]) edit(s => { s.cls = c[0]; });
   }
 });
 // ボタンを押したあとに Space/Enter がそのボタンを押し直さないよう、フォーカスを外す
