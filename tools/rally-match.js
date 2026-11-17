@@ -23,6 +23,30 @@ async function loadPoints(video, pointsFile, onProgress) {
   return { info: r.info, points: r.points };
 }
 
+// フィーバーショットの打点（2026-11-17 ユーザー指定）: 時刻は**ラベル（ラケット名バナー）が出た瞬間ではなく、そのあと飛び上がって打った瞬間**。
+// 手直し済みの 8 打（0908b の 6・0830 の 2）で、打った瞬間はバナーの t0 から 0.83〜0.93 秒後（平均 0.88）。バナーは 5fps で読むので ±0.1 秒の粗さがある。
+//   1) 打った瞬間の見込み（t0 + 0.88）の ±0.45 秒に、その側の打があればそれを fever にする（時刻は検出のまま）
+//   2) 無く、バナーの手前 0.5 秒〜見込みの 0.45 秒前に打があれば、それを fever にして時刻を見込みへ動かす（元の時刻は tDet）
+//   3) どちらも無ければ、見込みの時刻に打を足す（src: 'banner'）
+const FEVER_LAG = 0.88;
+function applyFever(rally, banners, t0, t1) {
+  for (const b of banners) {
+    if (b.t0 < t0 - 1 || b.t0 > t1 + 1) continue;
+    const ts = +(b.t0 + FEVER_LAG).toFixed(3);
+    // 側が分かるバナー（FV ゲージのエッジ）はその側の打点だけ、分からなければ最も近い打点
+    const near = (lo, hi) => rally.filter(h => h.t >= lo && h.t <= hi && (!b.side || h.side === b.side)).sort((x, y) => Math.abs(x.t - ts) - Math.abs(y.t - ts))[0];
+    let cand = near(ts - 0.45, ts + 0.45);
+    if (!cand) { cand = near(b.t0 - 0.5, ts - 0.45); if (cand) { cand.tDet = cand.t; cand.t = ts; } }
+    if (cand) { cand.clsColor = cand.clsColor || cand.cls; cand.cls = 'fever'; cand.racket = b.name || null; cand.bannerT = b.t0; }
+    else {
+      const prev = [...rally].reverse().find(h => h.t < ts && h.t >= ts - 2.0);
+      const side = b.side || (prev ? (prev.side === 'me' ? 'opp' : 'me') : 'me');
+      rally.push({ t: ts, side, cls: 'fever', src: 'banner', racket: b.name || null, bannerT: b.t0, serve: false, land: null });
+    }
+    rally.sort((x, y) => x.t - y.t);
+  }
+}
+
 async function run(opts) {
   const { video } = opts;
   const name = path.basename(video).replace(/\.[^.]+$/, '').replace(/[^0-9A-Za-z_-]+/g, '_');
@@ -31,7 +55,7 @@ async function run(opts) {
   const { info, points } = await loadPoints(video, opts.points || path.join(outDir, 'phaseA.json'), opts.onPhaseA);
   const fps = info && info.fps ? info.fps : 60;
   const only = opts.only ? new Set(opts.only) : null;
-  // フィーバーショット: ラケット名バナー（tools/fever-banners-node.js）の時刻 ±(0.5/0.6) 秒にある打点を 'fever' にする。
+  // フィーバーショット: ラケット名バナー（tools/fever-banners-node.js）から、打った瞬間の打点を 'fever' にする（applyFever）。
   // 無ければバナー時刻に打点を補う（側は直前の打点の反対・無ければ マイラケット=自分）。'auto' はポイント区間ごとに 5fps で走査
   let banners = null;
   if (opts.fever && opts.fever !== 'auto' && fs.existsSync(opts.fever)) banners = JSON.parse(fs.readFileSync(opts.fever, 'utf8'));
@@ -52,20 +76,7 @@ async function run(opts) {
       const have = banners.some(b => b.t0 >= t0 - 1 && b.t0 <= t1 + 1) || (banners._scanned || []).some(w => w[0] === t0);
       if (!have) { const ev = await FB.scan({ video, t0, t1, fps: 5 }); banners.push(...ev); (banners._scanned = banners._scanned || []).push([t0, t1]); }
     }
-    if (banners && r.rally) {
-      for (const b of banners) {
-        if (b.t0 < t0 - 1 || b.t0 > t1 + 1) continue;
-        // 側が分かるバナー（FV ゲージのエッジ）はその側の打点だけ、分からなければ最も近い打点
-        const cand = r.rally.filter(h => h.t >= b.t0 - 0.5 && h.t <= b.t0 + 0.6 && (!b.side || h.side === b.side)).sort((x, y) => Math.abs(x.t - b.t0) - Math.abs(y.t - b.t0))[0];
-        if (cand) { cand.clsColor = cand.clsColor || cand.cls; cand.cls = 'fever'; cand.racket = b.name || null; cand.bannerT = b.t0; }
-        else {
-          const prev = [...r.rally].reverse().find(h => h.t < b.t0 && h.t >= b.t0 - 2.0);
-          const side = b.side || (prev ? (prev.side === 'me' ? 'opp' : 'me') : 'me');
-          r.rally.push({ t: +b.t0.toFixed(3), side, cls: 'fever', src: 'banner', racket: b.name || null, bannerT: b.t0, serve: false, land: null });
-          r.rally.sort((x, y) => x.t - y.t);
-        }
-      }
-    }
+    if (banners && r.rally) applyFever(r.rally, banners, t0, t1);
     const file = path.join(outDir, `p${i}.json`);
     fs.writeFileSync(file, JSON.stringify(r, null, 1));
     const evs = r.events.map(e => ({ t: +e.t.toFixed(3), kind: e.kind, side: e.side, x: +e.x.toFixed(1), y: +e.y.toFixed(1),
@@ -107,4 +118,4 @@ if (require.main === module) {
     .then(r => console.log(`done → ${r.outDir}`)).catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { run };
+module.exports = { run, applyFever, FEVER_LAG };
