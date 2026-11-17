@@ -1,7 +1,8 @@
 // フィーバーショットのラケット名バナーを区間走査で拾う（Node・ヘッドレス）。
 // ラリー解析でフィーバーショット（6種目）を「バナー直後の打点」に結び付けるための時刻列を作る。
 //   node tools/fever-banners-node.js <video> <t0> <t1> [--fps 5] [--json out.json]
-// 出力: [{t0, t1, name, score, n}]（同じバナーは 4 秒以内の連続検出を 1 件にまとめる・name は照合 0.93 以上のときだけ）
+// 出力: [{t0, t1, name, score, n}]（同じバナーは 1.5 秒以内の連続検出を 1 件にまとめる・name は照合 0.93 以上のときだけ）
+// まとめる間隔は 4 秒だったが、フィーバーショットをフィーバーで返すと 2 本目のバナーが 2.4 秒後に出て 1 件に潰れた（0830 の p17・2026-11-17）。バナーは 1.0〜1.2 秒出る
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -68,7 +69,7 @@ async function scan({ video, t0, t1, fps = 5, templates }) {
     let name = null, score = 0;
     if (inside(b)) for (const tref of rb) { const s = V.profileXcorr(b.profile, tref.profile); if (s > score) { score = s; name = tref.name; } }
     const last = events[events.length - 1];
-    if (last && fr.t - last.t1 <= 4.0) { last.t1 = fr.t; last.n++; if (score > last.score) { last.score = score; last.name = name; } }
+    if (last && fr.t - last.t1 <= 1.5) { last.t1 = fr.t; last.n++; if (score > last.score) { last.score = score; last.name = name; } }
     else events.push({ t0: fr.t, t1: fr.t, n: 1, score, name });
   }
   // エッジ: 直前 2 点の最小から 0.18 以上の急落・落下先 0.45 以下・次点も低いまま（vision.js collectBanners と同じ）

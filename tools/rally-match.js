@@ -24,18 +24,25 @@ async function loadPoints(video, pointsFile, onProgress) {
 }
 
 // フィーバーショットの打点（2026-11-17 ユーザー指定）: 時刻は**ラベル（ラケット名バナー）が出た瞬間ではなく、そのあと飛び上がって打った瞬間**。
-// 手直し済みの 8 打（0908b の 6・0830 の 2）で、打った瞬間はバナーの t0 から 0.83〜0.93 秒後（平均 0.88）。バナーは 5fps で読むので ±0.1 秒の粗さがある。
-//   1) 打った瞬間の見込み（t0 + 0.88）の ±0.45 秒に、その側の打があればそれを fever にする（時刻は検出のまま）
+// 手直し済みの 12 打（0908b の 6・0830 の 6）で、打った瞬間はバナーの t0 から 0.83〜0.98 秒後（平均 0.90）。バナーは 5fps で読むので ±0.1 秒の粗さがある。
+//   1) 打った瞬間の見込み（t0 + 0.90）の ±0.45 秒に、その側の打があればそれを fever にする（時刻は検出のまま）
 //   2) 無く、バナーの手前 0.5 秒〜見込みの 0.45 秒前に打があれば、それを fever にして時刻を見込みへ動かす（元の時刻は tDet）
 //   3) どちらも無ければ、見込みの時刻に打を足す（src: 'banner'）
-const FEVER_LAG = 0.88;
+//   4) 1) で決まったとき、その 1 秒前までにある同じ側の打は消す（飛び上がりの瞬間を拾ったもの。同じ側が 1 秒以内に 2 回は打たない。消した時刻は dropped）
+// 1 コマだけで名前も照合できなかったバナーは捨てる（0830 では 2 件とも読み違い: SMASH の表示など。本物は 5 コマ以上続く）
+const FEVER_LAG = 0.90;
 function applyFever(rally, banners, t0, t1) {
   for (const b of banners) {
     if (b.t0 < t0 - 1 || b.t0 > t1 + 1) continue;
+    if (b.n != null && b.n < 3 && !b.name) continue;
     const ts = +(b.t0 + FEVER_LAG).toFixed(3);
     // 側が分かるバナー（FV ゲージのエッジ）はその側の打点だけ、分からなければ最も近い打点
     const near = (lo, hi) => rally.filter(h => h.t >= lo && h.t <= hi && (!b.side || h.side === b.side)).sort((x, y) => Math.abs(x.t - ts) - Math.abs(y.t - ts))[0];
     let cand = near(ts - 0.45, ts + 0.45);
+    if (cand) {
+      const pre = rally.filter(h => h !== cand && h.side === cand.side && h.t < cand.t && h.t > cand.t - 1.0 && h.t >= b.t0 - 0.2 && !h.serve);
+      if (pre.length) { cand.dropped = pre.map(h => h.t); for (const h of pre) rally.splice(rally.indexOf(h), 1); }
+    }
     if (!cand) { cand = near(b.t0 - 0.5, ts - 0.45); if (cand) { cand.tDet = cand.t; cand.t = ts; } }
     if (cand) { cand.clsColor = cand.clsColor || cand.cls; cand.cls = 'fever'; cand.racket = b.name || null; cand.bannerT = b.t0; }
     else {
