@@ -145,7 +145,7 @@ window.Trail = (() => {
   // ---- 手順1: コート基準（台形の内側・ライン画素を除く）----
   function courtRef(img, cam) {
     const d = img.data;
-    const S = [], V = [], L = [], Hs = [], lineLs = [];
+    const S = [], V = [], L = [], Hs = [], lineLs = [], HsV = [];
     const yFar = Court.toScreen(0, Court.Z_BASE, cam).y / SC, yNear = Math.min(H - 1, Court.toScreen(0, -Court.Z_BASE, cam).y / SC);
     for (let y = Math.max(0, yFar | 0); y < yNear; y += 4) {
       const Z = Court.toCourt(960, y * SC, cam).Z;
@@ -155,7 +155,7 @@ window.Trail = (() => {
         const i = (y * W + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
         const { h, s, v } = hsv(r, g, b), l = lum(r, g, b);
         if (l > 175 && s < 0.20) { lineLs.push(l); continue; }
-        S.push(s); V.push(v); L.push(l); if (s > 0.15) Hs.push(h);
+        S.push(s); V.push(v); L.push(l); if (s > 0.15) { Hs.push(h); HsV.push(h, s, v); }
       }
     }
     if (S.length < 200) return null;
@@ -165,7 +165,10 @@ window.Trail = (() => {
     const whiteCap = (lineL < L90 + 60) ? 255 : lineL - 10;
     const useHue = S90 >= 0.25 && Hmed != null;
     if (_od) { outerSample(d, cam); if (Hmed != null) _odCH.push(Hmed); }
-    return { S90, V90, L90, L50, Hmed, lineL, whiteCap, useHue, n: S.length };
+    // NEARHUE（試作・2026-11-18）: コートの色相のばらつき。明るい地面（v>0.75）の画素だけで測る。NEARHUE が切なら測らない（Hd98 は null）
+    let Hd90 = null, Hd98 = null, S50b = null, _hdDbg = null;
+    if (NH && Hmed != null) { const dv = [], sb = []; for (let k = 0; k < HsV.length; k += 3) if (HsV[k + 2] > 0.75) { let q = Math.abs(HsV[k] - Hmed); if (q > 180) q = 360 - q; dv.push(q); sb.push(HsV[k + 1]); } if (dv.length > 100) { Hd90 = pct(dv, 0.9); Hd98 = 2.5 * pct(dv, 0.5); _hdDbg = [pct(dv, 0.5), pct(dv, 0.75), pct(dv, 0.85)]; S50b = pct(sb, 0.5); } }
+    return { S90, V90, L90, L50, Hmed, lineL, whiteCap, useHue, n: S.length, Hd90, Hd98, S50b, _hdDbg };
   }
 
   // ---- 外周の塊を塊の段で落とす（OUTERDROP=1・2026-11-17・既定は切）----
@@ -376,6 +379,8 @@ window.Trail = (() => {
     return (ex >= R && chk(q0 - R)) || (ex + R < EW && chk(q0 + R)) || (ey >= R && chk(q0 - R * EW)) || (ey + R < EH && chk(q0 + R * EW));
   }
 
+  let NH = false, NH_S = 0.12, NH_MIN = 8, NH_PAD = 3;
+  function setNearHue(o) { NH = !!o; if (o) { NH_S = o.s ?? 0.12; NH_MIN = o.min ?? 8; NH_PAD = o.pad ?? 3; } }
   function effectMask(img, ref, rows, lines, cam = null) {
     const gm = _gm && cam ? (gmapExpect(cam), gmapAlign(img), true) : false;
     const d = img.data, mask = new Uint8Array(W * H), wm = _wm, hud = _hud;
@@ -419,6 +424,9 @@ window.Trail = (() => {
           //   コードを読んだだけで、白分岐へ落ちる画素の数・効きは測っていない
           // 色のトレイルの芯は s 0.4 以上なので帯の所が細く削れるだけ。一律 0.45 で切ると、砂の淡い水色のスライス（s 0.16〜0.30・0908 砂 420.9）の筋が帯の所で 1357→397 に痩せ、
           // summarize の再アンカー（次のコマで 2.5 倍）に掛かって run が 3 コマに縮み相手の打点 420.6 を失った
+          // NEARHUE=1（試作）: コートと色相が近い（30°以内）鮮やかなトレイル（0830 ピンクのコートの紫のフラット: 色相差 13〜21°・S 0.54〜0.65・V 0.82〜0.93）。
+          //   コートの明るい地面の色相のばらつき（Hd98）＋余白より離れ、彩度が地面の中央値より NH_S 以上高い明るい画素を通す
+          if (!hit && NH && ref.Hd98 != null && v > 0.75 && s > ref.S50b + NH_S && hd > Math.max(NH_MIN, ref.Hd98 + NH_PAD)) hit = true;
           if (hit && s < netCut && netNear[j]) hit = false;
         } else if (!hit && !useHue && l > lB && s > 0.30) hit = true;
         if (gm && (hit || (s < 0.22 && l > lB)) && gmapNear(j, x, y, r, g, b)) continue;   // 地面の色の地図に近い＝動かない地面（GMAP=1 のときだけ）
@@ -542,6 +550,9 @@ window.Trail = (() => {
       return 'drop';
     }
     let Ht = Htail;
+    // NEARHUE=1 のときだけ: コートがピンク（色相 300〜345）なら flat と暖色の境を 345 から 330 に下げる。0830 で赤い尾（333〜344）の topspin を
+    //   flat と読む打が出るため（試作・2026-11-18。芯で決める案は他のコートで球種一致が下がったので採らない）
+    const FH = NH && ref && ref.Hmed != null && ref.Hmed >= 300 && ref.Hmed < 345 ? 330 : 345;
     // クレイ赤×赤: 尾の色相がコート色と同一になるので先端で判定（手順7）
     if (ref && ref.useHue && Ht != null && hueDist(Ht, ref.Hmed) < 15 && (Ht >= 340 || Ht < 20) && Htip != null) Ht = Htip;
     if (Ht == null) Ht = Htip;
@@ -550,13 +561,13 @@ window.Trail = (() => {
     // オフライン評価（samples/rally/cls-eval-0908.js）で 27/34 → 29/34・退行なし
     if (Ht != null && Hcore != null && hueDist(Ht, Hcore) > 60) Ht = Hcore;
     if (Ht == null) return 'unknown';
-    if (Ht >= 250 && Ht < 345) return 'flat';
+    if (Ht >= 250 && Ht < FH) return 'flat';
     if (Ht >= 140 && Ht < 250) return 'slice';      // 仕様 197-207。芝で先端 150〜195 の水色が実測されたので広げた（2026-09-08）
-    if (Ht >= 345 || Ht < 75) {
+    if (Ht >= FH || Ht < 75) {
       // 暖色族: トップスピンとロブは先端の色相で分ける（仕様: topspin 先端 28-42 / lob 54-55）。
       // 0908 芝 p0（全打トップスピン）で先端 44〜51 が出たので境界は 52
       // 尾が橙〜赤(<45)ならトップスピン（ロブは尾まで黄色い）。クレイでは橙トレイルの先端が 59 まで黄に寄る（2026-09-08 実測）
-      if (Ht >= 345 || Ht < 45) return 'topspin';
+      if (Ht >= FH || Ht < 45) return 'topspin';
       const tip = Htip != null ? Htip : Ht;
       if (tip >= 52 && tip < 75) return 'lob';
       return 'topspin';
@@ -1078,5 +1089,5 @@ window.Trail = (() => {
     return out;
   }
 
-  return { W, H, SC, hsv, hueDist, courtRef, effectMask, detect, runs, shots, classify, HUD_EXCL, netTapeBlob, setOuterDrop, outerStats, outerFilter, gmapBegin, gmapAdd, gmapFinish, gmapStats, _gmapExp: () => ({ ok: _gmOk, exp: _gmExp, dx: _gmDx, dy: _gmDy, GP, EW, GB }), _region: region, _closing: closing, _components: components, _buildLineNear: buildLineNear };
+  return { W, H, SC, hsv, hueDist, courtRef, effectMask, detect, runs, shots, classify, HUD_EXCL, netTapeBlob, setOuterDrop, setNearHue, outerStats, outerFilter, gmapBegin, gmapAdd, gmapFinish, gmapStats, _gmapExp: () => ({ ok: _gmOk, exp: _gmExp, dx: _gmDx, dy: _gmDy, GP, EW, GB }), _region: region, _closing: closing, _components: components, _buildLineNear: buildLineNear };
 })();

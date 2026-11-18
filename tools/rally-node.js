@@ -145,6 +145,7 @@ async function analyze(opts) {
   // 外周の塊を塊の段で落とす（OUTERDROP=1・2026-11-17 試作・既定は切。tools/trail.js の setOuterDrop）。OUTER_PAD: 色相の帯の余白（度・既定 4）・OUTER_TAILX: 尾の横位置の上限（m・既定 6）・OUTER_GAP: コートの色相と外周の帯の離れがこれ未満のポイントでは何も捨てない（度・既定 30）
   const outerOn = opts.trail && process.env.OUTERDROP === '1';
   if (outerOn) Trail.setOuterDrop({ pad: +(process.env.OUTER_PAD || 4), tailX: +(process.env.OUTER_TAILX || 6), minGap: +(process.env.OUTER_GAP || 30) });
+  if (process.env.NEARHUE === '1') Trail.setNearHue({ s: +(process.env.NH_S || 0.12), min: +(process.env.NH_MIN || 8), pad: +(process.env.NH_PAD || 3) });
   if (opts.trail && process.env.GMAP === '1') gmap = await buildGroundMap({ Court, Trail, video, t0, t1, srcFps: ((await ShotColor.videoSize(video)) || {}).fps || null });
   // Phase D: ショット色トレイル（opts.trail のとき毎フレーム）
   const trailLog = [], hist = [], starLog = [];
@@ -215,7 +216,7 @@ async function analyze(opts) {
       // 着弾の星マーカー（ラリーカメラのときだけ・砂コートは star.js 側で除外）
       if (fresh) starLog.push({ t: fr.t, stars: Star.detect(fr.img, { cam, ref: tr.ref }) });
       trailLog.push({ t: fr.t, f: fr.i, blobs: tr.blobs,
-                      ref: tr.ref ? { S90: +tr.ref.S90.toFixed(2), V90: +tr.ref.V90.toFixed(2), L90: Math.round(tr.ref.L90), Hmed: tr.ref.Hmed == null ? null : Math.round(tr.ref.Hmed), lineL: Math.round(tr.ref.lineL), useHue: tr.ref.useHue } : null });
+                      ref: tr.ref ? { S90: +tr.ref.S90.toFixed(2), V90: +tr.ref.V90.toFixed(2), L90: Math.round(tr.ref.L90), Hmed: tr.ref.Hmed == null ? null : Math.round(tr.ref.Hmed), lineL: Math.round(tr.ref.lineL), useHue: tr.ref.useHue, Hd98: tr.ref.Hd98 == null ? null : +tr.ref.Hd98.toFixed(1), S50b: tr.ref.S50b == null ? null : +tr.ref.S50b.toFixed(2) } : null });
     }
     if (opts.trail) { const fl = Flash.detect(fr.img, flashMask); flashMask = fl.mask; if (fl.comps.length) flashLog.push({ t: +fr.t.toFixed(3), comps: fl.comps }); }
     const cs = BallTrack.candidates(fr.img, { prevMask });
