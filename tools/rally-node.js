@@ -102,6 +102,25 @@ async function* frames(video, t0, t1, fps, srcFps = null) {
 
 const warnedFps = new Set(), warnedFar = new Set();   // 動画ごとに 1 回だけ警告する
 
+// 地面の色の地図を作る（GMAP=1 のときだけ analyze が呼ぶ）。ポイントを約 30 コマに間引いて読み、Court.estimate が通り（本解析の pass と同じ条件）、
+// CamRefine.refine で寄せたカメラの線の点数が GMAP_S（既定 0.6）以上のコマだけを地面に投影する。寄せたカメラは地図作りにだけ使い、本解析のカメラは変えない
+async function buildGroundMap({ Court, Trail, video, t0, t1, srcFps }) {
+  const s0 = Date.now(), minS = +(process.env.GMAP_S || 0.6), T = +(process.env.GMAP_T || 30), R = +(process.env.GMAP_R || 3);
+  const gf = Math.max(0.5, Math.min(6, 30 / Math.max(1, t1 - t0)));
+  Trail.gmapBegin();
+  let seen = 0, used = 0;
+  for await (const fr of frames(video, t0, t1, gf, srcFps || 60)) {
+    seen++;
+    const e = Court.estimate(fr.img);
+    if (!(e.ok && !e.suspect && e.hHits >= 2 && e.xHits >= 2 && e.agree != null)) continue;
+    const r = CamRefine.refine(CamRefine.ridge(fr.img.data), e);
+    if (r.s < minS) continue;
+    if (Trail.gmapAdd(fr.img, { ok: true, c0: r.cam.c0, c1: r.cam.c1, Xc: r.cam.Xc, Yc: Court.K / r.cam.c1 })) used++;
+  }
+  const st = Trail.gmapFinish({ T, R, minN: +(process.env.GMAP_N || 4) });
+  return { seen, used, cells: st ? st.cells : 0, T, R, ms: Date.now() - s0 };
+}
+
 // ---- 1ラリーを解析 ----
 // camEvery: カメラ推定の間引き。ラリー中もドリーするので粗すぎると座標がずれる。
 async function analyze(opts) {
@@ -121,6 +140,12 @@ async function analyze(opts) {
   const camTrack = +(process.env.CAMTRACK || 3);
   let camRef = null; const camLog = [];                // 直前に採ったカメラ（寄せ直しの出発点）・採否の記録
   const started = Date.now();
+  // 地面の色の地図（GMAP=1・2026-11-17 試作・既定は切）: 本解析の前にポイントを粗く読み直し、カメラが線に合うコマだけで地図を作る（tools/trail.js の gmap*）
+  let gmap = null;
+  // 外周の塊を塊の段で落とす（OUTERDROP=1・2026-11-17 試作・既定は切。tools/trail.js の setOuterDrop）。OUTER_PAD: 色相の帯の余白（度・既定 4）・OUTER_TAILX: 尾の横位置の上限（m・既定 6）・OUTER_GAP: コートの色相と外周の帯の離れがこれ未満のポイントでは何も捨てない（度・既定 30）
+  const outerOn = opts.trail && process.env.OUTERDROP === '1';
+  if (outerOn) Trail.setOuterDrop({ pad: +(process.env.OUTER_PAD || 4), tailX: +(process.env.OUTER_TAILX || 6), minGap: +(process.env.OUTER_GAP || 30) });
+  if (opts.trail && process.env.GMAP === '1') gmap = await buildGroundMap({ Court, Trail, video, t0, t1, srcFps: ((await ShotColor.videoSize(video)) || {}).fps || null });
   // Phase D: ショット色トレイル（opts.trail のとき毎フレーム）
   const trailLog = [], hist = [], starLog = [];
   // 打点の閃光（tools/flash.js・2026-10-15）: 毎コマの白い塊の記録
@@ -217,6 +242,8 @@ async function analyze(opts) {
   const segs = BallTrack.ballSegments(ranked);
   const events = segs.length ? BallTrack.classifyEvents(segs, camAt) : [];
   const yFarAt = t => { const c = camAt(t); return c && c.ok ? Court.toScreen(0, Court.Z_BASE, c).y / Trail.SC : null; };   // 奥ベースラインの画面 y（カメラの縦移動の物差し）
+  // OUTERDROP: ポイント全体の外周の帯とコートの色相で離れを1回だけ出し、開いていれば trailLog の塊をふるってから runs に渡す（trail.js の outerFilter）
+  const outerRes = outerOn ? Trail.outerFilter(trailLog) : null;
   const trailRuns = opts.trail ? Trail.runs(trailLog, { fps: fps / trailEvery, yFarAt }) : null;
   const shots = trailRuns ? Trail.shots(trailRuns, { tStart: t0 }) : null;
   const track = []; segs.forEach(s => s.pts.forEach(p => track.push(p))); track.sort((a, b) => a.t - b.t);
@@ -260,7 +287,7 @@ async function analyze(opts) {
   if (rally && rally.length && opts.trail && process.env.TRAJ === '1' && !notFhd && cams.length > 1) traj = await Traj.apply({ video, rally, cams: cams.map(c => ({ t: c.t, c0: c.cam.c0, c1: c.cam.c1, Xc: c.cam.Xc })), trailLog, markers });
 
   return {
-    rally, shots, trailRuns, markers, farBall, shotColor, flash, flashSlice, dupOpp, dupSame, traj, trailLog: opts.trail ? trailLog : undefined,
+    rally, shots, trailRuns, markers, farBall, shotColor, flash, flashSlice, dupOpp, dupSame, traj, ...(gmap ? { gmap } : {}), ...(outerOn ? { outerDrop: { ...Trail.outerStats(), ...outerRes } } : {}), trailLog: opts.trail ? trailLog : undefined,
     video: path.basename(video), t0, t1, fps, variant: opts.variant || null,
     input: vi ? { w: vi.w, h: vi.h, fps: vi.fps, resampled: resample, notFhd60: notFhd } : null,   // 入力の解像度・コマ数と FHD 60fps でない理由（2026-09-24 exp-int3f）
     ms: Date.now() - started,

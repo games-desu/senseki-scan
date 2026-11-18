@@ -164,8 +164,83 @@ window.Trail = (() => {
     const lineL = lineLs.length >= 50 ? median(lineLs) : 255;
     const whiteCap = (lineL < L90 + 60) ? 255 : lineL - 10;
     const useHue = S90 >= 0.25 && Hmed != null;
+    if (_od) { outerSample(d, cam); if (Hmed != null) _odCH.push(Hmed); }
     return { S90, V90, L90, L50, Hmed, lineL, whiteCap, useHue, n: S.length };
   }
+
+  // ---- 外周の塊を塊の段で落とす（OUTERDROP=1・2026-11-17・既定は切）----
+  // 設計ノート「ラリー解析 コート差と選手の扱いの設計」の「標本 60 打に絵で印を付けた結果」。0830（ピンクのコート・青緑の外周）で、
+  // 種別 slice の色相の帯（140〜250）に外周の青緑（185〜218）が丸ごと入り、外周・ネット・線と外周がくっついた塊が trail の打になっていた。
+  // 追跡（runs）に渡す前に、(a) 芯の色相 Hcore がそのポイントの外周の色相の帯に入る塊、(b) 尾の横位置 |tailX| が tailX m を超える塊を捨てる。
+  // 外周の色相は固定値にせず、courtRef（カメラが変わるたび）でダブルスの線の外側（横 0.8〜4 m・奥行きはコートの長さ）の画素を足していき、
+  // 色相の山（5° でならした最多の所）の ±45° に入る画素の 2.5〜97.5% に pad（既定 4°）を足した帯とする。0830 の外周の画素は 2.5〜97.5% が 189〜213（p11 だけ 192〜216）で、
+  // 帯は 185〜217（p11 188〜220）。塊の芯の色相は画素の混ざりで外周の画素より広がる（標本で分かれた 180〜220）ので少し広げるが、本物の青いトレイル（223〜225）に届かないよう 4° に留める。
+  // 有彩の画素が MIN_N 未満・山に入る割合が 0.5 未満・帯が 60° より広いときは色相では落とさない（外周がまとまった色でない）。
+  // rally-node が setOuterDrop({ pad, tailX }) を呼んだときだけ働く。呼ばなければ今までと同じ
+  let _od = null;
+  const _odHist = new Float64Array(360); let _odN = 0, _odTot = 0, _odBand = null; const _odCH = [];
+  function setOuterDrop(o) { _od = o ? { pad: 4, tailX: 6, minN: 2000, minGap: 30, ...o } : null; _odHist.fill(0); _odN = 0; _odTot = 0; _odBand = null; _odCH.length = 0; }
+  function outerSample(d, cam) {
+    const zA = Court.toScreen(0, Court.Z_BASE, cam).y / SC, zB = Math.min(H - 1, Court.toScreen(0, -Court.Z_BASE, cam).y / SC);
+    for (let y = Math.max(0, zA | 0); y < zB; y += 3) {
+      const Z = Court.toCourt(960, y * SC, cam).Z;
+      for (const sg of [-1, 1]) {
+        const xa = Court.toScreen(sg * (Court.X_DBL + 0.8), Z, cam).x / SC, xb = Court.toScreen(sg * (Court.X_DBL + 4), Z, cam).x / SC;
+        const x0 = Math.max(0, Math.min(xa, xb) | 0), x1 = Math.min(W, Math.max(xa, xb));
+        for (let x = x0; x < x1; x += 3) {
+          if (_hud[y * W + x]) continue;
+          const i = (y * W + x) * 4, c = hsv(d[i], d[i + 1], d[i + 2]); _odTot++;
+          if (c.s > 0.25 && c.v > 0.2) { _odHist[Math.floor(c.h) % 360]++; _odN++; }
+        }
+      }
+    }
+    _odBand = null;
+  }
+  function outerBand() {
+    if (_odBand) return _odBand;
+    if (_odN < _od.minN) return (_odBand = { ok: false, n: _odN });
+    let pk = 0, best = -1;
+    for (let h = 0; h < 360; h++) { let s = 0; for (let k = -2; k <= 2; k++) s += _odHist[(h + k + 360) % 360]; if (s > best) { best = s; pk = h; } }
+    // 山の ±45° の画素を、山からの符号付きの差で並べて 5〜95%
+    let inN = 0; const acc = new Float64Array(91);
+    for (let k = -45; k <= 45; k++) { const v = _odHist[(pk + k + 360) % 360]; acc[k + 45] = v; inN += v; }
+    const q = p => { let c = 0; for (let k = 0; k <= 90; k++) { c += acc[k]; if (c >= p * inN) return k - 45; } return 45; };
+    const qa = q(0.025), qb = q(0.975) + 1, lo = (pk + qa + 360) % 360, hi = (pk + qb + 360) % 360, w = qb - qa;
+    const share = inN / _odN, ok = share >= 0.5 && w <= 60;
+    return (_odBand = { ok, peak: pk, lo, hi, w, share: +share.toFixed(2), n: _odN, q: [0.01, 0.025, 0.05, 0.1, 0.5, 0.9, 0.95, 0.975, 0.99].map(p => (pk + q(p) + 360) % 360) });
+  }
+  function inBand(h, b, pad) { const w = b.w + 2 * pad, d = (h - (b.lo - pad) + 720) % 360; return d <= w; }
+  // 条件（2026-11-18・設計セッションの依頼）: コートの色相（courtRef の Hmed のポイント全体の中央値）と外周の帯（余白なし）の離れが minGap（既定 30°）以上のポイントだけで、
+  // 色と尾の両方の決まりを効かせる。検出は「コートの色と違う鮮やかな画素」なので、外周がコートと同じ色ならそもそも拾われず、捨てれば本物の軌跡だけを失う。
+  // 保存済みの記録で 0830 は 90〜113°、他の 18 セットは n0908 p11（67°）を除き 0〜2°。
+  // 捨てるのはコマごとの検出の段ではなく、ポイントのループが終わって runs に渡す直前（outerFilter）。灰色の石のコート（n0908b）では
+  // 最初の数秒の外周の帯が端のオレンジのレンガにでき（p1 の 92〜98 秒）、その時点までの値で決めると条件が開いてしまったため。帯が測れないポイントでは何も捨てない
+  function hueDistC(a, b) { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; }
+  function outerGap() {
+    const b = outerBand();
+    if (!b.ok || !_odCH.length) return null;
+    const ch = [..._odCH].sort((x, y) => x - y)[_odCH.length >> 1];
+    const gap = inBand(ch, b, 0) ? 0 : Math.min(hueDistC(ch, b.lo), hueDistC(ch, b.hi));
+    return { ch: Math.round(ch), gap: Math.round(gap), chN: _odCH.length };
+  }
+  function outerDropBlob(Hcore, tailX) {
+    if (tailX != null && Math.abs(tailX) > _od.tailX) return 'tailX';
+    if (Hcore != null && inBand(Hcore, outerBand(), _od.pad)) return 'hue';
+    return null;
+  }
+  // trailLog（[{t, blobs}]）の塊をその場でふるう。戻り値は { on, dropped, log }（on: 離れが minGap 以上で決まりを効かせたか）
+  function outerFilter(trailLog) {
+    if (!_od) return null;
+    const g = outerGap(), on = !!g && g.gap >= _od.minGap, log = [];
+    let dropped = 0;
+    if (on) for (const f of trailLog) {
+      const d = [];
+      f.blobs = f.blobs.filter(b => { const why = outerDropBlob(b.Hcore, b.tailX); if (why) d.push({ n: b.n, Hcore: b.Hcore, tailX: b.tailX, why }); return !why; });
+      if (d.length) { dropped += d.length; log.push({ t: +f.t.toFixed(3), d }); }
+    }
+    return { on, dropped, log };
+  }
+  function outerStats() { return _od ? { ...outerBand(), ...(outerGap() || {}), minGap: _od.minGap, pad: _od.pad, tailX: _od.tailX, tot: _odTot } : null; }
 
   // ---- 手順2: 3分岐マスク ----
   // 白分岐は別マスクに取り、9x9 のオープニング（細い構造の除去）を掛けてから合流させる。
@@ -187,7 +262,122 @@ window.Trail = (() => {
   // HUD 除外は画素ごとの配列走査でなく事前に焼いたマスクで見る（effectMask が 85ms/コマだった主因のひとつ）
   const _hud = new Uint8Array(W * H);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (inHud(x, y)) _hud[y * W + x] = 1;
-  function effectMask(img, ref, rows, lines) {
+  // ---- 地面の色の地図（2026-11-17 試作・設計ノート「ラリー解析 コート差と選手の扱いの設計」の第 1 段）----
+  // ポイントごとに、カメラが線に合っているコマを地面（Y=0）に投影し、場所（X 0.05m × Z 0.1m）ごとに色の中央値を持つ。
+  // effectMask で、画素がその場所の地図の色に近ければエフェクトとしない（外周・影など動かない地面が落ち、動くトレイルは残る）。
+  // 地図を作るのは rally-node の analyze（GMAP=1 のときだけ・既定は切。地図が無ければ effectMask は今までと同じ）。
+  //   gmapBegin() → gmapAdd(img, cam) をコマごと → gmapFinish({ T, R, minN }) で有効。gmapStats() は診断用
+  //   T: 色の差（RGB のユークリッド距離）がこれ以下なら地面・R: カメラのずれを見込んで ±R 画素の 5 点を見る・minN: 中央値に要るコマ数
+  const GM = { X0: -14, Z0: -20, sx: 0.05, sz: 0.1, nx: 560, nz: 740, K: 24 };
+  let _gmAcc = null, _gm = null, _gmCam = null, _gmExp = null, _gmOk = null;
+  function gmapRow(y, cam) {
+    // 画面の行 y（960 空間）の地面の Z と、x=0・x=W の X（行の中では X は x に比例）
+    const ys = y * SC + SC / 2, a = Court.toCourt(0, ys, cam), b = Court.toCourt(W * SC, ys, cam);
+    return { Z: a.Z, Xa: a.X, dX: (b.X - a.X) / W };
+  }
+  function gmapBegin() {
+    const N = GM.nx * GM.nz;
+    _gmAcc = { n: 0, cnt: new Uint8Array(N), buf: new Uint8Array(N * GM.K * 3), sum: new Float32Array(N * 3), c: new Uint16Array(N), touched: new Int32Array(N) };
+    _gm = null; _gmCam = null;
+  }
+  function gmapAdd(img, cam) {
+    const A = _gmAcc; if (!A || A.n >= GM.K) return false;
+    const d = img.data, sum = A.sum, c = A.c, tc = A.touched; let nt = 0;
+    for (let y = 0; y < H; y++) {
+      const r = gmapRow(y, cam), iz = Math.floor((r.Z - GM.Z0) / GM.sz);
+      if (!(iz >= 0 && iz < GM.nz)) continue;
+      for (let x = 0; x < W; x++) {
+        const j = y * W + x; if (_hud[j]) continue;
+        const ix = Math.floor((r.Xa + (x + 0.5) * r.dX - GM.X0) / GM.sx);
+        if (ix < 0 || ix >= GM.nx) continue;
+        const k = iz * GM.nx + ix, i = j * 4;
+        if (!c[k]) tc[nt++] = k;
+        c[k]++; sum[k * 3] += d[i]; sum[k * 3 + 1] += d[i + 1]; sum[k * 3 + 2] += d[i + 2];
+      }
+    }
+    // コマの中ではセルの平均、コマをまたいでは中央値（1 コマが多くの画素を持つ手前のセルでも、コマの数で決まるように）
+    for (let q = 0; q < nt; q++) {
+      const k = tc[q], n = c[k], s = A.cnt[k]++, o = (k * GM.K + s) * 3;
+      A.buf[o] = sum[k * 3] / n; A.buf[o + 1] = sum[k * 3 + 1] / n; A.buf[o + 2] = sum[k * 3 + 2] / n;
+      c[k] = 0; sum[k * 3] = sum[k * 3 + 1] = sum[k * 3 + 2] = 0;
+    }
+    A.n++;
+    return true;
+  }
+  function gmapFinish({ T = 30, R = 3, minN = 4 } = {}) {
+    const A = _gmAcc; _gmAcc = null; if (!A || !A.n) { _gm = null; return null; }
+    const N = GM.nx * GM.nz, col = new Uint8Array(N * 3), ok = new Uint8Array(N), tmp = [[], [], []];
+    let nOk = 0;
+    for (let k = 0; k < N; k++) {
+      const n = A.cnt[k]; if (n < Math.min(minN, A.n)) continue;
+      for (let ch = 0; ch < 3; ch++) { const t = tmp[ch]; t.length = n; for (let s = 0; s < n; s++) t[s] = A.buf[(k * GM.K + s) * 3 + ch]; t.sort((p, q) => p - q); col[k * 3 + ch] = t[n >> 1]; }
+      ok[k] = 1; nOk++;
+    }
+    _gm = { col, ok, T2: T * T, R, frames: A.n, cells: nOk };
+    return { frames: A.n, cells: nOk };
+  }
+  function gmapStats() { return _gm ? { frames: _gm.frames, cells: _gm.cells, T: Math.sqrt(_gm.T2), R: _gm.R } : null; }
+  // カメラごとに、各画素で見込まれる地面の色を描いておく（カメラが変わったときだけ）。下のずれ合わせで画面外を参照するので、上下左右に GP 画素の余白を付けて描く
+  const GP = 64, EW = W + 2 * GP, EH = H + 2 * GP;
+  function gmapExpect(cam) {
+    if (_gmCam === cam && _gmExp) return;
+    if (!_gmExp) { _gmExp = new Uint8Array(EW * EH * 3); _gmOk = new Uint8Array(EW * EH); }
+    _gmOk.fill(0);
+    for (let ey = 0; ey < EH; ey++) {
+      const r = gmapRow(ey - GP, cam), iz = Math.floor((r.Z - GM.Z0) / GM.sz);
+      if (!(iz >= 0 && iz < GM.nz)) continue;
+      for (let ex = 0; ex < EW; ex++) {
+        const ix = Math.floor((r.Xa + (ex - GP + 0.5) * r.dX - GM.X0) / GM.sx);
+        if (ix < 0 || ix >= GM.nx) continue;
+        const k = iz * GM.nx + ix; if (!_gm.ok[k]) continue;
+        const q = ey * EW + ex; _gmOk[q] = 1; _gmExp[q * 3] = _gm.col[k * 3]; _gmExp[q * 3 + 1] = _gm.col[k * 3 + 1]; _gmExp[q * 3 + 2] = _gm.col[k * 3 + 2];
+      }
+    }
+    _gmCam = cam;
+  }
+  // 解析のカメラは最大 0.25 秒古く、速く動くコートでは地図が数十画素ずれる（0830 p3 63.0 秒で縦に約 30 画素・寄りも変わる）。
+  // コマごとに、地図の色と今のコマの色が合う点の数が最大になる平行移動を探す。まず画面全体で（±48 画素を 4 刻み→±3 を 1 刻み）、
+  // 次に 60 行ずつの横帯ごとに全体の値の ±12 画素で探し直す（寄りの変化は帯ごとの縦横のずれで近似する）。点が 30 未満の帯は全体の値
+  const GB = 60, NB = Math.ceil(H / GB);
+  const _gmDx = new Int16Array(NB), _gmDy = new Int16Array(NB);
+  let _gmPts = null;
+  function gmapAlign(img) {
+    const d = img.data, T2 = _gm.T2;
+    if (!_gmPts) { const p = []; for (let y = 5; y < H - 5; y += 10) for (let x = 5; x < W - 5; x += 10) if (!_hud[y * W + x]) p.push(x, y); _gmPts = p; }
+    const sc = (dx, dy, y0, y1) => {
+      let n = 0;
+      for (let p = 0; p < _gmPts.length; p += 2) {
+        const x = _gmPts[p], y = _gmPts[p + 1]; if (y < y0 || y >= y1) continue;
+        const q = (y - dy + GP) * EW + (x - dx + GP); if (!_gmOk[q]) continue;
+        const i = (y * W + x) * 4, dr = d[i] - _gmExp[q * 3], dg = d[i + 1] - _gmExp[q * 3 + 1], db = d[i + 2] - _gmExp[q * 3 + 2];
+        if (dr * dr + dg * dg + db * db <= T2) n++;
+      }
+      return n;
+    };
+    const search = (cx, cy, rng, st, y0, y1) => {
+      let bx = cx, by = cy, bs = sc(cx, cy, y0, y1);
+      for (let dy = cy - rng; dy <= cy + rng; dy += st) for (let dx = cx - rng; dx <= cx + rng; dx += st) { if (Math.abs(dx) > GP - 4 || Math.abs(dy) > GP - 4) continue; const s = sc(dx, dy, y0, y1); if (s > bs) { bs = s; bx = dx; by = dy; } }
+      return [bx, by, bs];
+    };
+    let [gx, gy] = search(0, 0, 48, 4, 0, H); [gx, gy] = search(gx, gy, 3, 1, 0, H);
+    for (let b = 0; b < NB; b++) {
+      const y0 = b * GB, y1 = Math.min(H, y0 + GB);
+      let [bx, by, bs] = search(gx, gy, 12, 2, y0, y1); [bx, by, bs] = search(bx, by, 1, 1, y0, y1);
+      if (bs < 30) { bx = gx; by = gy; }
+      _gmDx[b] = bx; _gmDy[b] = by;
+    }
+  }
+  function gmapNear(j, x, y, r, g, b) {
+    const R = _gm.R, T2 = _gm.T2, bd = (y / GB) | 0;
+    const ex = x - _gmDx[bd] + GP, ey = y - _gmDy[bd] + GP, q0 = ey * EW + ex;
+    const chk = q => { if (!_gmOk[q]) return false; const dr = r - _gmExp[q * 3], dg = g - _gmExp[q * 3 + 1], db = b - _gmExp[q * 3 + 2]; return dr * dr + dg * dg + db * db <= T2; };
+    if (chk(q0)) return true;
+    if (!R) return false;
+    return (ex >= R && chk(q0 - R)) || (ex + R < EW && chk(q0 + R)) || (ey >= R && chk(q0 - R * EW)) || (ey + R < EH && chk(q0 + R * EW));
+  }
+
+  function effectMask(img, ref, rows, lines, cam = null) {
+    const gm = _gm && cam ? (gmapExpect(cam), gmapAlign(img), true) : false;
     const d = img.data, mask = new Uint8Array(W * H), wm = _wm, hud = _hud;
     let yTop = H; for (let y = 0; y < H; y++) if (rows[y * 2] <= rows[y * 2 + 1]) { yTop = y; break; }
     wm.fill(0, Math.max(0, yTop) * W);
@@ -231,6 +421,7 @@ window.Trail = (() => {
           // summarize の再アンカー（次のコマで 2.5 倍）に掛かって run が 3 コマに縮み相手の打点 420.6 を失った
           if (hit && s < netCut && netNear[j]) hit = false;
         } else if (!hit && !useHue && l > lB && s > 0.30) hit = true;
+        if (gm && (hit || (s < 0.22 && l > lB)) && gmapNear(j, x, y, r, g, b)) continue;   // 地面の色の地図に近い＝動かない地面（GMAP=1 のときだけ）
         if (hit) mask[j] = 1;
         else if (s < 0.22 && l > lB && l < whiteCap && !(lines && lines[j])) wm[j] = 1;
       }
@@ -436,7 +627,7 @@ window.Trail = (() => {
     let yTop = H; for (let y = 0; y < H; y++) if (rows[y * 2] <= rows[y * 2 + 1]) { yTop = y; break; }
     const lines = buildLineNear(cam);
     measureNet(img, cam, ref);
-    const raw = effectMask(img, ref, rows, lines);
+    const raw = effectMask(img, ref, rows, lines, cam);
     // カメラが大きく変わった（サーブ画→ラリー画のカット）ら居座りの履歴を捨てる。前の画の選手の位置が"居座り"として残り、
     // そこを通るサーブのトレイルが消えた（0908b p4 185.6: c0 0.00074→0.00091・Yc 16.7→12.7）
     if (_lastCam && (Math.abs(cam.c0 - _lastCam.c0) / _lastCam.c0 > 0.12 || Math.abs(cam.Yc - _lastCam.Yc) > 1.5)) { _ring.length = 0; _ringI = 0; _cnt.fill(0); }
@@ -887,5 +1078,5 @@ window.Trail = (() => {
     return out;
   }
 
-  return { W, H, SC, hsv, hueDist, courtRef, effectMask, detect, runs, shots, classify, HUD_EXCL, netTapeBlob, _region: region, _closing: closing, _components: components, _buildLineNear: buildLineNear };
+  return { W, H, SC, hsv, hueDist, courtRef, effectMask, detect, runs, shots, classify, HUD_EXCL, netTapeBlob, setOuterDrop, outerStats, outerFilter, gmapBegin, gmapAdd, gmapFinish, gmapStats, _gmapExp: () => ({ ok: _gmOk, exp: _gmExp, dx: _gmDx, dy: _gmDy, GP, EW, GB }), _region: region, _closing: closing, _components: components, _buildLineNear: buildLineNear };
 })();
