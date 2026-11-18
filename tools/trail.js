@@ -426,7 +426,8 @@ window.Trail = (() => {
           // summarize の再アンカー（次のコマで 2.5 倍）に掛かって run が 3 コマに縮み相手の打点 420.6 を失った
           // NEARHUE=1（試作）: コートと色相が近い（30°以内）鮮やかなトレイル（0830 ピンクのコートの紫のフラット: 色相差 13〜21°・S 0.54〜0.65・V 0.82〜0.93）。
           //   コートの明るい地面の色相のばらつき（Hd98）＋余白より離れ、彩度が地面の中央値より NH_S 以上高い明るい画素を通す
-          if (!hit && NH && ref.Hd98 != null && v > 0.75 && s > ref.S50b + NH_S && hd > Math.max(NH_MIN, ref.Hd98 + NH_PAD)) hit = true;
+          //   拾うのもコートがピンク（色相 300〜345）のときだけ（2026-11-18・砂のコートで余分が増えたため。他のコートはその色相のコマが 0 なので切と同じ）
+          if (!hit && NH && ref.Hd98 != null && ref.Hmed >= 300 && ref.Hmed < 345 && v > 0.75 && s > ref.S50b + NH_S && hd > Math.max(NH_MIN, ref.Hd98 + NH_PAD)) hit = true;
           if (hit && s < netCut && netNear[j]) hit = false;
         } else if (!hit && !useHue && l > lB && s > 0.30) hit = true;
         if (gm && (hit || (s < 0.22 && l > lB)) && gmapNear(j, x, y, r, g, b)) continue;   // 地面の色の地図に近い＝動かない地面（GMAP=1 のときだけ）
