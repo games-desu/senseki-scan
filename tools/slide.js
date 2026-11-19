@@ -16,9 +16,9 @@ function apply(rally) {
   }
   return n + applyPale(rally) + applyUnk(rally);
 }
-// 淡いトレイルの topspin → slide（PALESLIDE・2026-11-19 試作・既定は切）。trail.js shots の paleTop（コートの色相 300〜345 で、sMax・nMax が小さい run）を持つ
+// 淡いトレイルの topspin → slide（PALESLIDE・2026-11-19 試作 → 同日から既定は入・PALESLIDE=0 で切）。trail.js shots の paleTop（コートの色相 300〜345 で、sMax・nMax が小さい run）を持つ
 //   trail 打点が、fuse・shotcolor・紫のフラットの後もまだ topspin なら slide にする。印は paleSlide: true・元の種別は clsPale。votes・clsAlt は書き換えない。
-//   paleTop は rally-node が PALESLIDE=1 で Trail.setPaleSlide を呼んだときだけ付くので、切のときは何もしない
+//   paleTop は rally-node が Trail.setPaleSlide を呼んだときだけ付くので、PALESLIDE=0 のときは何もしない
 function applyPale(rally) {
   let n = 0;
   for (const h of rally || []) if (h.src === 'trail' && h.cls === 'topspin' && h.paleTop) { h.clsPale = h.cls; h.cls = 'slide'; h.paleSlide = true; n++; }

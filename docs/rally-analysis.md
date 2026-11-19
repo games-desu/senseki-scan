@@ -2243,9 +2243,9 @@ NEARHUE だけで増える余分が、OUTERDROP を足すとどう消えるか(�
 
 **弱み**: NEARHUE が効くのはコートがピンク(色相 300〜345)のときだけで、ピンクのコートの録画は 0830 の 1 本しかない。門の色相の幅・境の 330・拾う条件のしきい値はこの 1 本で決めたので、別のピンクのコートで余分が増えないかは確かめていない。OUTERDROP も、門(`OUTER_GAP`)を付けた後は他のコートの rally が exp-cam0 と変わらないので、0830 以外のコートで効いたときの良し悪しは確かめていない。
 
-## 淡いトレイルの topspin を slide に読み替える(PALESLIDE・試作・既定は切・2026-11-19)
+## 淡いトレイルの topspin を slide に読み替える(PALESLIDE・試作・当時は既定は切 → 同日から既定は入・2026-11-19)
 
-設計セッションの依頼。0830 の両方入の記録で、正解 slide の当たり 24 打のうち 12 打が topspin と読まれ、そのうち 9 打は元のトレイル(shots の要素)の `sMax` 0.35〜0.48・`nMax` 674〜2422 と淡く小さい。本物の topspin の当たり(42 打)は `sMax` 0.62〜0.72・`nMax` の中央 1 万前後で、この範囲に 1 打も入らない。本人了承済みの「色が無いと確かめられた打は slide」の範囲内。`PALESLIDE=1` で有効。
+設計セッションの依頼。0830 の両方入の記録で、正解 slide の当たり 24 打のうち 12 打が topspin と読まれ、そのうち 9 打は元のトレイル(shots の要素)の `sMax` 0.35〜0.48・`nMax` 674〜2422 と淡く小さい。本物の topspin の当たり(42 打)は `sMax` 0.62〜0.72・`nMax` の中央 1 万前後で、この範囲に 1 打も入らない。本人了承済みの「色が無いと確かめられた打は slide」の範囲内。当時は `PALESLIDE=1` で有効 → 同日に本人の判断で既定は入(`PALESLIDE=0` で切・末尾の節)。
 
 - 印: `tools/trail.js` の `shots` の最後で、`sMax < PS_S`(既定 0.5)・`nMax < PS_N`(既定 3000)・コートの色相 `courtH` が 300〜345 の run に `paleTop` を付ける(run の種別は見ない。打点の種別は shotcolor で変わることがあるため: x0911 p6 172.24 は run が drop で打点が topspin)。`rally-fuse` が打点に写す
 - 読み替え: `tools/slide.js` の `applyPale`(`apply` の最後。fuse・shotcolor・紫のフラットの後、gapfill の前)で、由来 trail・種別 topspin・`paleTop` の打点を slide にする。印は `paleSlide: true`、元の種別は `clsPale`。votes・clsAlt は書き換えない
@@ -2311,3 +2311,20 @@ NEARHUE だけで増える余分が、OUTERDROP を足すとどう消えるか(�
 - 当たりで正解が slide でないのに slide になる 28 本: lob 9・dive 6・slice 5・flat 4・drop 3・topspin 1。正解 unknown・fever を失うものは 0
 - 見込み(球種 +36・0830 +5・他 +31、正解 slide でない当たり 28)と一致。余分の打が slide になるのは見込みの 22 に対して実測 20(unk-src.js をそのまま走らせても 20 になる)
 - 正解の無い d0908b・d0908p5・d151815 は掛け直しただけ(変化 0)
+
+## PALESLIDE を既定で入にする・3 つを全部通した 0830 の採点(2026-11-19・本人の判断)
+
+`tools/rally-node.js` の PALESLIDE を NEARHUE と同じ形(`PALESLIDE=0` のときだけ切)にした。PS_S・PS_N と色相 300〜345 の門はそのまま。
+
+0830 は環境変数なしの流れ(PALESLIDE・UNKSLIDE を含む解析 → applyFever)を保存済みの記録で組み立てた。exp-pale/new0830 に `applyUnk` を掛け(`exp-all/new0830`)、さらに applyFever を掛けた(`exp-all-fv/new0830`)。PALESLIDE は topspin しか、UNKSLIDE は unknown しか動かさないので、掛ける順番で結果は変わらない。
+
+| 0830 p0〜p28 | 正解 242(p0 を除く) | 正解 256(p0 を含む) |
+|---|---|---|
+| 既定(切の頃・exp-def) | 182 / 100 / 90 | 194 / 102 / 96 |
+| PALESLIDE + UNKSLIDE(exp-all) | 182 / 100 / 104 | — |
+| 3 つ全部(+ applyFever・exp-all-fv) | 183 / 100 / 111 | 195 / 102 / 117 |
+
+(当たり / 余分 / 球種一致)
+
+- 設計側の見込み(当たり 183・余分 100・種別 111 前後)と一致。内訳は PALESLIDE +9、UNKSLIDE +5、fever +7 の足し算どおりで、fever が paleSlide・unkSlide の打を上書きした例は 0
+- 他の 18 セット: 保存してある shots(`sMax`・`nMax`・`courtH`)で数えると、門の中で淡く小さい run は全セットで 0 本(0830 では 46 本あり、exp-pale の paleTop の数と同じ)。PALESLIDE が付ける印が無いので、打の時刻・側・由来・球種は exp-unk-oth と全部同じになる
