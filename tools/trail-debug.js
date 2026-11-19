@@ -12,7 +12,8 @@ async function main() {
   const get = (k, d) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : d; };
   const out = get('--out', 'trail-dbg.png'), n = +get('--n', 4);
   const { Court, Trail } = loadModules(null);
-  if (process.env.NEARHUE === '1') Trail.setNearHue({ s: +(process.env.NH_S || 0.12), min: +(process.env.NH_MIN || 8), pad: +(process.env.NH_PAD || 3) });
+  // NEARHUE は rally-node と同じく既定は入（NEARHUE=0 で切）。OUTERDROP はポイントのループの後で塊を捨てる（outerFilter）ので、1 コマを描くこの道具には掛からない
+  if (process.env.NEARHUE !== '0') Trail.setNearHue({ s: +(process.env.NH_S || 0.12), min: +(process.env.NH_MIN || 8), pad: +(process.env.NH_PAD || 3) });
   const W = 960, H = 540;
   let cam = null, hist = [], last = null, img = null, tt = 0;
   const times = [];

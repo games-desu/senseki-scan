@@ -165,13 +165,13 @@ window.Trail = (() => {
     const whiteCap = (lineL < L90 + 60) ? 255 : lineL - 10;
     const useHue = S90 >= 0.25 && Hmed != null;
     if (_od) { outerSample(d, cam); if (Hmed != null) _odCH.push(Hmed); }
-    // NEARHUE（試作・2026-11-18）: コートの色相のばらつき。明るい地面（v>0.75）の画素だけで測る。NEARHUE が切なら測らない（Hd98 は null）
+    // NEARHUE（2026-11-18 試作・同日から rally-node の既定は入、NEARHUE=0 で切）: コートの色相のばらつき。明るい地面（v>0.75）の画素だけで測る。NEARHUE が切なら測らない（Hd98 は null）
     let Hd90 = null, Hd98 = null, S50b = null, _hdDbg = null;
     if (NH && Hmed != null) { const dv = [], sb = []; for (let k = 0; k < HsV.length; k += 3) if (HsV[k + 2] > 0.75) { let q = Math.abs(HsV[k] - Hmed); if (q > 180) q = 360 - q; dv.push(q); sb.push(HsV[k + 1]); } if (dv.length > 100) { Hd90 = pct(dv, 0.9); Hd98 = 2.5 * pct(dv, 0.5); _hdDbg = [pct(dv, 0.5), pct(dv, 0.75), pct(dv, 0.85)]; S50b = pct(sb, 0.5); } }
     return { S90, V90, L90, L50, Hmed, lineL, whiteCap, useHue, n: S.length, Hd90, Hd98, S50b, _hdDbg };
   }
 
-  // ---- 外周の塊を塊の段で落とす（OUTERDROP=1・2026-11-17・既定は切）----
+  // ---- 外周の塊を塊の段で落とす（OUTERDROP・2026-11-17 試作・2026-11-18 から rally-node の既定は入、OUTERDROP=0 で切）----
   // 設計ノート「ラリー解析 コート差と選手の扱いの設計」の「標本 60 打に絵で印を付けた結果」。0830（ピンクのコート・青緑の外周）で、
   // 種別 slice の色相の帯（140〜250）に外周の青緑（185〜218）が丸ごと入り、外周・ネット・線と外周がくっついた塊が trail の打になっていた。
   // 追跡（runs）に渡す前に、(a) 芯の色相 Hcore がそのポイントの外周の色相の帯に入る塊、(b) 尾の横位置 |tailX| が tailX m を超える塊を捨てる。
@@ -179,7 +179,7 @@ window.Trail = (() => {
   // 色相の山（5° でならした最多の所）の ±45° に入る画素の 2.5〜97.5% に pad（既定 4°）を足した帯とする。0830 の外周の画素は 2.5〜97.5% が 189〜213（p11 だけ 192〜216）で、
   // 帯は 185〜217（p11 188〜220）。塊の芯の色相は画素の混ざりで外周の画素より広がる（標本で分かれた 180〜220）ので少し広げるが、本物の青いトレイル（223〜225）に届かないよう 4° に留める。
   // 有彩の画素が MIN_N 未満・山に入る割合が 0.5 未満・帯が 60° より広いときは色相では落とさない（外周がまとまった色でない）。
-  // rally-node が setOuterDrop({ pad, tailX }) を呼んだときだけ働く。呼ばなければ今までと同じ
+  // rally-node が setOuterDrop({ pad, tailX }) を呼んだときだけ働く（rally-node は OUTERDROP=0 でなければ呼ぶ）。呼ばなければ今までと同じ
   let _od = null;
   const _odHist = new Float64Array(360); let _odN = 0, _odTot = 0, _odBand = null; const _odCH = [];
   function setOuterDrop(o) { _od = o ? { pad: 4, tailX: 6, minN: 2000, minGap: 30, ...o } : null; _odHist.fill(0); _odN = 0; _odTot = 0; _odBand = null; _odCH.length = 0; }
@@ -424,7 +424,7 @@ window.Trail = (() => {
           //   コードを読んだだけで、白分岐へ落ちる画素の数・効きは測っていない
           // 色のトレイルの芯は s 0.4 以上なので帯の所が細く削れるだけ。一律 0.45 で切ると、砂の淡い水色のスライス（s 0.16〜0.30・0908 砂 420.9）の筋が帯の所で 1357→397 に痩せ、
           // summarize の再アンカー（次のコマで 2.5 倍）に掛かって run が 3 コマに縮み相手の打点 420.6 を失った
-          // NEARHUE=1（試作）: コートと色相が近い（30°以内）鮮やかなトレイル（0830 ピンクのコートの紫のフラット: 色相差 13〜21°・S 0.54〜0.65・V 0.82〜0.93）。
+          // NEARHUE（既定は入・NEARHUE=0 で切）: コートと色相が近い（30°以内）鮮やかなトレイル（0830 ピンクのコートの紫のフラット: 色相差 13〜21°・S 0.54〜0.65・V 0.82〜0.93）。
           //   コートの明るい地面の色相のばらつき（Hd98）＋余白より離れ、彩度が地面の中央値より NH_S 以上高い明るい画素を通す
           //   拾うのもコートがピンク（色相 300〜345）のときだけ（2026-11-18・砂のコートで余分が増えたため。他のコートはその色相のコマが 0 なので切と同じ）
           if (!hit && NH && ref.Hd98 != null && ref.Hmed >= 300 && ref.Hmed < 345 && v > 0.75 && s > ref.S50b + NH_S && hd > Math.max(NH_MIN, ref.Hd98 + NH_PAD)) hit = true;
@@ -551,7 +551,7 @@ window.Trail = (() => {
       return 'drop';
     }
     let Ht = Htail;
-    // NEARHUE=1 のときだけ: コートがピンク（色相 300〜345）なら flat と暖色の境を 345 から 330 に下げる。0830 で赤い尾（333〜344）の topspin を
+    // NEARHUE が入のときだけ（既定は入）: コートがピンク（色相 300〜345）なら flat と暖色の境を 345 から 330 に下げる。0830 で赤い尾（333〜344）の topspin を
     //   flat と読む打が出るため（試作・2026-11-18。芯で決める案は他のコートで球種一致が下がったので採らない）
     const FH = NH && ref && ref.Hmed != null && ref.Hmed >= 300 && ref.Hmed < 345 ? 330 : 345;
     // クレイ赤×赤: 尾の色相がコート色と同一になるので先端で判定（手順7）

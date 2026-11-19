@@ -142,10 +142,11 @@ async function analyze(opts) {
   const started = Date.now();
   // 地面の色の地図（GMAP=1・2026-11-17 試作・既定は切）: 本解析の前にポイントを粗く読み直し、カメラが線に合うコマだけで地図を作る（tools/trail.js の gmap*）
   let gmap = null;
-  // 外周の塊を塊の段で落とす（OUTERDROP=1・2026-11-17 試作・既定は切。tools/trail.js の setOuterDrop）。OUTER_PAD: 色相の帯の余白（度・既定 4）・OUTER_TAILX: 尾の横位置の上限（m・既定 6）・OUTER_GAP: コートの色相と外周の帯の離れがこれ未満のポイントでは何も捨てない（度・既定 30）
-  const outerOn = opts.trail && process.env.OUTERDROP === '1';
+  // 外周の塊を塊の段で落とす（OUTERDROP・2026-11-17 試作 → 2026-11-18 から既定は入・OUTERDROP=0 で切。tools/trail.js の setOuterDrop）。OUTER_PAD: 色相の帯の余白（度・既定 4）・OUTER_TAILX: 尾の横位置の上限（m・既定 6）・OUTER_GAP: コートの色相と外周の帯の離れがこれ未満のポイントでは何も捨てない（度・既定 30）
+  const outerOn = opts.trail && process.env.OUTERDROP !== '0';
   if (outerOn) Trail.setOuterDrop({ pad: +(process.env.OUTER_PAD || 4), tailX: +(process.env.OUTER_TAILX || 6), minGap: +(process.env.OUTER_GAP || 30) });
-  if (process.env.NEARHUE === '1') Trail.setNearHue({ s: +(process.env.NH_S || 0.12), min: +(process.env.NH_MIN || 8), pad: +(process.env.NH_PAD || 3) });
+  // コートと色相が近いトレイルを拾う（NEARHUE・2026-11-18 から既定は入・NEARHUE=0 で切。効くのはコートがピンク（色相 300〜345）のコマだけ）
+  if (process.env.NEARHUE !== '0') Trail.setNearHue({ s: +(process.env.NH_S || 0.12), min: +(process.env.NH_MIN || 8), pad: +(process.env.NH_PAD || 3) });
   if (opts.trail && process.env.GMAP === '1') gmap = await buildGroundMap({ Court, Trail, video, t0, t1, srcFps: ((await ShotColor.videoSize(video)) || {}).fps || null });
   // Phase D: ショット色トレイル（opts.trail のとき毎フレーム）
   const trailLog = [], hist = [], starLog = [];
