@@ -2288,3 +2288,26 @@ NEARHUE だけで増える余分が、OUTERDROP を足すとどう消えるか(�
 - 消した打はどのセットも 0
 - 正解 feverback(足していない・読まれ方だけ): 0830 の 9 本は topspin 1・slice 2・unknown 1・見逃し 5(掛ける前後で同じ)。n0908b の 4 本は topspin 3・slice 1。y0908b の正解には feverback が無い
 - 他のセットの正解には fever が無いので掛けていない
+
+## 由来で unknown を slide にする(UNKSLIDE・既定は入・2026-11-19・ユーザー判断)
+
+最後まで unknown のままの打のうち、由来が track(どちらの側も)・相手の flash・相手の far-appear のものを slide にする(`tools/slide.js` `applyUnk`・`Slide.apply` の最後＝fuse・shotcolor・紫のフラット・PALESLIDE の後、GapFill と fever の割り当ての前)。それ以外の unknown はそのまま。コートの門は無し。印は `unkSlide: true`、元の種別は `clsUnk`。votes・clsAlt は書き換えない。`UNKSLIDE=0` で切。根拠は設計セッションの集計 `samples/rally/exp-design/unk-src.js`(この 4 つの由来の unknown は、当たり 64 本のうち 36 本が正解 slide)。
+
+確かめ方: 保存済みの exp-def/new0830 と exp-def-oth の全 19 セットに `applyUnk` だけを掛け直した(`samples/rally/unk-reapply.js` → `exp-unk`・`exp-unk-oth`)。後ろの GapFill が足す打は由来が gap-trail なので条件に入らず、掛け直しと解析し直しは同じになる。打の時刻・側・由来は全部同じで、変わったのは条件に合う unknown → slide だけ(条件外の変化 0)。採点は `samples/rally/unk-score.js`(unk-src.js と同じ突き合わせ・draft のポイントは除く)。
+
+| セット | 球種一致 | 余分の打が slide になる |
+|---|---|---|
+| 0830(正解 242) | 90 → 95(+5) | 3 |
+| n0908 | 82 → 87(+5) | 2 |
+| n0908b | 105 → 105 | 3 |
+| x151815 | 23 → 28(+5) | 0 |
+| y151815 | 13 → 14(+1) | 0 |
+| d0908 | 33 → 35(+2) | 0 |
+| a151815 | 231 → 249(+18) | 12 |
+| 残り 9 セット(n0911・n151815・x0908・x0908b・x0911・y0908・y0908b・y0911・d0911) | 変化なし | 0 |
+| 計 | 784 → 820(+36) | 20 |
+
+- 当たりと余分の数はどのセットも変わらない
+- 当たりで正解が slide でないのに slide になる 28 本: lob 9・dive 6・slice 5・flat 4・drop 3・topspin 1。正解 unknown・fever を失うものは 0
+- 見込み(球種 +36・0830 +5・他 +31、正解 slide でない当たり 28)と一致。余分の打が slide になるのは見込みの 22 に対して実測 20(unk-src.js をそのまま走らせても 20 になる)
+- 正解の無い d0908b・d0908p5・d151815 は掛け直しただけ(変化 0)
