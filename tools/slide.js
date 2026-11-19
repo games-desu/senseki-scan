@@ -14,6 +14,14 @@ function apply(rally) {
   for (const h of rally || []) {
     if (h.src === 'far-lobappear' && h.cls === 'lob') { h.clsSlide = h.cls; h.cls = 'slide'; n++; }
   }
+  return n + applyPale(rally);
+}
+// 淡いトレイルの topspin → slide（PALESLIDE・2026-11-19 試作・既定は切）。trail.js shots の paleTop（コートの色相 300〜345 で、sMax・nMax が小さい run）を持つ
+//   trail 打点が、fuse・shotcolor・紫のフラットの後もまだ topspin なら slide にする。印は paleSlide: true・元の種別は clsPale。votes・clsAlt は書き換えない。
+//   paleTop は rally-node が PALESLIDE=1 で Trail.setPaleSlide を呼んだときだけ付くので、切のときは何もしない
+function applyPale(rally) {
+  let n = 0;
+  for (const h of rally || []) if (h.src === 'trail' && h.cls === 'topspin' && h.paleTop) { h.clsPale = h.cls; h.cls = 'slide'; h.paleSlide = true; n++; }
   return n;
 }
 // 紫の核のフラット（2026-10-21）。trail.js shots の purpleFlat（核が紫のコマ 2 以上かつ 25% 以上の topspin の run）を持つ trail 打点が
@@ -34,4 +42,4 @@ function applyJunkOpp(rally) {
   for (const h of rally || []) if (h.src === 'trail' && h.side === 'opp' && h.cls !== 'slide' && h.cls !== 'unknown' && h.apexTrail != null && h.apexTrail >= 240 && h.cZpreS != null && h.cZpreS < 0) { h.clsJunk = h.cls; h.cls = JUNK_OPP_MODE; n++; }
   return n;
 }
-module.exports = { apply, applyPurple, applyJunkOpp };
+module.exports = { apply, applyPurple, applyJunkOpp, applyPale };

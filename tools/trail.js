@@ -381,6 +381,10 @@ window.Trail = (() => {
 
   let NH = false, NH_S = 0.12, NH_MIN = 8, NH_PAD = 3;
   function setNearHue(o) { NH = !!o; if (o) { NH_S = o.s ?? 0.12; NH_MIN = o.min ?? 8; NH_PAD = o.pad ?? 3; } }
+  // PALESLIDE（2026-11-19 試作・既定は切。rally-node が PALESLIDE=1 のとき setPaleSlide を呼ぶ）: 淡く小さい run に paleTop の印を付ける（shots の最後）。
+  //   印の付いた trail 打点を slide にするのは fuse・shotcolor の後（slide.js の applyPale）。s: sMax の上限（PS_S・既定 0.5）・n: nMax の上限（PS_N・既定 3000）
+  let _ps = null;
+  function setPaleSlide(o) { _ps = o ? { s: 0.5, n: 3000, ...o } : null; }
   function effectMask(img, ref, rows, lines, cam = null) {
     const gm = _gm && cam ? (gmapExpect(cam), gmapAlign(img), true) : false;
     const d = img.data, mask = new Uint8Array(W * H), wm = _wm, hud = _hud;
@@ -1087,8 +1091,13 @@ window.Trail = (() => {
     //   ここで cls を flat にすると fuse の並べ替え（同側の重なり・時刻の寄せ）が変わって打点が動いた（a151815 p6 126.32m・126.44o の偽打点・p0 15.67→15.27）ので、
     //   種別の書き換えは fuse・shotcolor の後（slide.js の applyPurple）で打点に対して行う
     for (const s of out) if (s.cls === 'topspin' && s.coreP >= 2 && s.coreP / s.coreN >= 0.25) s.purpleFlat = s.coreP;
+    // PALESLIDE（試作・既定は切）: 0830 で正解 slide の当たり 24 打のうち 12 打が topspin と読まれ、そのうち 9 打の run は sMax 0.35〜0.48・nMax 674〜2422 と淡く小さい。
+    //   本物の topspin の当たり（42 打）は sMax 0.62〜0.72・nMax の中央 1 万前後で、この範囲に入らない（設計ノート・samples/rally/exp-design/rule-eval.js pale）。
+    //   門はコートの色相 300〜345（NEARHUE と同じ）。他の 18 セットでは直る 0・壊す 1（x0911 p6 172.24 相手）・余分 6 だったので効かせない
+    //   印は run の種別を見ずに付ける（打点の種別は shotcolor で変わることがある: x0911 p6 172.24 は run が drop で打点が topspin）。topspin かどうかは applyPale が最終の打点で見る
+    if (_ps) for (const s of out) if (s.sMax < _ps.s && s.nMax < _ps.n && s.courtH != null && s.courtH >= 300 && s.courtH < 345) s.paleTop = true;
     return out;
   }
 
-  return { W, H, SC, hsv, hueDist, courtRef, effectMask, detect, runs, shots, classify, HUD_EXCL, netTapeBlob, setOuterDrop, setNearHue, outerStats, outerFilter, gmapBegin, gmapAdd, gmapFinish, gmapStats, _gmapExp: () => ({ ok: _gmOk, exp: _gmExp, dx: _gmDx, dy: _gmDy, GP, EW, GB }), _region: region, _closing: closing, _components: components, _buildLineNear: buildLineNear };
+  return { W, H, SC, hsv, hueDist, courtRef, effectMask, detect, runs, shots, classify, HUD_EXCL, netTapeBlob, setOuterDrop, setNearHue, setPaleSlide, outerStats, outerFilter, gmapBegin, gmapAdd, gmapFinish, gmapStats, _gmapExp: () => ({ ok: _gmOk, exp: _gmExp, dx: _gmDx, dy: _gmDy, GP, EW, GB }), _region: region, _closing: closing, _components: components, _buildLineNear: buildLineNear };
 })();

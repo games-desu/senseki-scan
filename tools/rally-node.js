@@ -147,6 +147,8 @@ async function analyze(opts) {
   if (outerOn) Trail.setOuterDrop({ pad: +(process.env.OUTER_PAD || 4), tailX: +(process.env.OUTER_TAILX || 6), minGap: +(process.env.OUTER_GAP || 30) });
   // コートと色相が近いトレイルを拾う（NEARHUE・2026-11-18 から既定は入・NEARHUE=0 で切。効くのはコートがピンク（色相 300〜345）のコマだけ）
   if (process.env.NEARHUE !== '0') Trail.setNearHue({ s: +(process.env.NH_S || 0.12), min: +(process.env.NH_MIN || 8), pad: +(process.env.NH_PAD || 3) });
+  // 淡いトレイルの topspin を slide に読み替える（PALESLIDE=1・2026-11-19 試作・既定は切。tools/trail.js の setPaleSlide・tools/slide.js の applyPale）。PS_S: sMax の上限（既定 0.5）・PS_N: nMax の上限（既定 3000）
+  Trail.setPaleSlide(process.env.PALESLIDE === '1' ? { s: +(process.env.PS_S || 0.5), n: +(process.env.PS_N || 3000) } : null);
   if (opts.trail && process.env.GMAP === '1') gmap = await buildGroundMap({ Court, Trail, video, t0, t1, srcFps: ((await ShotColor.videoSize(video)) || {}).fps || null });
   // Phase D: ショット色トレイル（opts.trail のとき毎フレーム）
   const trailLog = [], hist = [], starLog = [];
